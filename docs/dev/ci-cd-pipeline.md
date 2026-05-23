@@ -158,15 +158,52 @@ For `@dev` or `@next` rollbacks, the next successful merge will overwrite the ta
 
 | Setting | Value |
 |---------|-------|
-| npm Trusted Publisher workflow filename | `npm-publish.yml` |
+| npm Trusted Publisher workflow filename | `npm-publish.yml` (for `@opengsd/gsd-pi` only) |
 | Environment: `dev` | No protection rules |
 | Environment: `test` | No protection rules |
 | Environment: `prod` | Required reviewers: maintainers |
-| Secret: `NPM_TOKEN` | Not required for `npm-publish.yml`; only token-fallback workflows need it |
+| Secret: `NPM_TOKEN` | Not required for trusted publishing; set for token-fallback bootstrap (`build-native.yml` → `publish_auth=token`) |
 | Secret: `ANTHROPIC_API_KEY` | Prod environment only |
 | Secret: `OPENAI_API_KEY` | Prod environment only |
 | Variable: `RUN_LIVE_TESTS` | `false` (set to `true` to enable live LLM tests) |
 | GHCR | Enabled for the `open-gsd` org |
+
+### npm Trusted Publishing (all packages)
+
+npm [trusted publishing](https://docs.npmjs.com/trusted-publishers) binds each package to a single GitHub Actions workflow filename. It can only be configured **after** a package already exists on npm — you cannot set it up for packages that return 404.
+
+#### First-time packages (bootstrap with token)
+
+Use this when any `@opengsd/engine-*` package is missing from npm (today: `@opengsd/engine-darwin-x64`, `@opengsd/engine-linux-x64-gnu`).
+
+1. Create an npm [automation token](https://www.npmjs.com/settings/opengsd/tokens) with **Publish** access to the `@opengsd` scope (must be allowed to create new packages under the org).
+2. Add the token as repository secret **`NPM_TOKEN`** (GitHub → repo → Settings → Secrets and variables → Actions).
+3. Run [Build Native Binaries](https://github.com/open-gsd/gsd-pi/actions/workflows/build-native.yml):
+   - `publish`: **true**
+   - `platform_packages_only`: **true**
+   - `publish_auth`: **token** ← required for packages that do not exist yet
+4. Confirm all five packages resolve: `npm view @opengsd/engine-darwin-x64 version` (and the other four).
+5. **Then** configure trusted publishing on each package (table below).
+6. Re-run **NPM Publish** with the desired channel.
+
+The publish step skips packages already on npm and attempts all five platforms before failing, so one error does not leave the rest unpublished.
+
+#### Trusted publishing (after first publish)
+
+Configure **every** package on [npm package settings](https://www.npmjs.com/settings/opengsd/packages) → package → **Publishing access** → **Trusted Publisher**:
+
+| npm package | Trusted Publisher workflow |
+|-------------|---------------------------|
+| `@opengsd/gsd-pi` | `npm-publish.yml` |
+| `@opengsd/engine-darwin-arm64` | `build-native.yml` |
+| `@opengsd/engine-darwin-x64` | `build-native.yml` |
+| `@opengsd/engine-linux-x64-gnu` | `build-native.yml` |
+| `@opengsd/engine-linux-arm64-gnu` | `build-native.yml` |
+| `@opengsd/engine-win32-x64-msvc` | `build-native.yml` |
+
+For all packages: repository **`open-gsd/gsd-pi`**, environment **(none)**.
+
+After trusted publishing is configured, use `publish_auth=trusted` (default) for routine native publishes.
 
 ### Docker Images
 

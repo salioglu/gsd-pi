@@ -45,6 +45,21 @@ test("prerelease publish preserves channel-specific default refs", () => {
   assert.match(checkout.with.ref, /'main'/);
 });
 
+test("npm publish supports token auth fallback for prerelease", () => {
+  const input = workflow.on.workflow_dispatch.inputs.publish_auth;
+
+  assert.equal(input.default, "trusted");
+  assert.deepEqual(input.options, ["trusted", "token"]);
+
+  const setupNode = workflow.jobs["prerelease-publish"].steps.find(
+    (step) => step.uses === "actions/setup-node@v6",
+  );
+  assert.equal(
+    setupNode.env.NODE_AUTH_TOKEN,
+    "${{ github.event.inputs.publish_auth == 'token' && secrets.NPM_TOKEN || '' }}",
+  );
+});
+
 test("main package publish verifies native engine packages first", () => {
   const prereleaseSteps = workflow.jobs["prerelease-publish"].steps;
   const prereleaseVerify = prereleaseSteps.find(
