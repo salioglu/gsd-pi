@@ -15,13 +15,21 @@ on:
           - "false"
           - "true"
       publish_auth:
-        description: "npm publish auth mode"
+        description: "npm auth: token creates packages not on npm yet; trusted after first publish"
         required: false
         default: "trusted"
         type: choice
         options:
           - "trusted"
           - "token"
+      platform_packages_only:
+        description: "Publish @opengsd/engine-* only (skip @opengsd/gsd-pi; use to bootstrap missing platform packages)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 permissions:
   contents: read
@@ -166,25 +174,42 @@ jobs:
             echo "Stable release: ${VERSION} → publishing with --tag latest"
           fi
 
+      - name: Require token auth for packages not on npm yet
+        if: github.event.inputs.publish_auth != 'token'
+        run: |
+          MISSING=()
+          for platform in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
+            PKG="@opengsd/engine-${platform}"
+            if ! npm view "${PKG}" name >/dev/null 2>&1; then
+              MISSING+=("${PKG}")
+            fi
+          done
+          if [ "${#MISSING[@]}" -gt 0 ]; then
+            echo "::error::These @opengsd/engine-* packages do not exist on npm yet:"
+            for pkg in "${MISSING[@]}"; do
+              echo "::error::  - ${pkg}"
+            done
+            echo "::error::Trusted publishing is configured after first publish. Re-run with publish_auth=token and NPM_TOKEN set (see docs/dev/ci-cd-pipeline.md)."
+            exit 1
+          fi
+
+      - name: Verify NPM_TOKEN is configured for token bootstrap
+        if: github.event.inputs.publish_auth == 'token'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::publish_auth=token requires the NPM_TOKEN repository secret."
+            echo "::error::Create an npm automation token with publish access to @opengsd, add it as NPM_TOKEN, then re-run."
+            exit 1
+          fi
+          npm whoami
+
       - name: Publish platform packages
         env:
           NODE_AUTH_TOKEN: ${{ github.event.inputs.publish_auth == 'token' && secrets.NPM_TOKEN || '' }}
-        run: |
-          for platform in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
-            echo "Publishing @opengsd/engine-${platform}..."
-            cd "native/npm/${platform}"
-            if OUTPUT=$(npm publish --access public ${{ steps.version-check.outputs.tag_flag }} 2>&1); then
-              echo "$OUTPUT"
-            else
-              if echo "$OUTPUT" | grep -q "cannot publish over the previously published"; then
-                echo "Already published, skipping"
-              else
-                echo "::error::Failed to publish ${platform}: $OUTPUT"
-                exit 1
-              fi
-            fi
-            cd "$GITHUB_WORKSPACE"
-          done
+          TAG_FLAG: ${{ steps.version-check.outputs.tag_flag }}
+        run: bash scripts/publish-engine-packages.sh
 
       - name: Verify platform packages are published
         run: |
@@ -226,18 +251,23 @@ jobs:
           done
 
       - name: Install dependencies
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.platform_packages_only != 'true'
         run: npm ci --omit=optional
 
       - name: Build
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.platform_packages_only != 'true'
         run: npm run build
 
       - name: Verify dist exists
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.platform_packages_only != 'true'
         run: test -s dist/loader.js || { echo "::error::dist/loader.js missing or empty after build"; exit 1; }
 
       - name: Validate package is installable
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.platform_packages_only != 'true'
         run: npm run validate-pack
 
       - name: Publish main package
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.platform_packages_only != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ github.event.inputs.publish_auth == 'token' && secrets.NPM_TOKEN || '' }}
         run: |
@@ -254,6 +284,7 @@ jobs:
           fi
 
       - name: Post-publish smoke test
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.platform_packages_only != 'true'
         run: |
           VERSION=$(node -p "require('./package.json').version")
           TMPDIR=$(mktemp -d)
@@ -306,7 +337,7 @@ jobs:
           exit 1
 
       - name: Verify dist-tag after publish
-        if: steps.version-check.outputs.is_prerelease == 'false'
+        if: (github.event_name != 'workflow_dispatch' || github.event.inputs.platform_packages_only != 'true') && steps.version-check.outputs.is_prerelease == 'false'
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "Verifying npm dist-tag 'latest' points to ${VERSION}..."
