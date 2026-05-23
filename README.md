@@ -22,7 +22,38 @@ npm install -g @opengsd/gsd-pi@latest
 
 Source: [`open-gsd/gsd-pi`](https://github.com/open-gsd/gsd-pi).
 
-Upgrading or migrating from an older install? See [Upgrade GSD Pi](./docs/user-docs/getting-started.md#upgrade-gsd-pi) and, if needed, [Upgrade from older GSD-2 installs](./docs/user-docs/troubleshooting.md#upgrade-from-older-gsd-2-installs).
+## Migrate From Older Installs
+
+GSD Pi now installs from the scoped npm package `@opengsd/gsd-pi`. If you previously installed the older unscoped `gsd-pi` package, remove it first so the old global binary does not shadow the new package.
+
+macOS / Linux:
+
+```bash
+npm uninstall -g gsd-pi
+rm -f ~/.gsd/.update-check ~/.gsd/agent/managed-resources.json
+npm install -g @opengsd/gsd-pi@latest
+which gsd
+gsd --version
+```
+
+Windows PowerShell:
+
+```powershell
+npm uninstall -g gsd-pi
+Remove-Item "$env:USERPROFILE\.gsd\.update-check" -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:USERPROFILE\.gsd\agent\managed-resources.json" -Force -ErrorAction SilentlyContinue
+npm install -g @opengsd/gsd-pi@latest
+where.exe gsd
+gsd --version
+```
+
+After migration, routine upgrades use:
+
+```bash
+gsd upgrade
+```
+
+You can also run `npx @opengsd/gsd-pi@latest` to launch the installer from the new package. For deeper recovery steps, see [Upgrade GSD Pi](./docs/user-docs/getting-started.md#upgrade-gsd-pi) and [Upgrade from older GSD-2 installs](./docs/user-docs/troubleshooting.md#upgrade-from-older-gsd-2-installs).
 
 ## Quick Start
 

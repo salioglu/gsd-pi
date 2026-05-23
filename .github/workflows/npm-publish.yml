@@ -105,6 +105,9 @@ jobs:
           export GSD_SMOKE_BINARY
           npm run test:smoke
 
+      - name: Verify native platform packages exist
+        run: npm run verify:native-platform-packages -- --any-version
+
       - name: Publish @${{ github.event.inputs.channel }}
         env:
           CHANNEL: ${{ github.event.inputs.channel }}
@@ -269,6 +272,9 @@ jobs:
           GSD_SMOKE_BINARY="$(pwd)/dist/loader.js"
           export GSD_SMOKE_BINARY
           npm run test:live-regression
+
+      - name: Verify native platform packages for release version
+        run: npm run verify:native-platform-packages
 
       - name: Publish release to npm @latest
         env:

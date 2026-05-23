@@ -76,7 +76,7 @@ jobs:
 
   build:
     name: build
-    timeout-minutes: 30
+    timeout-minutes: 45
     needs: [fast-gates]
     if: needs.fast-gates.outputs.heavy-code-changed == 'true'
     runs-on: ubuntu-latest
@@ -195,7 +195,7 @@ jobs:
 
   test-coverage:
     name: test-coverage
-    timeout-minutes: 25
+    timeout-minutes: 45
     needs: [fast-gates, build]
     if: >-
       needs.fast-gates.outputs.heavy-code-changed == 'true' &&

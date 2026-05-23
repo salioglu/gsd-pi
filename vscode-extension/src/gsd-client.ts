@@ -127,7 +127,7 @@ export class GsdClient implements vscode.Disposable {
 					this.process = null;
 				}
 				const hint = err.code === "ENOENT"
-					? ` Make sure GSD is installed ("npm install -g gsd-pi") and set "gsd.binaryPath" to the absolute path if it is not on PATH.`
+					? ` Make sure GSD is installed ("npm install -g @opengsd/gsd-pi") and set "gsd.binaryPath" to the absolute path if it is not on PATH.`
 					: "";
 				const message = `Failed to start GSD process: ${err.message}.${hint}`;
 				this._onError.fire(message);
@@ -147,7 +147,7 @@ export class GsdClient implements vscode.Disposable {
 			}
 			this._onConnectionChange.fire(false);
 			const hint = err.code === "ENOENT"
-				? ` Make sure GSD is installed ("npm install -g gsd-pi") and set "gsd.binaryPath" to the absolute path if it is not on PATH.`
+				? ` Make sure GSD is installed ("npm install -g @opengsd/gsd-pi") and set "gsd.binaryPath" to the absolute path if it is not on PATH.`
 				: "";
 			this._onError.fire(`GSD process error: ${err.message}.${hint}`);
 		});

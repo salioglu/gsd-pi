@@ -44,3 +44,31 @@ test("prerelease publish preserves channel-specific default refs", () => {
   assert.match(checkout.with.ref, /'next'/);
   assert.match(checkout.with.ref, /'main'/);
 });
+
+test("main package publish verifies native engine packages first", () => {
+  const prereleaseSteps = workflow.jobs["prerelease-publish"].steps;
+  const prereleaseVerify = prereleaseSteps.find(
+    (step) => step.name === "Verify native platform packages exist",
+  );
+  const prereleasePublishIndex = prereleaseSteps.findIndex(
+    (step) => step.name === "Publish @${{ github.event.inputs.channel }}",
+  );
+  const prereleaseVerifyIndex = prereleaseSteps.indexOf(prereleaseVerify);
+
+  assert.ok(prereleaseVerify, "prerelease publish must verify native packages");
+  assert.match(prereleaseVerify.run, /npm run verify:native-platform-packages -- --any-version/);
+  assert.ok(prereleaseVerifyIndex > -1 && prereleaseVerifyIndex < prereleasePublishIndex);
+
+  const prodSteps = workflow.jobs["prod-release"].steps;
+  const prodVerify = prodSteps.find(
+    (step) => step.name === "Verify native platform packages for release version",
+  );
+  const prodPublishIndex = prodSteps.findIndex(
+    (step) => step.name === "Publish release to npm @latest",
+  );
+  const prodVerifyIndex = prodSteps.indexOf(prodVerify);
+
+  assert.ok(prodVerify, "production publish must verify native packages");
+  assert.match(prodVerify.run, /npm run verify:native-platform-packages/);
+  assert.ok(prodVerifyIndex > -1 && prodVerifyIndex < prodPublishIndex);
+});

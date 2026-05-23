@@ -96,6 +96,7 @@
     "pi:uninstall-global": "node scripts/uninstall-pi-global.js",
     "sync-pkg-version": "node scripts/sync-pkg-version.cjs",
     "sync-platform-versions": "node native/scripts/sync-platform-versions.cjs",
+    "verify:native-platform-packages": "node scripts/verify-native-platform-packages.mjs",
     "verify:version-sync": "node scripts/verify-version-sync.cjs",
     "validate-pack": "node scripts/validate-pack.js",
     "typecheck:extensions": "tsc --noEmit --project tsconfig.extensions.json",

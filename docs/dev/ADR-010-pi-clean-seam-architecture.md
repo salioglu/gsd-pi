@@ -234,7 +234,7 @@ Steps 2-5 are scoped to known files. No archaeology required.
 
 ### Neutral
 
-- End-user install experience (`npm install -g gsd-pi@latest`) is unchanged
+- End-user install experience (`npm install -g @opengsd/gsd-pi@latest`) is unchanged
 - Extension authors see no change — the extension API surface remains in `@gsd/pi-coding-agent`
 - GSD packages continue to use pi types directly — no new abstraction layer
 

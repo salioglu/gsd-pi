@@ -8,12 +8,13 @@ BASE_REF="${BASE_REF:-main}"
 CI_DIFF_REF="origin/${BASE_REF}"
 
 if [ -n "${PR_BASE_SHA:-}" ]; then
-  git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
+  git cat-file -e "$PR_BASE_SHA^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
   git update-ref "refs/remotes/origin/${BASE_REF}" "$PR_BASE_SHA"
 elif git rev-parse --verify "${CI_DIFF_REF}" >/dev/null 2>&1; then
   :
 else
-  git fetch --no-tags --depth=1 origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}" 2>/dev/null \
+  git show-ref --verify --quiet "refs/remotes/origin/${BASE_REF}" 2>/dev/null \
+    || git fetch --no-tags --depth=1 origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}" 2>/dev/null \
     || git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
   CI_DIFF_REF="origin/${BASE_REF}"
   if ! git rev-parse --verify "${CI_DIFF_REF}" >/dev/null 2>&1; then

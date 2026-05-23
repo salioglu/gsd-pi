@@ -28,7 +28,7 @@ GSD's code is clearly separated from pi's code at the module system level. The v
 | Zero GSD business logic in vendored pi packages | `pi-coding-agent/src/` contains no files that import from `@gsd/` packages (except the extension system's bundled module map) |
 | Module boundary is compiler-enforced | TypeScript `paths` config or package `exports` prevents pi packages from importing GSD packages |
 | Applying a pi-mono update is scoped | Updating pi packages produces type errors only in `@gsd/agent-core` and `@gsd/agent-modes` — no changes required in pi package source files |
-| Install experience is unchanged | `npm install -g gsd-pi@latest` produces an identical binary from the user's perspective |
+| Install experience is unchanged | `npm install -g @opengsd/gsd-pi@latest` produces an identical binary from the user's perspective |
 | Existing extensions continue to work | All built-in GSD extensions load and execute without modification |
 | Build time does not regress significantly | Full build completes within 120% of current baseline |
 

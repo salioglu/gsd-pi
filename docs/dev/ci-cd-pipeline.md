@@ -29,13 +29,13 @@ Every merged PR is immediately installable:
 
 ```bash
 # Latest dev build (bleeding edge, every merged PR)
-npx gsd-pi@dev
+npx @opengsd/gsd-pi@dev
 
 # Test candidate (passed smoke + fixture tests)
-npx gsd-pi@next
+npx @opengsd/gsd-pi@next
 
 # Stable production release
-npx gsd-pi@latest    # or just: npx gsd-pi
+npx @opengsd/gsd-pi@latest    # or just: npx @opengsd/gsd-pi
 ```
 
 ### Using Docker
@@ -51,10 +51,10 @@ docker run --rm -v $(pwd):/workspace ghcr.io/open-gsd/gsd-pi:latest --version
 ### Checking if a Fix Landed
 
 1. Find the PR's merge commit SHA (first 7 chars)
-2. Check if it's in `@dev`: `npm view gsd-pi@dev version`
+2. Check if it's in `@dev`: `npm view @opengsd/gsd-pi@dev version`
    - If the version ends in `-dev.<your-sha>`, your PR is in dev
-3. Check if it promoted to `@next`: `npm view gsd-pi@next version`
-4. Check if it's in production: `npm view gsd-pi@latest version`
+3. Check if it promoted to `@next`: `npm view @opengsd/gsd-pi@next version`
+4. Check if it's in production: `npm view @opengsd/gsd-pi@latest version`
 
 ## For Maintainers
 
@@ -144,7 +144,7 @@ If a broken version reaches production:
 
 ```bash
 # Roll back npm
-npm dist-tag add gsd-pi@<previous-good-version> latest
+npm dist-tag add @opengsd/gsd-pi@<previous-good-version> latest
 
 # Roll back Docker
 docker pull ghcr.io/open-gsd/gsd-pi:<previous-good-version>
