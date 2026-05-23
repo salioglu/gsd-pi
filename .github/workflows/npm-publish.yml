@@ -36,7 +36,7 @@ jobs:
     name: Publish @${{ github.event.inputs.channel }}
     if: ${{ github.event.inputs.channel != 'latest' }}
     # npm trusted publishing requires GitHub-hosted runners for OIDC.
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.channel }}
     container:
       image: ghcr.io/open-gsd/gsd-ci-builder:latest
@@ -75,7 +75,7 @@ jobs:
         run: npm --prefix web ci
 
       - name: Cache Next.js build
-        uses: useblacksmith/cache@v5
+        uses: actions/cache@v4
         with:
           path: web/.next/cache
           key: nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-${{ hashFiles('web/app/**', 'web/components/**', 'web/lib/**', 'web/hooks/**') }}
@@ -129,7 +129,7 @@ jobs:
     name: Verify @${{ github.event.inputs.channel }} package
     if: ${{ github.event.inputs.channel != 'latest' }}
     needs: prerelease-publish
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
@@ -184,7 +184,7 @@ jobs:
     name: Production Release
     if: ${{ github.event.inputs.channel == 'latest' }}
     # npm trusted publishing requires GitHub-hosted runners for OIDC.
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: prod
     steps:
       - uses: actions/checkout@v6
@@ -208,7 +208,7 @@ jobs:
           node -e "const v=require('child_process').execSync('npm --version',{encoding:'utf8'}).trim().split('.').map(Number); if (v[0] < 11 || (v[0] === 11 && v[1] < 5) || (v[0] === 11 && v[1] === 5 && v[2] < 1)) { throw new Error('Trusted publishing requires npm >= 11.5.1'); }"
 
       - name: Cache Next.js build
-        uses: useblacksmith/cache@v5
+        uses: actions/cache@v4
         with:
           path: web/.next/cache
           key: nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-${{ hashFiles('web/app/**', 'web/components/**', 'web/lib/**', 'web/hooks/**') }}
