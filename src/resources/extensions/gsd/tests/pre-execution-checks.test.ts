@@ -1884,7 +1884,7 @@ describe("checkTaskOrdering false positive for pre-execution refs (#4071)", () =
   });
 
   test("pending-first then completed-later: completed replaces pending in fileCreators (#4572)", () => {
-    // Regression for CodeRabbit Major finding on PR #4572:
+    // Regression for PR #4572:
     // fileCreators only stored the FIRST task for a given path. If a PENDING task at
     // array index 1 was registered first, and a COMPLETED task at array index 2 also
     // declared the same output path, the completed entry was discarded. Line ~529 then

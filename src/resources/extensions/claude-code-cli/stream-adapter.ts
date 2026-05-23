@@ -1523,7 +1523,7 @@ function extractStructuredDetailsFromBlock(block: Record<string, unknown>): Reco
  * (extracted separately by `extractStructuredDetailsFromBlock`) and must NOT
  * leak into the visible content rendered to the user — otherwise the renderer
  * stringifies the JSON pseudo-block and shows it next to the actual tool
- * output. See PR #4477 review (CodeRabbit, post-fix-round).
+ * output. See PR #4477 review (post-fix-round).
  */
 function isStructuredContentPseudoBlock(item: unknown): boolean {
 	if (!item || typeof item !== "object") return false;

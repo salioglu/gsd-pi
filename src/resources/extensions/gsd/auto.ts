@@ -1731,7 +1731,7 @@ export async function stopAuto(
     // Drop the active-tool baseline so a subsequent /gsd auto run on the
     // same `pi` instance recaptures from the live tool set rather than
     // restoring this session's snapshot and silently undoing any tool
-    // changes the user made between sessions (#4959 / CodeRabbit).
+    // changes the user made between sessions (#4959).
     if (pi) clearToolBaseline(pi);
 
     try {
@@ -2549,7 +2549,7 @@ export async function startAuto(
   // leaves the last provider-trimmed active tools in place, so clearing here
   // would let the next selectAndApplyModel recapture that already-narrowed
   // set as the new baseline — exactly the cross-unit poisoning this PR is
-  // fixing (#4959 / CodeRabbit Major).  The pre-pause baseline survives in
+  // fixing (#4959).  The pre-pause baseline survives in
   // the WeakMap keyed by `pi`.
   if (!s.paused) clearToolBaseline(pi);
 

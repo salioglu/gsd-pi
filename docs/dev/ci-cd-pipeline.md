@@ -68,32 +68,43 @@ docker run --rm -v $(pwd):/workspace ghcr.io/open-gsd/gsd-pi:latest --version
 | Native Binaries | `build-native.yml` | `v*` tags | Cross-compile platform binaries |
 | Dev Cleanup | `cleanup-dev-versions.yml` | Weekly (Monday 06:00 UTC) | Unpublish `-dev.` versions older than 30 days |
 | Agent Workflow Guard | `agent-workflow-guard.yml` | PR changes to workflow files | Blocks workflow diffs that expand `allowed_non_write_users` |
-| AI Triage | `ai-triage.yml` | Issues: opened/edited/reopened; PRs: opened/synchronize/reopened; trusted `issue_comment` with `/rerun-triage` | Automated classification and normalized triage labels for issues/PRs |
+| AI Triage | `ai-triage.yml` | Issues: opened/edited/reopened; PRs: opened/reopened; trusted `issue_comment` with `/rerun-triage` | Automated classification (not on every push) |
 | Issue Dedupe | `issue-dedupe.yml` | Opened/edited/reopened issues + manual dispatch | Posts likely duplicate candidates once per issue |
 | Issue Lifecycle | `issue-lifecycle.yml` | Label changes + schedule + manual dispatch | Adds lifecycle guidance comments and sweeps stale `needs-info` issues |
 
 **CI optimization (v2.38):** GitHub Actions minutes were reduced ~60-70% (~10k → ~3-4k/month) through workflow consolidation and caching improvements.
 
+**CI refactor (2026-05):** Single `fast-gates` job, build-once artifact fan-out, parallel test jobs, PR coverage moved to main push only. Local parity: `npm run verify:fast`, `verify:pr`, `verify:full`.
+
 **Pipeline optimization (v2.41):**
-- **Shallow clones** — CI lint and build jobs use `fetch-depth: 1` or `fetch-depth: 2` instead of full history, saving ~30-60s per job
+- **Shallow clones** — downstream jobs use shallow checkout + shared build artifacts
 - **npm cache in pipeline** — prerelease verification and production release use `cache: 'npm'` on setup-node, saving ~1-2 min per job on repeat runs
 - **Exponential backoff** — npm registry propagation waits in `build-native.yml` replaced hardcoded `sleep 30` + fixed 15s retries with exponential backoff (5s → 10s → 20s → 30s cap), typically finishing in <15s when the registry is fast
 - **Security hardening** — pipeline.yml moved `${{ }}` expressions from `run:` blocks to `env:` variables to prevent command injection vectors
+
+### CI job tiers
+
+| Tier | Job(s) | When |
+|------|--------|------|
+| Fast gates | `fast-gates` | Every PR/push (secrets, docs injection, skill refs, PR policy) |
+| Build | `build` | `heavy-code-changed=true` — compile once, upload `ci-build-artifacts` |
+| Tests (parallel) | `test-unit`, `test-packages`, `integration-tests`, `e2e` | After `build`; restore artifacts, no `build:core` repeat |
+| Coverage | `test-coverage` | Push to `main`/`dev`/`test` only (not PRs); or `workflow_dispatch` with `run_coverage` |
+| Platform | `docker-e2e`, `windows-portability` | Path-gated; use artifacts instead of rebuilding |
+
+**Branch protection:** Update required checks from legacy `lint` / `docs-check` to `fast-gates`, `build`, `test-unit`, `test-packages`, and other jobs you want blocking.
+
 ### Build-Relevant Change Detection
 
-CI classifies changed files before the expensive jobs run. Changes that do not
-touch build, runtime, test, package, web, native, Docker, or TypeScript config
-paths skip the build/test matrix.
+`scripts/ci-classify-changes.sh` (run inside `fast-gates`) classifies the diff before expensive jobs run.
 
-- **Skipped:** `build`, `integration-tests`, `e2e`, `docker-e2e`, and `windows-portability`
-- **Still runs:** `lint` (secret scanning, `.gsd/` check), `docs-check` (prompt injection scan)
+- **Skipped when doc/metadata only:** `build`, `test-*`, `integration-tests`, `e2e`, `docker-e2e`, `windows-portability`
+- **Still runs:** `fast-gates` (all security and policy scans)
+- **`web-changed`:** gates `build:web-host` inside `build` (core still builds)
 
-This saves CI minutes on documentation and metadata-only PRs while still
-enforcing security checks.
+### Prompt Injection Scan
 
-### Prompt Injection Scan (v2.41)
-
-The `docs-check` job runs `scripts/docs-prompt-injection-scan.sh` on every PR that touches markdown files. It scans documentation prose (excluding fenced code blocks) for patterns that could manipulate LLM behavior when docs are ingested as context:
+`fast-gates` runs `scripts/docs-prompt-injection-scan.sh` against the PR merge base (`CI_DIFF_REF`, not hardcoded `origin/main`). It scans documentation prose (excluding fenced code blocks) for patterns that could manipulate LLM behavior when docs are ingested as context:
 
 - **System prompt markers** — `<system-prompt>`, `<|im_start|>system`, `[SYSTEM]:`
 - **Role/instruction overrides** — `ignore previous instructions`, `you are now`, `new instructions:`

@@ -8,8 +8,9 @@ on:
     types: [opened, edited, reopened]
   issue_comment:
     types: [created]
+  # PR triage on open/reopen only — avoids an LLM call on every push (use /rerun-triage).
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    types: [opened, reopened]
 
 permissions:
   contents: read

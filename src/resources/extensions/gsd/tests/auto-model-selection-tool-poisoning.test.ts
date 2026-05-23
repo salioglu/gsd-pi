@@ -128,7 +128,7 @@ test("vacuous-truth (a): unit type with empty workflow-required tools → dispat
   try {
     // `refine-slice` is not in the getRequiredWorkflowToolsForAutoUnit switch
     // → returns []. Exercises the empty-requiredTools branch in
-    // applyModelPolicyFilter (CodeRabbit Minor: existing test used
+    // applyModelPolicyFilter (existing test used
     // gate-evaluate which has non-empty required tools and never hit this path).
     //
     // PREFERENCES with tier_models is required so resolvePreferredModelConfig
@@ -269,8 +269,8 @@ test("cross-unit poisoning: prior unit narrowing must not deny next unit's eligi
 // ─── 3a. Genuinely-impossible: tool-compatibility denial path ────────────────
 //
 // Exercises the real `getRequiredWorkflowToolsForAutoUnit` →
-// `filterToolsForProvider` path that #4959 was about (CodeRabbit Minor:
-// existing 3b test used cross-provider denial which never hit this path).
+// `filterToolsForProvider` path that #4959 was about — existing 3b test used
+// cross-provider denial which never hit this path.
 // Registers `gsd_plan_slice` as `producesImages: true`, then offers only an
 // `ollama-chat` candidate (which has `imageToolResults: false`) — the
 // workflow-required tool is incompatible with the candidate's API, so the
@@ -509,7 +509,7 @@ test("error carries deny reason fragment from applyModelPolicyFilter", async () 
   }
 });
 
-// ─── 6. Lifecycle: clearToolBaseline forces recapture (CodeRabbit Major) ─────
+// ─── 6. Lifecycle: clearToolBaseline forces recapture (#4959) ─────
 //
 // The WeakMap baseline is keyed per `pi` instance, but auto sessions are NOT
 // 1:1 with `pi` instances — a single `pi` can host multiple `/gsd auto` runs

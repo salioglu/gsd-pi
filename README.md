@@ -84,7 +84,8 @@ npm test
 Before opening a pull request, run:
 
 ```bash
-npm run verify:pr
+npm run verify:fast   # CI fast-gates locally (scans + policy)
+npm run verify:pr     # build + typecheck + unit tests
 ```
 
 ## Versioning

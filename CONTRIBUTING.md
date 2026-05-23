@@ -41,9 +41,15 @@ If `npm run build` fails after running tests (e.g. `Cannot find module '@gsd/*'`
 
 ### Before pushing
 
+CI is tiered to match local scripts:
+
 ```bash
-npm run verify:pr    # Local preflight: build:core → typecheck:extensions → test:unit
+npm run verify:fast   # ~1–3 min: same scans as CI fast-gates (secrets, docs injection, skill refs)
+npm run verify:pr     # ~5–15 min: build:core → typecheck:extensions → test:unit
+npm run verify:full   # Optional: verify:pr + integration + e2e (closest to full CI on PRs)
 ```
+
+Run `verify:fast` on every push; run `verify:pr` before opening or updating a PR that touches `src/`, `packages/`, or tests.
 
 If `verify:pr` fails after running tests (e.g. `Cannot find module '@gsd/*'` errors), run `npm ci` first to restore workspace symlinks, then try again.
 
@@ -91,7 +97,7 @@ git fetch origin
 git rebase origin/main
 ```
 
-CI must pass before your PR will be reviewed. Run `npm run verify:pr` locally before pushing to catch issues early.
+CI must pass before your PR will be reviewed. Run `npm run verify:fast` on every push and `npm run verify:pr` before requesting review on code changes.
 
 ## Working with GSD (team workflow)
 
@@ -385,7 +391,7 @@ test("handles null input", () => {
 });
 ```
 
-PRs containing source-grep tests will be sent back. CI enforces this via `scripts/check-source-grep-tests.sh` (wired into the `lint` job) — it scans changed test files for `readFileSync` / `readFile` calls whose path argument points into `src/` or `packages/`. If the code under test is genuinely hard to invoke (e.g., a build script, a CLI entry point), invoke it as a subprocess and assert on its real output — not on its source text.
+PRs containing source-grep tests will be sent back. CI enforces this via `scripts/check-source-grep-tests.sh` (wired into the `fast-gates` job) — it scans changed test files for `readFileSync` / `readFile` calls whose path argument points into `src/` or `packages/`. If the code under test is genuinely hard to invoke (e.g., a build script, a CLI entry point), invoke it as a subprocess and assert on its real output — not on its source text.
 
 The narrow exception: tests that legitimately verify *file structure* as the actual product (e.g., a code generator's output, a config-file linter, a script that produces a manifest). In those cases the file contents *are* the behavior. Opt out with a same-line or preceding-line marker:
 
@@ -397,9 +403,9 @@ assert.match(generated, /export const ROUTES =/);
 
 The reason becomes part of the diff and is visible at review. If you're not sure whether your case qualifies, it doesn't.
 
-### Three recurring defect classes (CodeRabbit themes)
+### Three recurring defect classes
 
-CI enforces three specific patterns that have caused real bugs in merged PRs (see issue #4931). All three are checked by `scripts/check-coderabbit-themes.mjs`.
+These patterns have caused real bugs in merged PRs (see issue #4931). Watch for them in review.
 
 **1. `Statement#get()` returns `undefined`, not `null`.** better-sqlite3's `Statement#get(…)` returns `undefined` when no row matches. A `!== null` guard passes for `undefined` too (`undefined !== null` is `true`), so the guard is always truthy and downstream property access crashes.
 
@@ -441,8 +447,6 @@ await done;
 // ✅ CORRECT
 "test:tokens": "node --experimental-strip-types --test studio/test/tokens.test.mjs"
 ```
-
-**Opt-out marker**: `// allow-coderabbit-theme: <reason>` on the same or preceding line, same convention as `allow-source-grep:`. The reason appears in the diff.
 
 ## Security
 

@@ -527,7 +527,7 @@ describe("stream-adapter — Claude Code external tool results", () => {
 		// it carries the structured payload (extracted separately into `details`)
 		// and must NOT appear in the visible `content` array — otherwise the
 		// renderer stringifies the JSON pseudo-block and shows it next to the
-		// actual tool output. See PR #4477 review (CodeRabbit, post-fix-round).
+		// actual tool output. See PR #4477 review (post-fix-round).
 		const message: SDKUserMessage = {
 			type: "user",
 			session_id: "sess-1",
