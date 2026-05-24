@@ -18,6 +18,7 @@ export function getSegmenter(): Intl.Segmenter {
 }
 
 const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
+const ANSI_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
 
 /**
  * Check if a character is whitespace.
@@ -39,10 +40,54 @@ export function isPunctuationChar(char: string): boolean {
 
 /**
  * Calculate the visible width of a string in terminal columns.
- * Delegates to the native Rust implementation.
+ * Delegates to the native Rust implementation, with a JS fallback so the TUI
+ * render loop remains usable when the native addon is unavailable.
  */
 export function visibleWidth(str: string): number {
-	return nativeVisibleWidth(str);
+	try {
+		return nativeVisibleWidth(str);
+	} catch {
+		return jsVisibleWidth(str);
+	}
+}
+
+function tabWidthOrDefault(tabWidth?: number): number {
+	return Math.min(16, Math.max(1, Math.floor(tabWidth ?? 3)));
+}
+
+function stripAnsi(text: string): string {
+	return text.replace(ANSI_PATTERN, "");
+}
+
+function graphemeWidth(grapheme: string): number {
+	if (grapheme === "\t") return tabWidthOrDefault();
+	if (grapheme === "\n" || grapheme === "\r") return 0;
+	const codePoint = grapheme.codePointAt(0) ?? 0;
+	if (codePoint === 0) return 0;
+	if (codePoint < 32 || (codePoint >= 0x7f && codePoint < 0xa0)) return 0;
+	if (
+		(codePoint >= 0x1100 && codePoint <= 0x115f) ||
+		(codePoint >= 0x2329 && codePoint <= 0x232a) ||
+		(codePoint >= 0x2e80 && codePoint <= 0xa4cf) ||
+		(codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+		(codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+		(codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
+		(codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
+		(codePoint >= 0xff00 && codePoint <= 0xff60) ||
+		(codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+		(codePoint >= 0x1f300 && codePoint <= 0x1faff)
+	) {
+		return 2;
+	}
+	return 1;
+}
+
+export function jsVisibleWidth(str: string): number {
+	let width = 0;
+	for (const { segment } of segmenter.segment(stripAnsi(str))) {
+		width += graphemeWidth(segment);
+	}
+	return width;
 }
 
 /**

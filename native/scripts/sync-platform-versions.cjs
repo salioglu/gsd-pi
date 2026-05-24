@@ -27,7 +27,9 @@ const platformPackages = [
   "win32-x64-msvc",
 ];
 
-// Update each platform package.json
+// Update each platform package.json and keep the root package pinned to the
+// same engine version. Native ABI mismatches should fail before publish, not
+// install an older platform package at runtime.
 for (const platform of platformPackages) {
   const pkgPath = path.join(npmDir, platform, "package.json");
   if (!fs.existsSync(pkgPath)) {
@@ -42,12 +44,15 @@ for (const platform of platformPackages) {
   } else {
     console.log(`  ${platform}: already ${version}`);
   }
+
+  const dependencyName = `@opengsd/engine-${platform}`;
+  if (rootPkg.optionalDependencies?.[dependencyName] !== version) {
+    rootPkg.optionalDependencies = rootPkg.optionalDependencies || {};
+    rootPkg.optionalDependencies[dependencyName] = version;
+    console.log(`  root optionalDependencies.${dependencyName}: ${version}`);
+  }
 }
 
-// Skip updating root optionalDependencies — they use a >=2.10.2 range
-// intentionally so that npm can fall back to the latest available
-// platform binary when the exact version hasn't been published yet
-// (e.g. main package published before native CI finishes).
-console.log("  root optionalDependencies: using range specifiers (not updating)");
+fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + "\n");
 
 console.log("[sync-platform-versions] Done.");

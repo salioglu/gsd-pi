@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { alignRight, padRight, visibleWidth } from "../utils.js";
+import { alignRight, jsVisibleWidth, padRight, visibleWidth } from "../utils.js";
 
 describe("TUI text utilities", () => {
 	it("padRight truncates and pads to exact visible width", () => {
@@ -18,5 +18,9 @@ describe("TUI text utilities", () => {
 
 		assert.equal(visibleWidth(aligned), 12);
 		assert.equal(visibleWidth(alignRight("left", "right", 6)), 6);
+	});
+
+	it("provides a JS visible-width fallback for render paths", () => {
+		assert.equal(jsVisibleWidth("\x1b[31ma\t世界\x1b[39m"), 8);
 	});
 });

@@ -120,7 +120,7 @@ jobs:
           npm run test:smoke
 
       - name: Verify native platform packages exist
-        run: npm run verify:native-platform-packages -- --any-version
+        run: npm run verify:native-platform-packages
 
       - name: Publish @${{ github.event.inputs.channel }}
         env:

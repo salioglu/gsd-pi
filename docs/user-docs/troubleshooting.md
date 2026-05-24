@@ -27,8 +27,9 @@ It checks:
 macOS / Linux:
 
 ```bash
+sudo npm uninstall -g gsd-pi
 rm -f ~/.gsd/.update-check ~/.gsd/agent/managed-resources.json
-npm install -g @opengsd/gsd-pi@latest
+sudo npm install -g @opengsd/gsd-pi@latest
 ```
 
 Windows PowerShell:
