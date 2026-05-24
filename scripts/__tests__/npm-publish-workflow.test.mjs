@@ -71,7 +71,8 @@ test("main package publish verifies native engine packages first", () => {
   const prereleaseVerifyIndex = prereleaseSteps.indexOf(prereleaseVerify);
 
   assert.ok(prereleaseVerify, "prerelease publish must verify native packages");
-  assert.match(prereleaseVerify.run, /npm run verify:native-platform-packages -- --any-version/);
+  assert.match(prereleaseVerify.run, /npm run verify:native-platform-packages/);
+  assert.doesNotMatch(prereleaseVerify.run, /--any-version/);
   assert.ok(prereleaseVerifyIndex > -1 && prereleaseVerifyIndex < prereleasePublishIndex);
 
   const prodSteps = workflow.jobs["prod-release"].steps;
