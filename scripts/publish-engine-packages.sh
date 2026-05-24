@@ -8,7 +8,7 @@ PLATFORMS=(darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-VERSION="$(node -p "require('./package.json').version")"
+VERSION="${ENGINE_VERSION:-$(node -p "require('./package.json').version")}"
 TAG_FLAG="${TAG_FLAG:-}"
 
 FAILED=()

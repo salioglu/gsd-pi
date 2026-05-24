@@ -30,6 +30,10 @@ on:
         options:
           - "false"
           - "true"
+      platform_version:
+        description: "Publish engine packages at this semver (defaults to package.json version; use before prod release when main is not bumped yet)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -160,10 +164,29 @@ jobs:
       - name: Sync platform package versions
         run: node native/scripts/sync-platform-versions.cjs
 
+      - name: Apply platform version override
+        if: github.event.inputs.platform_version != ''
+        env:
+          PLATFORM_VERSION: ${{ github.event.inputs.platform_version }}
+        run: |
+          for platform in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
+            node -e "
+              const fs = require('fs');
+              const path = 'native/npm/${platform}/package.json';
+              const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+              pkg.version = process.env.PLATFORM_VERSION;
+              fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+            "
+          done
+          echo "Engine packages set to version ${PLATFORM_VERSION}"
+
       - name: Detect prerelease version
         id: version-check
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION="${{ github.event.inputs.platform_version || '' }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+          fi
           if echo "$VERSION" | grep -q '-next\.'; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "tag_flag=--tag next" >> "$GITHUB_OUTPUT"
@@ -209,11 +232,15 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ github.event.inputs.publish_auth == 'token' && secrets.NPM_TOKEN || '' }}
           TAG_FLAG: ${{ steps.version-check.outputs.tag_flag }}
+          ENGINE_VERSION: ${{ github.event.inputs.platform_version || '' }}
         run: bash scripts/publish-engine-packages.sh
 
       - name: Verify platform packages are published
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION="${{ github.event.inputs.platform_version || '' }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+          fi
           echo "Verifying platform packages at version ${VERSION}..."
           # Exponential backoff: 5s, 10s, 20s, 30s, 30s (max 5 attempts, ~95s worst case vs fixed 30s + single check)
           DELAY=5
