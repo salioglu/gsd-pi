@@ -1878,11 +1878,15 @@ export async function pauseAuto(
 
   if (s.workerId) {
     try {
+      if (s.currentMilestoneId && s.milestoneLeaseToken) {
+        releaseMilestoneLease(s.workerId, s.currentMilestoneId, s.milestoneLeaseToken);
+      }
       markWorkerStopping(s.workerId);
     } catch (err) {
       logWarning("engine", `pause worker cleanup failed: ${getErrorMessage(err)}`, { file: "auto.ts" });
     }
     s.workerId = null;
+    s.milestoneLeaseToken = null;
   }
 
   deregisterSigtermHandler();
