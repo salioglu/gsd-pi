@@ -348,7 +348,7 @@ test("enterMilestone returns ok:false reason:lease-conflict when another worker 
   openDatabase(join(base, ".gsd", "gsd.db"));
   insertMilestone({ id: "M001", title: "Test", status: "active" });
   const holder = registerAutoWorker({ projectRootRealpath: base });
-  const contender = registerAutoWorker({ projectRootRealpath: base });
+  const contender = registerAutoWorker({ projectRootRealpath: join(base, "other-project") });
   const claim = claimMilestoneLease(holder, "M001");
   assert.equal(claim.ok, true);
 
