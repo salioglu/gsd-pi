@@ -1952,9 +1952,17 @@ export class AgentSession {
 						reason,
 						result: undefined,
 						aborted: true,
-						willRetry: false,
+						willRetry,
 					});
-					return false;
+					if (willRetry) {
+						const messages = this.agent.state.messages;
+						const lastMsg = messages[messages.length - 1];
+						if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
+							this.agent.state.messages = messages.slice(0, -1);
+						}
+						return true;
+					}
+					return this.agent.hasQueuedMessages();
 				}
 
 				if (extensionResult?.compaction) {

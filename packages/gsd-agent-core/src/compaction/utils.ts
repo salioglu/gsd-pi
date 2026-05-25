@@ -86,17 +86,21 @@ export function formatFileOperations(readFiles: string[], modifiedFiles: string[
 // Message Serialization
 // ============================================================================
 
-/** Maximum characters for a tool result in serialized summaries. */
-const TOOL_RESULT_MAX_CHARS = 2000;
+/** Maximum characters for each content block in serialized summaries. */
+const SUMMARY_CONTENT_MAX_CHARS = 2000;
 
 /**
- * Truncate text to a maximum character length for summarization.
- * Keeps the beginning and appends a truncation marker.
+ * Truncate text for summarization while preserving head and tail context.
  */
-function truncateForSummary(text: string, maxChars: number): string {
+export function truncateForSummary(text: string, maxChars: number): string {
 	if (text.length <= maxChars) return text;
-	const truncatedChars = text.length - maxChars;
-	return `${text.slice(0, maxChars)}\n\n[... ${truncatedChars} more characters truncated]`;
+
+	const tailChars = Math.floor(maxChars / 2);
+	const headChars = maxChars - tailChars;
+	const truncatedChars = text.length - headChars - tailChars;
+	const tail = tailChars > 0 ? `\n\n${text.slice(-tailChars)}` : "";
+
+	return `${text.slice(0, headChars)}\n\n[... ${truncatedChars} more characters truncated]${tail}`;
 }
 
 function cappedLength(text: string, maxChars: number): number {
@@ -120,10 +124,10 @@ export function estimateSerializedTokens(message: AgentMessage): number {
 		case "custom": {
 			const content = message.content;
 			if (typeof content === "string") {
-				chars = cappedLength(content, TOOL_RESULT_MAX_CHARS);
+				chars = cappedLength(content, SUMMARY_CONTENT_MAX_CHARS);
 			} else {
 				for (const block of content) {
-					if (block.type === "text" && block.text) chars += cappedLength(block.text, TOOL_RESULT_MAX_CHARS);
+					if (block.type === "text" && block.text) chars += cappedLength(block.text, SUMMARY_CONTENT_MAX_CHARS);
 				}
 			}
 			break;
@@ -131,9 +135,9 @@ export function estimateSerializedTokens(message: AgentMessage): number {
 		case "assistant": {
 			for (const block of message.content) {
 				if (block.type === "text") {
-					chars += cappedLength(block.text, TOOL_RESULT_MAX_CHARS);
+					chars += cappedLength(block.text, SUMMARY_CONTENT_MAX_CHARS);
 				} else if (block.type === "thinking") {
-					chars += cappedLength(block.thinking, TOOL_RESULT_MAX_CHARS);
+					chars += cappedLength(block.thinking, SUMMARY_CONTENT_MAX_CHARS);
 				} else if (block.type === "toolCall") {
 					chars += block.name.length + JSON.stringify(block.arguments).length;
 				}
@@ -141,7 +145,7 @@ export function estimateSerializedTokens(message: AgentMessage): number {
 			break;
 		}
 		case "bashExecution": {
-			chars = cappedLength(message.command + message.output, TOOL_RESULT_MAX_CHARS);
+			chars = cappedLength(message.command + message.output, SUMMARY_CONTENT_MAX_CHARS);
 			break;
 		}
 	}
@@ -154,7 +158,7 @@ export function estimateSerializedTokens(message: AgentMessage): number {
  * This prevents the model from treating it as a conversation to continue.
  * Call convertToLlm() first to handle custom message types.
  *
- * Tool results are truncated to keep the summarization request within
+ * Content blocks are truncated to keep the summarization request within
  * reasonable token budgets. Full content is not needed for summarization.
  */
 export function serializeConversation(messages: Message[]): string {
@@ -169,7 +173,9 @@ export function serializeConversation(messages: Message[]): string {
 							.filter((c): c is { type: "text"; text: string } => c.type === "text")
 							.map((c) => c.text)
 							.join("");
-			if (content) parts.push(`[User]: ${content}`);
+			if (content) {
+				parts.push(`**User said:** ${truncateForSummary(content, SUMMARY_CONTENT_MAX_CHARS)}`);
+			}
 		} else if (msg.role === "assistant") {
 			const textParts: string[] = [];
 			const thinkingParts: string[] = [];
@@ -190,13 +196,19 @@ export function serializeConversation(messages: Message[]): string {
 			}
 
 			if (thinkingParts.length > 0) {
-				parts.push(`[Assistant thinking]: ${thinkingParts.join("\n")}`);
+				parts.push(
+					`**Assistant thinking:** ${truncateForSummary(thinkingParts.join("\n"), SUMMARY_CONTENT_MAX_CHARS)}`,
+				);
 			}
 			if (textParts.length > 0) {
-				parts.push(`[Assistant]: ${textParts.join("\n")}`);
+				parts.push(
+					`**Assistant responded:** ${truncateForSummary(textParts.join("\n"), SUMMARY_CONTENT_MAX_CHARS)}`,
+				);
 			}
 			if (toolCalls.length > 0) {
-				parts.push(`[Assistant tool calls]: ${toolCalls.join("; ")}`);
+				parts.push(
+					`**Assistant tool calls:** ${truncateForSummary(toolCalls.join("; "), SUMMARY_CONTENT_MAX_CHARS)}`,
+				);
 			}
 		} else if (msg.role === "toolResult") {
 			const content = msg.content
@@ -204,7 +216,7 @@ export function serializeConversation(messages: Message[]): string {
 				.map((c) => c.text)
 				.join("");
 			if (content) {
-				parts.push(`[Tool result]: ${truncateForSummary(content, TOOL_RESULT_MAX_CHARS)}`);
+				parts.push(`**Tool result:** ${truncateForSummary(content, SUMMARY_CONTENT_MAX_CHARS)}`);
 			}
 		}
 	}
