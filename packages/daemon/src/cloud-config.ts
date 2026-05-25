@@ -1,5 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { lookup } from "node:dns/promises";
+import { lookup } from "node:dns";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { dirname } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -18,17 +20,10 @@ export async function exchangePairingCode(params: {
   runtimeName?: string;
 }): Promise<PairingExchangeResult> {
   const pairingUrl = new URL("/pairing/exchange", parseCloudGatewayUrl(params.gatewayUrl));
-  await validateGatewayNetworkTarget(pairingUrl);
-  const response = await fetch(pairingUrl, {
-    method: "POST",
-    redirect: "error",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code: params.code, runtimeName: params.runtimeName }),
+  const body = await postJsonToValidatedGateway(pairingUrl, {
+    code: params.code,
+    runtimeName: params.runtimeName,
   });
-  const body = await response.json().catch(() => ({})) as Record<string, unknown>;
-  if (!response.ok) {
-    throw new Error(typeof body.error === "string" ? body.error : `Pairing failed with HTTP ${response.status}`);
-  }
   if (typeof body.runtimeId !== "string" || typeof body.deviceToken !== "string") {
     throw new Error("Pairing response did not include runtimeId and deviceToken");
   }
@@ -121,15 +116,10 @@ function isPrivateIpHost(hostname: string): boolean {
   return false;
 }
 
-async function validateGatewayNetworkTarget(url: URL): Promise<void> {
+function validateGatewayNetworkTarget(url: URL): void {
   if (url.protocol === "http:" && isLoopbackHost(url.hostname)) return;
   if (isPrivateIpHost(url.hostname)) {
     throw new Error("Cloud gateway URL must not target private or loopback IP addresses");
-  }
-
-  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
-  if (addresses.length === 0 || addresses.some((address) => isPrivateIpHost(address.address))) {
-    throw new Error("Cloud gateway URL resolved to a private or loopback address");
   }
 }
 
@@ -160,4 +150,65 @@ function isPrivateIpv6(host: string): boolean {
 function writeConfigFile(configPath: string, contents: string): void {
   writeFileSync(configPath, contents, { encoding: "utf-8", mode: 0o600 });
   chmodSync(configPath, 0o600);
+}
+
+function postJsonToValidatedGateway(url: URL, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  validateGatewayNetworkTarget(url);
+  const body = JSON.stringify(payload);
+  const requestImpl = url.protocol === "https:" ? httpsRequest : httpRequest;
+  const allowLoopback = url.protocol === "http:" && isLoopbackHost(url.hostname);
+
+  return new Promise((resolve, reject) => {
+    const req = requestImpl({
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port,
+      path: `${url.pathname}${url.search}`,
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength(body),
+      },
+      lookup: (hostname, options, callback) => {
+        const lookupOptions = typeof options === "number"
+          ? { family: options, all: false }
+          : { ...options, all: false };
+        lookup(hostname, lookupOptions, (err, address, family) => {
+          if (err) return callback(err, address, family);
+          const resolvedAddress = Array.isArray(address) ? address[0]?.address : address;
+          if (!resolvedAddress || (!allowLoopback && isPrivateIpHost(resolvedAddress))) {
+            return callback(new Error("Cloud gateway URL resolved to a private or loopback address"), resolvedAddress, family);
+          }
+          callback(null, resolvedAddress, family);
+        });
+      },
+    }, (res) => {
+      const statusCode = res.statusCode ?? 0;
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      res.on("end", () => {
+        const responseText = Buffer.concat(chunks).toString("utf-8");
+        const parsed = parseJsonObject(responseText);
+        if (statusCode < 200 || statusCode >= 300) {
+          reject(new Error(typeof parsed.error === "string" ? parsed.error : `Pairing failed with HTTP ${statusCode}`));
+          return;
+        }
+        resolve(parsed);
+      });
+    });
+
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
 }

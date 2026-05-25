@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -93,32 +94,48 @@ test("pairing exchange rejects unsafe gateway URLs before making requests", asyn
   }
 });
 
-test("pairing exchange posts to a validated gateway URL", async () => {
-  const originalFetch = globalThis.fetch;
+test("pairing exchange posts to a validated gateway URL", async (t) => {
   let requestedUrl = "";
-  let redirectMode: RequestInit["redirect"];
+  let requestBody = "";
   const runtimeAuthValue = "runtime-auth-fixture";
-  globalThis.fetch = (async (input, init) => {
-    requestedUrl = String(input);
-    redirectMode = init?.redirect;
-    return {
-      ok: true,
-      json: async () => ({
+  const server = createServer((req, res) => {
+    requestedUrl = req.url ?? "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      requestBody += chunk;
+    });
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
         runtimeId: "rt1",
         ["device" + "Token"]: runtimeAuthValue,
-      }),
-    } as Response;
-  }) as typeof fetch;
+      }));
+    });
+  });
   try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EPERM") {
+      t.skip("loopback listen is blocked in this sandbox");
+      return;
+    }
+    throw err;
+  }
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
     const result = await exchangePairingCode({
-      gatewayUrl: "http://localhost:8787/base?ignored=true",
+      gatewayUrl: `http://127.0.0.1:${address.port}/base?ignored=true`,
       code: "ABCD1234",
     });
     assert.equal(result.runtimeId, "rt1");
     assert.equal(result.deviceToken, runtimeAuthValue);
-    assert.equal(requestedUrl, "http://localhost:8787/pairing/exchange");
-    assert.equal(redirectMode, "error");
+    assert.equal(requestedUrl, "/pairing/exchange");
+    assert.deepEqual(JSON.parse(requestBody), { code: "ABCD1234" });
   } finally {
-    globalThis.fetch = originalFetch;
+    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
   }
 });
