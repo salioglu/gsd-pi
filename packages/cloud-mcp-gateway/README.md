@@ -67,6 +67,6 @@ node packages/cloud-mcp-gateway/dist/cli.js --auth-store /secure/path/gsd-cloud-
 GSD_CLOUD_AUTH_STORE_PATH=/secure/path/gsd-cloud-auth.json node packages/cloud-mcp-gateway/dist/cli.js
 ```
 
-The auth store persists user tokens, device tokens, and pairing codes as SHA-256 hashes. Raw bearer tokens and device tokens are not written to disk.
+The auth store persists user tokens, device tokens, and pairing codes as salted scrypt-derived hashes. Raw bearer tokens and device tokens are not written to disk.
 
 `GSD_CLOUD_USER_TOKEN` seeds the initial user bearer token and is required at startup.

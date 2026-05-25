@@ -48,6 +48,10 @@ test("file auth store persists user and device auth without raw tokens", () => {
   assert.doesNotMatch(raw, /user-token/);
   assert.doesNotMatch(raw, new RegExp(issued.deviceToken));
   assert.doesNotMatch(raw, new RegExp(code));
+  const snapshot = JSON.parse(raw) as { userTokens: Array<Record<string, unknown>> };
+  assert.equal(typeof snapshot.userTokens[0]?.secretSalt, "string");
+  assert.equal(typeof snapshot.userTokens[0]?.secretHash, "string");
+  assert.equal(snapshot.userTokens[0]?.tokenHash, undefined);
 
   const second = new FileAuthStore(storePath);
   assert.equal(second.authenticateUser("user-token"), "u1");

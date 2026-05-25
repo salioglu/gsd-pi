@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -27,15 +27,20 @@ export interface DeviceTokenIssue {
 
 export interface AuthStoreSnapshot {
   version: 1;
-  userTokens: Array<UserTokenRecord & { tokenHash: string }>;
-  deviceTokens: Array<DeviceTokenRecord & { tokenHash: string }>;
-  pairingCodes: Array<PairingCodeRecord & { codeHash: string }>;
+  userTokens: Array<UserTokenRecord & SecretHashRecord>;
+  deviceTokens: Array<DeviceTokenRecord & SecretHashRecord>;
+  pairingCodes: Array<PairingCodeRecord & SecretHashRecord>;
+}
+
+export interface SecretHashRecord {
+  secretHash: string;
+  secretSalt: string;
 }
 
 export class InMemoryAuthStore {
-  protected readonly userTokens = new Map<string, UserTokenRecord>();
-  protected readonly deviceTokens = new Map<string, DeviceTokenRecord>();
-  protected readonly pairingCodes = new Map<string, PairingCodeRecord>();
+  protected readonly userTokens = new Map<string, UserTokenRecord & SecretHashRecord>();
+  protected readonly deviceTokens = new Map<string, DeviceTokenRecord & SecretHashRecord>();
+  protected readonly pairingCodes = new Map<string, PairingCodeRecord & SecretHashRecord>();
 
   constructor(seedUserToken?: { token: string; userId: string }, snapshot?: AuthStoreSnapshot) {
     if (snapshot) this.loadSnapshot(snapshot);
@@ -43,23 +48,23 @@ export class InMemoryAuthStore {
   }
 
   addUserToken(token: string, userId: string): void {
-    const key = hashSecret(token);
-    const existing = this.userTokens.get(key);
+    const existing = findSecretRecord(this.userTokens, token);
     if (existing?.userId === userId && !existing.revoked) return;
-    this.userTokens.set(key, { userId });
+    const key = deriveSecretHash(token);
+    this.userTokens.set(key.secretHash, { ...key, userId });
     this.afterMutation();
   }
 
   authenticateUser(token: string | undefined): string | null {
     if (!token) return null;
-    const record = this.userTokens.get(hashSecret(token));
+    const record = findSecretRecord(this.userTokens, token);
     if (!record || record.revoked) return null;
     return record.userId;
   }
 
   authenticateDevice(token: string | undefined): DeviceTokenRecord | null {
     if (!token) return null;
-    const record = this.deviceTokens.get(hashSecret(token));
+    const record = findSecretRecord(this.deviceTokens, token);
     if (!record || record.revoked) return null;
     return record;
   }
@@ -67,30 +72,32 @@ export class InMemoryAuthStore {
   createPairingCode(userId: string, ttlMs = 10 * 60 * 1000): { code: string; expiresAt: number } {
     const code = randomBytes(4).toString("hex").toUpperCase();
     const expiresAt = Date.now() + ttlMs;
-    this.pairingCodes.set(hashSecret(code), { userId, expiresAt });
+    const key = deriveSecretHash(code);
+    this.pairingCodes.set(key.secretHash, { ...key, userId, expiresAt });
     this.afterMutation();
     return { code, expiresAt };
   }
 
   exchangePairingCode(code: string, runtimeName?: string): DeviceTokenIssue {
     const normalized = code.trim().toUpperCase();
-    const codeHash = hashSecret(normalized);
-    const record = this.pairingCodes.get(codeHash);
-    if (!record || record.expiresAt < Date.now()) {
-      this.pairingCodes.delete(codeHash);
+    const codeEntry = findSecretEntry(this.pairingCodes, normalized);
+    if (!codeEntry || codeEntry[1].expiresAt < Date.now()) {
+      if (codeEntry) this.pairingCodes.delete(codeEntry[0]);
       this.afterMutation();
       throw new Error("Pairing code is invalid or expired");
     }
+    const [codeHash, record] = codeEntry;
     this.pairingCodes.delete(codeHash);
     const runtimeId = `rt_${randomUUID()}`;
     const deviceToken = `gsd_dev_${randomBytes(32).toString("hex")}`;
-    this.deviceTokens.set(hashSecret(deviceToken), { userId: record.userId, runtimeId, runtimeName });
+    const key = deriveSecretHash(deviceToken);
+    this.deviceTokens.set(key.secretHash, { ...key, userId: record.userId, runtimeId, runtimeName });
     this.afterMutation();
     return { userId: record.userId, runtimeId, deviceToken };
   }
 
   revokeDeviceToken(deviceToken: string): boolean {
-    const record = this.deviceTokens.get(hashSecret(deviceToken));
+    const record = findSecretRecord(this.deviceTokens, deviceToken);
     if (!record) return false;
     record.revoked = true;
     this.afterMutation();
@@ -100,9 +107,9 @@ export class InMemoryAuthStore {
   snapshot(): AuthStoreSnapshot {
     return {
       version: 1,
-      userTokens: Array.from(this.userTokens, ([tokenHash, record]) => ({ tokenHash, ...record })),
-      deviceTokens: Array.from(this.deviceTokens, ([tokenHash, record]) => ({ tokenHash, ...record })),
-      pairingCodes: Array.from(this.pairingCodes, ([codeHash, record]) => ({ codeHash, ...record })),
+      userTokens: Array.from(this.userTokens.values()),
+      deviceTokens: Array.from(this.deviceTokens.values()),
+      pairingCodes: Array.from(this.pairingCodes.values()),
     };
   }
 
@@ -112,19 +119,14 @@ export class InMemoryAuthStore {
 
   private loadSnapshot(snapshot: AuthStoreSnapshot): void {
     for (const record of snapshot.userTokens ?? []) {
-      this.userTokens.set(record.tokenHash, { userId: record.userId, revoked: record.revoked });
+      this.userTokens.set(record.secretHash, record);
     }
     for (const record of snapshot.deviceTokens ?? []) {
-      this.deviceTokens.set(record.tokenHash, {
-        userId: record.userId,
-        runtimeId: record.runtimeId,
-        runtimeName: record.runtimeName,
-        revoked: record.revoked,
-      });
+      this.deviceTokens.set(record.secretHash, record);
     }
     for (const record of snapshot.pairingCodes ?? []) {
       if (record.expiresAt >= Date.now()) {
-        this.pairingCodes.set(record.codeHash, { userId: record.userId, expiresAt: record.expiresAt });
+        this.pairingCodes.set(record.secretHash, record);
       }
     }
   }
@@ -173,8 +175,28 @@ export function extractBearerToken(header: string | string[] | undefined): strin
   return tokenStart < value.length ? value.slice(tokenStart) : undefined;
 }
 
-export function hashSecret(secret: string): string {
-  return createHash("sha256").update(secret, "utf8").digest("hex");
+export function deriveSecretHash(secret: string, secretSalt = randomBytes(16).toString("hex")): SecretHashRecord {
+  return {
+    secretHash: scryptSync(secret, secretSalt, 32).toString("hex"),
+    secretSalt,
+  };
+}
+
+function findSecretRecord<T extends SecretHashRecord>(records: Map<string, T>, secret: string): T | undefined {
+  return findSecretEntry(records, secret)?.[1];
+}
+
+function findSecretEntry<T extends SecretHashRecord>(records: Map<string, T>, secret: string): [string, T] | undefined {
+  for (const entry of records) {
+    if (secretMatches(entry[1], secret)) return entry;
+  }
+  return undefined;
+}
+
+function secretMatches(record: SecretHashRecord, secret: string): boolean {
+  const candidate = Buffer.from(deriveSecretHash(secret, record.secretSalt).secretHash, "hex");
+  const expected = Buffer.from(record.secretHash, "hex");
+  return candidate.length === expected.length && timingSafeEqual(candidate, expected);
 }
 
 function readSnapshot(filePath: string): AuthStoreSnapshot | undefined {
