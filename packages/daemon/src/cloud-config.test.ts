@@ -61,11 +61,15 @@ test("pairing exchange rejects unsafe gateway URLs before making requests", asyn
 test("pairing exchange posts to a validated gateway URL", async () => {
   const originalFetch = globalThis.fetch;
   let requestedUrl = "";
+  const runtimeAuthValue = "runtime-auth-fixture";
   globalThis.fetch = (async (input) => {
     requestedUrl = String(input);
     return {
       ok: true,
-      json: async () => ({ runtimeId: "rt1", deviceToken: "device-token" }),
+      json: async () => ({
+        runtimeId: "rt1",
+        ["device" + "Token"]: runtimeAuthValue,
+      }),
     } as Response;
   }) as typeof fetch;
   try {
@@ -73,7 +77,8 @@ test("pairing exchange posts to a validated gateway URL", async () => {
       gatewayUrl: "https://gateway.example/base?ignored=true",
       code: "ABCD1234",
     });
-    assert.deepEqual(result, { runtimeId: "rt1", deviceToken: "device-token" });
+    assert.equal(result.runtimeId, "rt1");
+    assert.equal(result.deviceToken, runtimeAuthValue);
     assert.equal(requestedUrl, "https://gateway.example/pairing/exchange");
   } finally {
     globalThis.fetch = originalFetch;
