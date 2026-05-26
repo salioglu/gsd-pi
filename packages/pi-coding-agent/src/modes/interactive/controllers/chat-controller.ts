@@ -47,8 +47,7 @@ type ToolRegistrationSource = "content" | "standalone";
 
 // Invocation matching only reconciles IDs reported by different event streams.
 // Same-source identical invocations are separate concurrent tool calls.
-const toolRegistrationSources = new WeakMap<ToolExecutionComponent, ToolRegistrationSource>();
-const invocationAliasedToolComponents = new WeakSet<ToolExecutionComponent>();
+const toolRegistrationSources = new WeakMap<ToolExecutionComponent, Set<ToolRegistrationSource>>();
 
 function findPendingToolByInvocation(
 	pendingTools: Map<string, ToolExecutionComponent>,
@@ -56,15 +55,18 @@ function findPendingToolByInvocation(
 	args: unknown,
 	source: ToolRegistrationSource,
 ): ToolExecutionComponent | undefined {
+	let fallback: ToolExecutionComponent | undefined;
 	for (const component of pendingTools.values()) {
 		if (!component.isInFlight()) continue;
-		if (toolRegistrationSources.get(component) === source) continue;
-		if (invocationAliasedToolComponents.has(component)) continue;
-		if (component.matchesInvocation(toolName, args)) {
+		if (!component.matchesInvocation(toolName, args)) continue;
+
+		const sources = toolRegistrationSources.get(component);
+		if (!sources?.has(source)) {
 			return component;
 		}
+		if (sources.size > 1 && !fallback) fallback = component;
 	}
-	return undefined;
+	return fallback;
 }
 
 function registerPendingToolComponent(
@@ -83,7 +85,7 @@ function registerPendingToolComponent(
 	const matched = findPendingToolByInvocation(host.pendingTools, toolName, args, source);
 	if (matched) {
 		host.pendingTools.set(toolCallId, matched);
-		invocationAliasedToolComponents.add(matched);
+		toolRegistrationSources.get(matched)?.add(source);
 		return { component: matched, created: false };
 	}
 
@@ -91,7 +93,7 @@ function registerPendingToolComponent(
 	component.setExpanded(host.toolOutputExpanded);
 	host.chatContainer.addChild(component);
 	host.pendingTools.set(toolCallId, component);
-	toolRegistrationSources.set(component, source);
+	toolRegistrationSources.set(component, new Set([source]));
 	return { component, created: true };
 }
 

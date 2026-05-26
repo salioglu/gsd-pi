@@ -100,8 +100,10 @@ Every row must have a matching entry in `scripts/pi-upstream.json` → `patchAll
 | Keybindings | `packages/pi-coding-agent/src/core/keybindings.ts` | Legacy `AppAction` names + `app.*` keybinding map |
 | Model registry shims | `packages/pi-coding-agent/src/core/model-registry.ts` | `discoverModels`, `isAllLocalChain`, `getApiKey`, GSD auth modes |
 | Settings shims | `packages/pi-coding-agent/src/core/settings-manager.ts` | Adaptive TUI, compaction override, gitignore picker |
+| Interactive stream dedup | `packages/pi-coding-agent/src/modes/interactive/controllers/chat-controller.ts`, `packages/pi-coding-agent/src/core/chat-controller-ordering.test.ts` | Reconcile mismatched tool IDs across event streams without collapsing parallel identical tools |
 | pi-tui shims | `style.ts`, `editor-keybindings.ts`, `Container.detachChildren`, `Markdown.maxLines`, `Input.secure`, `Image.getDimensions` | GSD interactive mode compat |
 | pi-ai shims | `ServerToolUse` / `WebSearchResult` types, `server_tool_use` event, `supportsXhigh()` | GSD content blocks + thinking level |
+| Tool argument normalization tests | `packages/pi-ai/src/utils/tests/normalize-tool-arguments.test.ts` | Regression coverage for shared validation/transcript argument normalization |
 | **Claude tool schemas** | `packages/pi-ai/src/providers/google-shared.ts` | Cloud Code Assist / Claude `input_schema` sanitization (`toClaudeInputSchemaRoot`, `normalizeClaudeToolSchemaForGoogle`) |
 | **Claude schema tests** | `packages/pi-ai/test/google-shared-convert-tools.test.ts`, `src/resources/extensions/gsd/tests/claude-tool-schema-golden.test.ts` | Golden B regression (PR 1) |
 | Theme path | `packages/pi-coding-agent/src/theme/` | Shared theme (not under `modes/`) |

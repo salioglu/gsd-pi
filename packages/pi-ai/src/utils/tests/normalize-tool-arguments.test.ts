@@ -1,4 +1,5 @@
-import { describe, expect, test } from "vitest";
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
 import { Type } from "@sinclair/typebox";
 import { normalizeToolArguments } from "../normalize-tool-arguments.js";
 import { validateToolArguments } from "../validation.js";
@@ -7,19 +8,19 @@ describe("normalizeToolArguments", () => {
 	test("aliases filePath to path for read", () => {
 		const args = { filePath: "src/app.js" };
 		normalizeToolArguments("read", args);
-		expect(args).toEqual({ path: "src/app.js" });
+		assert.deepEqual(args, { path: "src/app.js" });
 	});
 
 	test("aliases file_path to path for write", () => {
 		const args = { file_path: "src/app.js", content: "x" };
 		normalizeToolArguments("write", args);
-		expect(args).toEqual({ path: "src/app.js", content: "x" });
+		assert.deepEqual(args, { path: "src/app.js", content: "x" });
 	});
 
 	test("aliases file to path for read", () => {
 		const args = { file: ".gsd/milestones/M003/M003-CONTEXT.md" };
 		normalizeToolArguments("read", args);
-		expect(args).toEqual({ path: ".gsd/milestones/M003/M003-CONTEXT.md" });
+		assert.deepEqual(args, { path: ".gsd/milestones/M003/M003-CONTEXT.md" });
 	});
 
 	test("parses JSON-string tasks for subagent", () => {
@@ -27,13 +28,13 @@ describe("normalizeToolArguments", () => {
 			tasks: '[{"agent":"tester","task":"Evaluate Q3"}]',
 		};
 		normalizeToolArguments("subagent", args);
-		expect(args.tasks).toEqual([{ agent: "tester", task: "Evaluate Q3" }]);
+		assert.deepEqual(args.tasks, [{ agent: "tester", task: "Evaluate Q3" }]);
 	});
 
 	test("leaves non-JSON strings unchanged", () => {
 		const args = { tasks: "not-json" };
 		normalizeToolArguments("subagent", args);
-		expect(args.tasks).toBe("not-json");
+		assert.equal(args.tasks, "not-json");
 	});
 });
 
@@ -52,7 +53,7 @@ describe("validateToolArguments integration", () => {
 			name: "read",
 			arguments: { filePath: "README.md" },
 		});
-		expect(validated.path).toBe("README.md");
+		assert.equal(validated.path, "README.md");
 	});
 
 	test("accepts read calls that use file instead of path", () => {
@@ -69,6 +70,6 @@ describe("validateToolArguments integration", () => {
 			name: "read",
 			arguments: { file: "README.md" },
 		});
-		expect(validated.path).toBe("README.md");
+		assert.equal(validated.path, "README.md");
 	});
 });

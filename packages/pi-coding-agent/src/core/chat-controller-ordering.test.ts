@@ -1201,6 +1201,47 @@ test("chat-controller merges tool_execution_start and message_update when toolCa
 	assert.equal((rendered.match(/╭─ BASH/g) ?? []).length, 1, "bash card header must appear once");
 });
 
+test("chat-controller reuses an already merged tool component for a third alternate id", async () => {
+	(globalThis as any)[Symbol.for("@gsd/pi-coding-agent:theme")] = {
+		fg: (_key: string, text: string) => text,
+		bg: (_key: string, text: string) => text,
+		bold: (text: string) => text,
+		italic: (text: string) => text,
+		truncate: (text: string) => text,
+	};
+
+	const host = createHost();
+	host.getMarkdownThemeWithSettings = () => ({});
+
+	const toolBlock = { type: "toolCall", id: "content-id", name: "read", arguments: { path: "README.md" } };
+
+	await handleAgentEvent(host, { type: "message_start", message: makeAssistant([]) } as any);
+	await handleAgentEvent(host, {
+		type: "tool_execution_start",
+		toolCallId: "exec-id",
+		toolName: "read",
+		args: { filePath: "README.md" },
+	} as any);
+	await handleAgentEvent(host, {
+		type: "message_update",
+		message: makeAssistant([toolBlock]),
+		assistantMessageEvent: {
+			type: "toolcall_end",
+			contentIndex: 0,
+			toolCall: toolBlock,
+			partial: makeAssistant([toolBlock]),
+		},
+	} as any);
+	await handleAgentEvent(host, {
+		type: "tool_execution_start",
+		toolCallId: "exec-id-2",
+		toolName: "read",
+		args: { path: "README.md" },
+	} as any);
+
+	assert.equal(host.chatContainer.children.length, 1, "alternate ids for one in-flight tool must reuse one card");
+});
+
 test("chat-controller keeps parallel identical tool_execution_start calls separate", async () => {
 	(globalThis as any)[Symbol.for("@gsd/pi-coding-agent:theme")] = {
 		fg: (_key: string, text: string) => text,
@@ -1223,6 +1264,47 @@ test("chat-controller keeps parallel identical tool_execution_start calls separa
 	}
 
 	assert.equal(host.chatContainer.children.length, 2, "identical in-flight tools must render as separate cards");
+	assert.notEqual(host.chatContainer.children[0], host.chatContainer.children[1]);
+});
+
+test("chat-controller keeps parallel identical content tool calls separate", async () => {
+	(globalThis as any)[Symbol.for("@gsd/pi-coding-agent:theme")] = {
+		fg: (_key: string, text: string) => text,
+		bg: (_key: string, text: string) => text,
+		bold: (text: string) => text,
+		italic: (text: string) => text,
+		truncate: (text: string) => text,
+	};
+
+	const host = createHost();
+	host.getMarkdownThemeWithSettings = () => ({});
+
+	const first = { type: "toolCall", id: "content-a", name: "read", arguments: { path: "/tmp/same.txt" } };
+	const second = { type: "toolCall", id: "content-b", name: "read", arguments: { path: "/tmp/same.txt" } };
+
+	await handleAgentEvent(host, { type: "message_start", message: makeAssistant([]) } as any);
+	await handleAgentEvent(host, {
+		type: "message_update",
+		message: makeAssistant([first]),
+		assistantMessageEvent: {
+			type: "toolcall_end",
+			contentIndex: 0,
+			toolCall: first,
+			partial: makeAssistant([first]),
+		},
+	} as any);
+	await handleAgentEvent(host, {
+		type: "message_update",
+		message: makeAssistant([first, second]),
+		assistantMessageEvent: {
+			type: "toolcall_end",
+			contentIndex: 1,
+			toolCall: second,
+			partial: makeAssistant([first, second]),
+		},
+	} as any);
+
+	assert.equal(host.chatContainer.children.length, 2, "identical content tool calls must render as separate cards");
 	assert.notEqual(host.chatContainer.children[0], host.chatContainer.children[1]);
 });
 
