@@ -43,13 +43,23 @@ let renderedSegments: RenderedSegment[] = [];
 // claude-code MCP pruning can remove stale provisional text later.
 let orphanedSegments: RenderedSegment[] = [];
 
+type ToolRegistrationSource = "content" | "standalone";
+
+// Invocation matching only reconciles IDs reported by different event streams.
+// Same-source identical invocations are separate concurrent tool calls.
+const toolRegistrationSources = new WeakMap<ToolExecutionComponent, ToolRegistrationSource>();
+const invocationAliasedToolComponents = new WeakSet<ToolExecutionComponent>();
+
 function findPendingToolByInvocation(
 	pendingTools: Map<string, ToolExecutionComponent>,
 	toolName: string,
 	args: unknown,
+	source: ToolRegistrationSource,
 ): ToolExecutionComponent | undefined {
 	for (const component of pendingTools.values()) {
 		if (!component.isInFlight()) continue;
+		if (toolRegistrationSources.get(component) === source) continue;
+		if (invocationAliasedToolComponents.has(component)) continue;
 		if (component.matchesInvocation(toolName, args)) {
 			return component;
 		}
@@ -62,6 +72,7 @@ function registerPendingToolComponent(
 	toolCallId: string,
 	toolName: string,
 	args: unknown,
+	source: ToolRegistrationSource,
 	createComponent: () => ToolExecutionComponent,
 ): { component: ToolExecutionComponent; created: boolean } {
 	const existing = host.pendingTools.get(toolCallId);
@@ -69,9 +80,10 @@ function registerPendingToolComponent(
 		return { component: existing, created: false };
 	}
 
-	const matched = findPendingToolByInvocation(host.pendingTools, toolName, args);
+	const matched = findPendingToolByInvocation(host.pendingTools, toolName, args, source);
 	if (matched) {
 		host.pendingTools.set(toolCallId, matched);
+		invocationAliasedToolComponents.add(matched);
 		return { component: matched, created: false };
 	}
 
@@ -79,6 +91,7 @@ function registerPendingToolComponent(
 	component.setExpanded(host.toolOutputExpanded);
 	host.chatContainer.addChild(component);
 	host.pendingTools.set(toolCallId, component);
+	toolRegistrationSources.set(component, source);
 	return { component, created: true };
 }
 
@@ -495,6 +508,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 							content.id,
 							content.name,
 							content.arguments,
+							"content",
 							() =>
 								new ToolExecutionComponent(
 									content.name,
@@ -511,6 +525,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 							content.id,
 							content.name,
 							content.input ?? {},
+							"content",
 							() =>
 								new ToolExecutionComponent(
 									content.name,
@@ -959,6 +974,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 				event.toolCallId,
 				event.toolName,
 				event.args,
+				"standalone",
 				() =>
 					new ToolExecutionComponent(
 						event.toolName,

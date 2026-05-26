@@ -1201,6 +1201,31 @@ test("chat-controller merges tool_execution_start and message_update when toolCa
 	assert.equal((rendered.match(/╭─ BASH/g) ?? []).length, 1, "bash card header must appear once");
 });
 
+test("chat-controller keeps parallel identical tool_execution_start calls separate", async () => {
+	(globalThis as any)[Symbol.for("@gsd/pi-coding-agent:theme")] = {
+		fg: (_key: string, text: string) => text,
+		bg: (_key: string, text: string) => text,
+		bold: (text: string) => text,
+		italic: (text: string) => text,
+		truncate: (text: string) => text,
+	};
+
+	const host = createHost();
+	host.getMarkdownThemeWithSettings = () => ({});
+
+	for (const toolCallId of ["read-a", "read-b"]) {
+		await handleAgentEvent(host, {
+			type: "tool_execution_start",
+			toolCallId,
+			toolName: "read",
+			args: { path: "/tmp/same.txt" },
+		} as any);
+	}
+
+	assert.equal(host.chatContainer.children.length, 2, "identical in-flight tools must render as separate cards");
+	assert.notEqual(host.chatContainer.children[0], host.chatContainer.children[1]);
+});
+
 // Regression test for issue #4144: interleaved text/tool content must render in content[] index order.
 // Stream: [text "A", toolCall T1, text "B", toolCall T2, text "C"]
 // Expected chatContainer order: textRun(A), toolExec(T1), textRun(B), toolExec(T2), textRun(C)
