@@ -2,7 +2,7 @@
 // Run: npm run prototype:tui-design [-- all|<id>]
 
 import { alignRight, padRight, style, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
-import { theme, type ThemeColor } from "../../theme/theme.js";
+import { theme, type ThemeColor } from "@gsd/pi-coding-agent/theme/theme.js";
 import type { StatusTone } from "../transcript-design.js";
 import { buildTreePrefix } from "../tree-render-utils.js";
 import {

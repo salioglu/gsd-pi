@@ -4,7 +4,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { Text } from "@gsd/pi-tui";
 
-import { initTheme } from "../theme/theme.js";
+import { initTheme } from "@gsd/pi-coding-agent/theme/theme.js";
 import { chatTurnFollowsUser } from "./chat-turn-connect.js";
 import { ToolExecutionComponent } from "./tool-execution.js";
 import { UserMessageComponent } from "./user-message.js";

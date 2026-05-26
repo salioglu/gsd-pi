@@ -3,7 +3,7 @@
 // Run: npm run prototype:tui-density [-- current|compact|tight-tools|minimal|all]
 
 import { alignRight, padRight, style, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
-import { theme, type ThemeColor } from "../../theme/theme.js";
+import { theme, type ThemeColor } from "@gsd/pi-coding-agent/theme/theme.js";
 import type { StatusTone } from "../transcript-design.js";
 
 const USER_LABEL = "YOU";
