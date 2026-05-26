@@ -410,6 +410,7 @@ jobs:
       - name: Post-publish MCP server smoke test
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.platform_packages_only != 'true'
         run: |
+          set -o pipefail
           VERSION=$(node -p "require('./package.json').version")
           TMPDIR=$(mktemp -d)
           cd "$TMPDIR"
