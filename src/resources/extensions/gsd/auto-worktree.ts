@@ -1113,10 +1113,48 @@ export function checkoutBranchWithStashGuard(
       popStashByRef(basePath, stashMarker);
     } catch (popErr) {
       const msg = popErr instanceof Error ? popErr.message : String(popErr);
+      const stderr = popErr && typeof popErr === "object"
+        ? (popErr as { stderr?: unknown }).stderr
+        : undefined;
+      const stderrText = typeof stderr === "string"
+        ? stderr
+        : stderr instanceof Uint8Array
+          ? Buffer.from(stderr).toString("utf-8")
+          : "";
+      const stashPopMessage = `${stderrText}\n${msg}`;
+      const alreadyExists = stashAlreadyExistsFilesFromError(popErr);
+      const gsdAlreadyExists = alreadyExists.filter((f) => f.startsWith(".gsd/"));
+      const nonGsdAlreadyExists = alreadyExists.filter((f) => !f.startsWith(".gsd/"));
+      const isUntrackedRestoreFailure = stashPopMessage.includes("could not restore untracked files from stash");
+      const ref = stashRefFromError(popErr);
+
+      if (isUntrackedRestoreFailure && gsdAlreadyExists.length > 0 && nonGsdAlreadyExists.length === 0) {
+        for (const f of gsdAlreadyExists) {
+          execFileSync("git", ["checkout", "HEAD", "--", f], {
+            cwd: basePath,
+            stdio: ["ignore", "pipe", "pipe"],
+            encoding: "utf-8",
+          });
+          nativeAddPaths(basePath, [f]);
+        }
+        if (ref) {
+          try {
+            execFileSync("git", ["stash", "drop", ref], {
+              cwd: basePath,
+              stdio: ["ignore", "pipe", "pipe"],
+              encoding: "utf-8",
+            });
+          } catch (dropErr) {
+            logWarning("worktree", `git stash drop failed: ${dropErr instanceof Error ? dropErr.message : String(dropErr)}`);
+          }
+        } else {
+          logWarning("worktree", "recorded stash entry could not be resolved; skipping automatic drop");
+        }
+        return;
+      }
       const wrapped = new Error(
         `checkout to '${branch}' succeeded but stash restore failed; working tree changes remain in the stash list. Original error: ${msg}`,
       );
-      const ref = (popErr as { stashRef?: string } | null)?.stashRef;
       if (ref) (wrapped as { stashRef?: string }).stashRef = ref;
       throw wrapped;
     }
