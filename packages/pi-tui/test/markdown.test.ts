@@ -432,7 +432,7 @@ describe("Markdown component", () => {
 			// even if it was split across multiple wrapped lines.
 			const extracted = plainLines.join("").replace(/[│├┤─\s]/g, "");
 			assert.ok(extracted.includes("prefix"), "Should preserve 'prefix'");
-			assert.ok(extracted.includes("example.com"), "Should preserve URL host");
+			assert.ok(extracted.includes(url), "Should preserve URL");
 		});
 
 		it("should wrap styled inline code inside table cells without breaking borders", () => {
