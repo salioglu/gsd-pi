@@ -1114,6 +1114,58 @@ test('── markdown-renderer: detectStaleRenders finds roadmap checkbox mismat
   }
 });
 
+test('── markdown-renderer: repairStaleRenders reads worktree roadmap projection ──', async () => {
+  const tmpDir = makeTmpDir();
+  const worktreeDir = path.join(tmpDir, '.gsd', 'worktrees', 'M001');
+  const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+  clearAllCaches();
+
+  try {
+    const projectMilestoneDir = path.join(tmpDir, '.gsd', 'milestones', 'M001');
+    const projectionMilestoneDir = path.join(worktreeDir, '.gsd', 'milestones', 'M001');
+    fs.mkdirSync(projectMilestoneDir, { recursive: true });
+    fs.mkdirSync(projectionMilestoneDir, { recursive: true });
+
+    insertMilestone({ id: 'M001', title: 'Test', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Core', status: 'complete' });
+
+    const staleRoadmap = makeRoadmapContent([
+      { id: 'S01', title: 'Core', done: false },
+    ]);
+    const projectRoadmapPath = path.join(projectMilestoneDir, 'M001-ROADMAP.md');
+    const projectionRoadmapPath = path.join(projectionMilestoneDir, 'M001-ROADMAP.md');
+    fs.writeFileSync(projectRoadmapPath, staleRoadmap);
+    fs.writeFileSync(projectionRoadmapPath, staleRoadmap);
+    clearAllCaches();
+
+    const staleBefore = detectStaleRenders(worktreeDir);
+    assert.ok(
+      staleBefore.some(s => s.path === projectionRoadmapPath && s.reason.includes('S01')),
+      'worktree projection roadmap should be detected as stale',
+    );
+    assert.ok(
+      staleBefore.every(s => s.path !== projectRoadmapPath),
+      'project mirror roadmap should not be used for worktree stale detection',
+    );
+
+    const repaired = await repairStaleRenders(worktreeDir);
+    assert.ok(repaired > 0, 'repairStaleRenders should repair the worktree projection');
+
+    clearAllCaches();
+    const staleAfter = detectStaleRenders(worktreeDir);
+    assert.deepStrictEqual(staleAfter, [], 'worktree stale roadmap should be clear after repair');
+
+    const projectContent = fs.readFileSync(projectRoadmapPath, 'utf-8');
+    const projectionContent = fs.readFileSync(projectionRoadmapPath, 'utf-8');
+    assert.ok(projectContent.includes('[ ] **S01:'), 'project mirror roadmap is left unchanged');
+    assert.ok(projectionContent.includes('[x] **S01:'), 'worktree projection roadmap is repaired');
+  } finally {
+    closeDatabase();
+    cleanupDir(tmpDir);
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Stale Detection — Missing Task Summary
 // ═══════════════════════════════════════════════════════════════════════════

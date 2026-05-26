@@ -29,7 +29,6 @@ import type { MilestoneRow, ArtifactRow } from "./db-milestone-artifact-rows.js"
 import type { SliceRow, TaskRow } from "./db-task-slice-rows.js";
 import type { GateRow } from "./types.js";
 import {
-  resolveMilestoneFile,
   resolveDir,
   resolveFile,
   resolveSliceFile,
@@ -107,6 +106,15 @@ function loadArtifactContent(
   }
 
   return null;
+}
+
+function resolveRoadmapProjectionPath(basePath: string, milestoneId: string): string {
+  const projectionMilestonesDir = join(gsdProjectionRoot(basePath), "milestones");
+  const milestoneDirName = resolveDir(projectionMilestonesDir, milestoneId) ?? milestoneId;
+  const milestoneDir = join(projectionMilestonesDir, milestoneDirName);
+  const roadmapFileName = resolveFile(milestoneDir, milestoneId, "ROADMAP") ??
+    buildMilestoneFileName(milestoneId, "ROADMAP");
+  return join(milestoneDir, roadmapFileName);
 }
 
 /**
@@ -441,12 +449,7 @@ export async function renderRoadmapFromDb(
   }
 
   const slices = getMilestoneSlices(milestoneId);
-  const projectionMilestonesDir = join(gsdProjectionRoot(basePath), "milestones");
-  const milestoneDirName = resolveDir(projectionMilestonesDir, milestoneId) ?? milestoneId;
-  const milestoneDir = join(projectionMilestonesDir, milestoneDirName);
-  const roadmapFileName = resolveFile(milestoneDir, milestoneId, "ROADMAP") ??
-    buildMilestoneFileName(milestoneId, "ROADMAP");
-  const absPath = join(milestoneDir, roadmapFileName);
+  const absPath = resolveRoadmapProjectionPath(basePath, milestoneId);
   const artifactPath = toArtifactPath(absPath, basePath);
   const content = renderRoadmapMarkdown(milestone, slices);
 
@@ -768,8 +771,8 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
     const slices = getMilestoneSlices(milestone.id);
 
     // ── Check roadmap checkbox state ──────────────────────────────────
-    const roadmapPath = resolveMilestoneFile(basePath, milestone.id, "ROADMAP");
-    if (roadmapPath && existsSync(roadmapPath)) {
+    const roadmapPath = resolveRoadmapProjectionPath(basePath, milestone.id);
+    if (existsSync(roadmapPath)) {
       try {
         const content = readFileSync(roadmapPath, "utf-8");
         const parsed = parseRoadmap(content);
