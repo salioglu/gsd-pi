@@ -57,7 +57,8 @@ export type {
 } from "../gsd-seam-types.js";
 
 export type { ExecOptions, ExecResult } from "../exec.js";
-export type { AppKeybinding, BuildSystemPromptOptions, KeybindingsManager } from "../keybindings.js";
+export type { BuildSystemPromptOptions } from "../system-prompt.js";
+export type { AppKeybinding, KeybindingsManager } from "../keybindings.js";
 export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode } from "@gsd/pi-agent-core";
 
 export * from "./extension-upstream-types.js";
