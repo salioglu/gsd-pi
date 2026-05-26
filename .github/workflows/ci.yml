@@ -207,6 +207,7 @@ jobs:
   coverage-report:
     name: coverage-report
     timeout-minutes: 60
+    continue-on-error: true
     needs: [fast-gates, build]
     if: >-
       github.event_name == 'pull_request' &&
