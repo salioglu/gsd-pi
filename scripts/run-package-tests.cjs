@@ -156,13 +156,27 @@ function main() {
 
 	for (const pkg of packages) {
 		if (pkg.packageName === '@gsd/pi-ai') {
-			process.stderr.write(`\nRunning ${pkg.packageName} package tests via vitest...\n`)
-			if (
-				runPackageScript(getNpmCommand(), ['run', 'test', '-w', pkg.packageName], REPO_ROOT, pkg.packageName) !==
-				0
-			) {
-				failureCount += 1
+			const files = findDistTestFiles(pkg.path)
+			const vitestOnly = /\/(agent-shim|mcp-tool-name|tool-search-shim)\.test\.js$/
+			const vitestFiles = files.filter((file) => vitestOnly.test(file))
+			const nodeTestFiles = files.filter((file) => !vitestOnly.test(file))
+			let ok = true
+			process.stderr.write(`\nRunning ${pkg.packageName} package tests...\n`)
+			if (nodeTestFiles.length > 0) {
+				ok =
+					runCommand(process.execPath, ['--test', ...nodeTestFiles], REPO_ROOT, `${pkg.packageName} (node:test)`) ===
+					0 && ok
 			}
+			if (vitestFiles.length > 0) {
+				ok =
+					runCommand(
+						'npx',
+						['vitest', 'run', '--config', join(pkg.path, 'vitest.config.ts'), ...vitestFiles],
+						pkg.path,
+						`${pkg.packageName} (vitest)`,
+					) === 0 && ok
+			}
+			if (!ok) failureCount += 1
 			continue
 		}
 
