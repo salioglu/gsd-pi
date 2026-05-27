@@ -28,7 +28,7 @@ const DEFAULT_CONTEXT_FILES = [
 const CONTRACT_SURFACES = [
   {
     surface: "runtime",
-    path: "packages/pi-coding-agent/src/modes/rpc/rpc-types.ts",
+    path: "packages/gsd-agent-modes/src/modes/rpc/rpc-types.ts",
   },
   {
     surface: "rpcClient",

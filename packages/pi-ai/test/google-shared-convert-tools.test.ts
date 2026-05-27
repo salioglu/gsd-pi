@@ -544,7 +544,7 @@ describe("google-shared convertMessages", () => {
 		expect(contents).toEqual([
 			{
 				role: "user",
-				parts: [{ text: "describe this" }],
+				parts: [{ text: "describe this" }, { text: "(image omitted: model does not support images)" }],
 			},
 		]);
 	});

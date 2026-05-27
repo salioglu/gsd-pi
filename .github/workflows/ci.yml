@@ -145,14 +145,24 @@ jobs:
 
       - uses: ./.github/actions/restore-ci-build-artifacts
 
-      - name: Run unit tests
+      - name: Run unit tests with coverage
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: |
           npm run test:compile
-          npm run test:unit:compiled
+          npm run test:coverage:unit
+
+      - name: Upload unit coverage
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-unit-lcov
+          path: coverage/unit
+          if-no-files-found: error
+          retention-days: 1
 
   test-packages:
     name: test-packages
-    timeout-minutes: 15
+    timeout-minutes: 25
     needs: [fast-gates, build]
     if: needs.fast-gates.outputs.heavy-code-changed == 'true'
     runs-on: ubuntu-latest
@@ -171,8 +181,18 @@ jobs:
 
       - uses: ./.github/actions/restore-ci-build-artifacts
 
-      - name: Run package tests
-        run: npm run test:packages:compiled
+      - name: Run package tests with coverage
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: npm run test:coverage:packages
+
+      - name: Upload package coverage
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-packages-lcov
+          path: coverage/packages
+          if-no-files-found: error
+          retention-days: 1
 
   test-coverage:
     name: test-coverage
@@ -204,9 +224,63 @@ jobs:
       - name: Check test coverage thresholds
         run: npm run test:coverage
 
+  coverage-report:
+    name: coverage-report
+    timeout-minutes: 10
+    continue-on-error: true
+    needs: [fast-gates, test-unit, test-packages, integration-tests]
+    if: >-
+      always() &&
+      needs.fast-gates.result == 'success' &&
+      needs.fast-gates.outputs.heavy-code-changed == 'true' &&
+      github.event_name == 'pull_request' &&
+      needs.test-unit.result == 'success' &&
+      needs.test-packages.result == 'success' &&
+      needs.integration-tests.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Download unit coverage
+        uses: actions/download-artifact@v5
+        with:
+          name: coverage-unit-lcov
+          path: coverage/unit
+
+      - name: Download package coverage
+        uses: actions/download-artifact@v5
+        with:
+          name: coverage-packages-lcov
+          path: coverage/packages
+
+      - name: Download integration coverage
+        uses: actions/download-artifact@v5
+        with:
+          name: coverage-integration-lcov
+          path: coverage/integration
+
+      - name: Merge coverage reports
+        run: npm run test:coverage:merge
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-report
+          path: |
+            coverage/lcov.info
+            coverage/file-index.json
+          if-no-files-found: error
+          retention-days: 14
+
   integration-tests:
     name: integration-tests
-    timeout-minutes: 25
+    timeout-minutes: 40
     needs: [fast-gates, build]
     if: needs.fast-gates.outputs.heavy-code-changed == 'true'
     runs-on: ubuntu-latest
@@ -230,8 +304,18 @@ jobs:
 
       - uses: ./.github/actions/cache-nextjs
 
-      - name: Run integration tests
-        run: npm run test:integration
+      - name: Run integration tests with coverage
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: npm run test:coverage:integration
+
+      - name: Upload integration coverage
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-integration-lcov
+          path: coverage/integration
+          if-no-files-found: error
+          retention-days: 1
 
   e2e:
     name: e2e

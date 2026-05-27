@@ -445,13 +445,29 @@ async function consumeChatStream(
 	}
 }
 
+function stripSymbolKeys(value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value.map((item) => stripSymbolKeys(item));
+	}
+
+	if (value && typeof value === "object") {
+		const result: Record<string, unknown> = {};
+		for (const [key, entry] of Object.entries(value)) {
+			result[key] = stripSymbolKeys(entry);
+		}
+		return result;
+	}
+
+	return value;
+}
+
 function toFunctionTools(tools: Tool[]): Array<FunctionTool & { type: "function" }> {
 	return tools.map((tool) => ({
 		type: "function",
 		function: {
 			name: tool.name,
 			description: tool.description,
-			parameters: tool.parameters as unknown as Record<string, unknown>,
+			parameters: stripSymbolKeys(tool.parameters) as Record<string, unknown>,
 			strict: false,
 		},
 	}));

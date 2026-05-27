@@ -1,6 +1,6 @@
 # ADR-010: Pi Clean Seam Architecture
 
-**Status:** Proposed
+**Status:** Accepted (Phase 1 implemented)
 **Date:** 2026-04-14
 **Deciders:** Tom Boucher
 **PRD:** [PRD-pi-clean-seam-refactor.md](./PRD-pi-clean-seam-refactor.md)
@@ -9,7 +9,7 @@
 
 ## Context
 
-GSD vendors four packages from [pi-mono](https://github.com/badlogic/pi-mono) (an open-source coding agent framework) by copying their source directly into `/packages/`:
+GSD vendors four packages from [earendil-works/pi](https://github.com/earendil-works/pi) (formerly `badlogic/pi-mono`, an open-source coding agent framework) by copying their source directly into `/packages/`:
 
 | Package | Role | Current version |
 |---|---|---|

@@ -97,6 +97,8 @@ if (require.main === module) {
     'pi-ai',
     'pi-agent-core',
     'pi-coding-agent',
+    'gsd-agent-core',
+    'gsd-agent-modes',
     'rpc-client',
     'mcp-server',
   ]
@@ -109,9 +111,13 @@ if (require.main === module) {
 
   for (const pkg of stale) {
     const pkgDir = join(packagesDir, pkg)
+    const distIndex = join(pkgDir, 'dist', 'index.js')
     try {
       // execSync is safe here: the command is a hardcoded string, not user input
       execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' })
+      if (!existsSync(distIndex)) {
+        throw new Error('build finished but dist/index.js is missing (stale TypeScript incremental cache?)')
+      }
       process.stderr.write(`  ✓ ${pkg}\n`)
     } catch (err) {
       process.stderr.write(`  ✗ ${pkg} build failed: ${err.message}\n`)
