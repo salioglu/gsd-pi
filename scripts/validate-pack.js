@@ -50,27 +50,39 @@ try {
   npmCacheDir = mkdtempSync(join(tmpdir(), 'validate-pack-npm-cache-'));
   mkdirSync(npmCacheDir, { recursive: true });
 
-  // --- Guard: @gsd/* workspace packages must not have @gsd/* cross-deps ---
-  // (@opengsd/* packages CAN depend on each other — e.g., mcp-server depends
-  // on rpc-client — because they are both published to the registry.)
-  console.log('==> Checking workspace packages for @gsd/* cross-deps...');
+  // --- Guard: bundled @gsd/* workspace package graph must be fully covered ---
+  // Internal @gsd/* packages are shipped inside the main tarball rather than
+  // resolved from the public registry. Every @gsd/* dependency that appears in
+  // a shipped workspace package must therefore also be listed in the root
+  // package's bundledDependencies set.
+  console.log('==> Checking bundled workspace package coverage for @gsd/* cross-deps...');
+  const rootPkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const bundled = new Set(rootPkg.bundledDependencies || []);
   let crossFailed = false;
 
   for (const ws of getCorePackages()) {
     const pkg = JSON.parse(readFileSync(ws.packageJsonPath, 'utf8'));
     const deps = Object.keys(pkg.dependencies || {}).filter(d => d.startsWith('@gsd/'));
-    if (deps.length) {
-      console.log(`    LEAKED in ${ws.dir}: ${deps.join(', ')}`);
+    const uncovered = deps.filter((dep) => !bundled.has(dep));
+    if (uncovered.length) {
+      console.log(`    UNCOVERED in ${ws.dir}: ${uncovered.join(', ')}`);
       crossFailed = true;
     }
   }
 
+  const rootInternalDeps = Object.keys(rootPkg.dependencies || {}).filter((dep) => dep.startsWith('@gsd/'));
+  const missingRootBundles = rootInternalDeps.filter((dep) => !bundled.has(dep));
+  if (missingRootBundles.length) {
+    console.log(`    ROOT bundledDependencies missing: ${missingRootBundles.join(', ')}`);
+    crossFailed = true;
+  }
+
   if (crossFailed) {
-    console.log('ERROR: Workspace packages have @gsd/* cross-dependencies.');
-    console.log('    These cause 404s when npm resolves them from the registry.');
+    console.log('ERROR: Internal @gsd/* dependencies are not fully bundled by the root package.');
+    console.log('    Add every shipped @gsd/* dependency to root dependencies + bundledDependencies.');
     process.exit(1);
   }
-  console.log('    No @gsd/* cross-dependencies.');
+  console.log('    Bundled dependency coverage is complete.');
 
   // --- Pack tarball ---
   console.log('==> Packing tarball...');

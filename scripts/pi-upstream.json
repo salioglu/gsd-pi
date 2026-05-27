@@ -20,10 +20,11 @@
     "packages/gsd-agent-modes"
   ],
   "patchAllowlist": [
+    "packages/pi-ai/src/providers/fake.ts",
+    "packages/pi-ai/src/models/fake-model.ts",
     "packages/pi-ai/src/providers/google-shared.ts",
     "packages/pi-ai/src/providers/mistral.ts",
     "packages/pi-ai/src/providers/provider-capabilities.ts",
-    "packages/pi-ai/src/providers/provider-capabilities.test.ts",
     "packages/pi-ai/src/utils/tests/normalize-tool-arguments.test.ts",
     "packages/pi-ai/test/google-shared-convert-tools.test.ts",
     "packages/pi-coding-agent/src/agent-core.d.ts",
@@ -40,15 +41,12 @@
     "packages/pi-coding-agent/src/core/capability-patches.ts",
     "packages/pi-coding-agent/src/core/bash-interceptor.ts",
     "packages/pi-coding-agent/src/core/constants.ts",
-    "packages/pi-coding-agent/src/core/chat-controller-ordering.test.ts",
-    "packages/pi-coding-agent/src/core/sdk-tool-filter.test.ts",
     "packages/pi-coding-agent/src/core/tools/tool-compatibility-registry.ts",
-    "packages/pi-coding-agent/src/modes/interactive/controllers/chat-controller.ts",
     "packages/pi-coding-agent/src/theme/**",
     "packages/pi-coding-agent/scripts/copy-assets.cjs",
     "packages/pi-tui/src/style.ts",
     "packages/pi-tui/src/editor-keybindings.ts"
   ],
   "legacyScopes": ["@mariozechner"],
-  "notes": "Run scripts/vendor-pi.cjs to sync vendored pi-* packages from earendil-works/pi. patchAllowlist enforced by verify:pi-patches (see docs/dev/pi-overlay-execution-plan.md). Expand allowlist when adding documented GSD deltas."
+  "notes": "Run scripts/vendor-pi.cjs to sync vendored pi-* packages from earendil-works/pi. patchAllowlist enforced by verify:pi-patches (see docs/dev/pi-overlay-execution-plan.md). Complete ADR-010 clean seam before vendoring."
 }

@@ -14,7 +14,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { registerDbTools } from "../bootstrap/db-tools.ts";
-import { Value } from "@sinclair/typebox/value";
 import AjvModule from "ajv";
 
 const Ajv = (AjvModule as any).default || AjvModule;
@@ -48,6 +47,12 @@ function getOptionalProps(tool: any): string[] {
   const allProps = Object.keys(schema.properties ?? {});
   const required = new Set(schema.required ?? []);
   return allProps.filter((p: string) => !required.has(p));
+}
+
+function validateSchema(tool: any, value: unknown): string[] {
+  const ajv = new Ajv({ strict: false });
+  const validate = ajv.compile(tool.parameters);
+  return validate(value) ? [] : (validate.errors ?? []).map((e: any) => `${e.instancePath || "/"}: ${e.message}`);
 }
 
 // ─── gsd_summary_save: OpenAI requires top-level object schema ──────────────
@@ -142,8 +147,8 @@ test("gsd_slice_complete — validates with only core params", () => {
   };
 
   // Should pass schema validation with only core params
-  const errors = [...Value.Errors(tool.parameters, minimalParams)];
-  assert.strictEqual(errors.length, 0, `Minimal params should validate but got errors: ${errors.map(e => `${e.path}: ${e.message}`).join(", ")}`);
+  const errors = validateSchema(tool, minimalParams);
+  assert.strictEqual(errors.length, 0, `Minimal params should validate but got errors: ${errors.join(", ")}`);
 });
 
 // ─── gsd_plan_milestone: enrichment arrays must be optional ──────────────────
@@ -211,8 +216,8 @@ test("gsd_plan_milestone — validates with only core params", () => {
     ],
   };
 
-  const errors = [...Value.Errors(tool.parameters, minimalParams)];
-  assert.strictEqual(errors.length, 0, `Minimal params should validate but got errors: ${errors.map(e => `${e.path}: ${e.message}`).join(", ")}`);
+  const errors = validateSchema(tool, minimalParams);
+  assert.strictEqual(errors.length, 0, `Minimal params should validate but got errors: ${errors.join(", ")}`);
 });
 
 // ─── gsd_task_complete: enrichment arrays must be optional ───────────────────
@@ -263,8 +268,8 @@ test("gsd_task_complete — validates with only core params", () => {
     verification: "npm test passes.",
   };
 
-  const errors = [...Value.Errors(tool.parameters, minimalParams)];
-  assert.strictEqual(errors.length, 0, `Minimal params should validate but got errors: ${errors.map(e => `${e.path}: ${e.message}`).join(", ")}`);
+  const errors = validateSchema(tool, minimalParams);
+  assert.strictEqual(errors.length, 0, `Minimal params should validate but got errors: ${errors.join(", ")}`);
 });
 
 // ─── gsd_complete_milestone: enrichment arrays must be optional ──────────────
@@ -313,8 +318,8 @@ test("gsd_complete_milestone — validates with only core params", () => {
     verificationPassed: true,
   };
 
-  const errors = [...Value.Errors(tool.parameters, minimalParams)];
-  assert.strictEqual(errors.length, 0, `Minimal params should validate but got errors: ${errors.map(e => `${e.path}: ${e.message}`).join(", ")}`);
+  const errors = validateSchema(tool, minimalParams);
+  assert.strictEqual(errors.length, 0, `Minimal params should validate but got errors: ${errors.join(", ")}`);
 });
 
 // ─── gsd_plan_slice: enrichment fields must be optional ──────────────────────
@@ -365,8 +370,8 @@ test("gsd_plan_slice — validates with only core params", () => {
     ],
   };
 
-  const errors = [...Value.Errors(tool.parameters, minimalParams)];
-  assert.strictEqual(errors.length, 0, `Minimal params should validate but got errors: ${errors.map(e => `${e.path}: ${e.message}`).join(", ")}`);
+  const errors = validateSchema(tool, minimalParams);
+  assert.strictEqual(errors.length, 0, `Minimal params should validate but got errors: ${errors.join(", ")}`);
 });
 
 // ─── Required param count ceiling ────────────────────────────────────────────

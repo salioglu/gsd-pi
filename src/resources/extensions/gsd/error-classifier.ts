@@ -60,7 +60,7 @@ const NETWORK_RE = /network|ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|fet
 // Context overflow errors (context window/length exceeded) should be treated as server-class
 // transient errors so auto-mode can retry with reduced budget or fall back to a larger-context model.
 // See: https://github.com/open-gsd/gsd-pi/issues/4528
-const SERVER_RE = /internal(?: server)?[ _-]?error|500|502|503|overloaded|server_error|api_error|service.?unavailable|context (?:window|length) exceed|context window exceed/i;
+const SERVER_RE = /internal(?: server)?[ _-]?error|server[ _-]?error|500|502|503|overloaded|server_error|api_error|service.?unavailable|context (?:window|length) exceed|context window exceed/i;
 // ECONNRESET/ECONNREFUSED are in NETWORK_RE (same-model retry first).
 const CONNECTION_RE = /terminated|connection.?(?:refused|error)|other side closed|EPIPE|network.?(?:is\s+)?unavailable|stream_exhausted(?:_without_result)?/i;
 // Catch-all for V8 JSON.parse errors: all modern variants end with "in JSON at position \d+".

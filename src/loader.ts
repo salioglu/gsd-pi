@@ -101,7 +101,7 @@ if (!existsSync(appRoot)) {
   process.stderr.write(
     renderLogo(colorCyan) +
     '\n' +
-    `  Get Shit Done ${dim}v${gsdVersion}${reset}\n` +
+    `  Git Ship Done ${dim}v${gsdVersion}${reset}\n` +
     `  ${green}Welcome.${reset} Setting up your environment...\n\n`
   )
   process.env.GSD_FIRST_RUN_BANNER = '1'
@@ -244,6 +244,10 @@ if (missingPackages.length > 0) {
   )
   process.exit(1)
 }
+
+// Register GSD agent packages for extension imports before CLI loads.
+const { registerAgentBundles } = await import('./register-agent-bundles.js')
+registerAgentBundles()
 
 // Dynamic import defers ESM evaluation — config.js will see PI_PACKAGE_DIR above
 await import('./cli.js')

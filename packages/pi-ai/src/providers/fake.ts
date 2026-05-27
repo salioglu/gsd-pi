@@ -333,9 +333,13 @@ export function createFakeProvider(opts: { transcriptPath: string }): ApiProvide
 					}
 				}
 
+				const doneReason: Extract<AssistantMessage["stopReason"], "stop" | "length" | "toolUse"> =
+					message.stopReason === "toolUse" || message.stopReason === "length" || message.stopReason === "stop"
+						? message.stopReason
+						: "stop";
 				stream.push({
 					type: "done",
-					reason: message.stopReason as "stop" | "length" | "toolUse" | "pauseTurn",
+					reason: doneReason,
 					message,
 				});
 				stream.end(message);

@@ -424,7 +424,7 @@ async function writeProcessMetricFixtures(root: string): Promise<void> {
 
 async function writeContractsSurfaceFixtures(root: string): Promise<void> {
   const files = [
-    "packages/pi-coding-agent/src/modes/rpc/rpc-types.ts",
+    "packages/gsd-agent-modes/src/modes/rpc/rpc-types.ts",
     "packages/rpc-client/src/rpc-types.ts",
     "packages/mcp-server/src/types.ts",
     "src/web/bridge-service.ts",
