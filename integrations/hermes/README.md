@@ -23,5 +23,5 @@ hermes plugins enable open-gsd-hermes
 
 ## Requirements
 
-- `gsd >=2.51,<3`
+- `gsd >=1.0,<3` (override `gsd_version_min` in `~/.hermes/gsd.yaml` per release train)
 - `gsd-mcp-server` on PATH or configured in `gsd.yaml`

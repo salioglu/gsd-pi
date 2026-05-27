@@ -15,15 +15,11 @@ def test_progress_cache_ttl() -> None:
     client = GsdMcpClient(config)
     calls = {"n": 0}
 
-    def fake_call(name: str, arguments: dict) -> dict:
+    def fake_read(project_dir: str) -> ProgressSnapshot:
         calls["n"] += 1
-        return {
-            "phase": "execute",
-            "blockers": [],
-            "nextAction": "",
-        }
+        return ProgressSnapshot(phase="execute", blockers=[], next_action="")
 
-    with patch.object(client, "_call_tool", side_effect=fake_call):
+    with patch.object(client, "_read_progress_cli", side_effect=fake_read):
         with patch.object(client, "ensure_version"):
             client.progress("/tmp/p")
             client.progress("/tmp/p")

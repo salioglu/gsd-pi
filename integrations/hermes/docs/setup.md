@@ -4,7 +4,7 @@ Manual validation before releasing `open-gsd-hermes` 1.0.x. Run on Slack or Tele
 
 ## Prerequisites
 
-- [ ] `gsd` installed and in range `>=2.51,<3` (`gsd --version`)
+- [ ] `gsd` installed and in range `>=1.0,<3` (`gsd --version`)
 - [ ] `gsd-mcp-server` on PATH or configured in `~/.hermes/gsd.yaml`
 - [ ] GSD project initialized (`.gsd/` or `.planning/` present)
 - [ ] Hermes gateway running with plugin enabled:

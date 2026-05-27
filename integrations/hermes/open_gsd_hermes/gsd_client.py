@@ -175,10 +175,39 @@ class GsdMcpClient:
             if key.startswith(prefix):
                 del self._cache[key]
 
+    def _read_progress_cli(self, project_dir: str) -> ProgressSnapshot:
+        """Read progress via `gsd read progress --json` (6c hot path)."""
+        result = subprocess.run(
+            [
+                self._config.cli_path,
+                "read",
+                "progress",
+                "--json",
+                "--project",
+                project_dir,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+            env=self._env(),
+        )
+        if result.returncode != 0:
+            raise McpProtocolError(
+                (result.stderr or result.stdout or "gsd read progress failed").strip()
+            )
+        envelope = json.loads(result.stdout)
+        data = envelope.get("data") or {}
+        return ProgressSnapshot.from_mcp(data)
+
     def progress(self, project_dir: str) -> ProgressSnapshot:
         def fetch() -> ProgressSnapshot:
-            data = self._call_tool("gsd_progress", {"projectDir": project_dir})
-            return ProgressSnapshot.from_mcp(data)
+            try:
+                self.ensure_version()
+                return self._read_progress_cli(project_dir)
+            except (McpProtocolError, json.JSONDecodeError, subprocess.TimeoutExpired):
+                data = self._call_tool("gsd_progress", {"projectDir": project_dir})
+                return ProgressSnapshot.from_mcp(data)
 
         key = f"progress:{project_dir}"
         return self._cached(key, fetch)
@@ -187,11 +216,11 @@ class GsdMcpClient:
         data = self._call_tool("gsd_status", {"sessionId": session_id})
         return SessionStatus.from_mcp(data)
 
-    def execute(self, project_dir: str, *, auto: bool = True) -> dict[str, Any]:
+    def execute(self, project_dir: str, *, command: str = "/gsd auto") -> dict[str, Any]:
         self.invalidate_cache(project_dir)
         return self._call_tool(
             "gsd_execute",
-            {"projectDir": project_dir, "auto": auto},
+            {"projectDir": project_dir, "command": command},
         )
 
     def cancel(self, *, session_id: str | None = None, project_dir: str | None = None) -> dict[str, Any]:

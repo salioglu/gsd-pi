@@ -111,7 +111,7 @@ class GsdCommandRouter:
             )
         except BindingError as e:
             return str(e)
-        result = self._client.execute(project_dir, auto=True)
+        result = self._client.execute(project_dir)
         session_id = result.get("sessionId") or result.get("session_id")
         ctx = self._get_supervisor_ctx()
         ctx.session_id = session_id
