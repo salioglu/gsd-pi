@@ -126,7 +126,7 @@ export function reconcileGitConflictsOnSignal(
       );
     } catch (err) {
       logWarning(
-        "git-conflict",
+        "reconcile",
         `abortAndReset failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
@@ -149,7 +149,7 @@ export function reconcileGitConflictsOnSignal(
         );
       } catch (err) {
         logWarning(
-          "git-conflict",
+          "reconcile",
           `abortAndReset after auto-resolve failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }

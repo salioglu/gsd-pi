@@ -1,0 +1,243 @@
+
+
+> @opengsd/gsd-pi@1.0.2 copy-resources
+> node scripts/copy-resources.cjs
+
+
+> @opengsd/gsd-pi@1.0.2 copy-themes
+> node scripts/copy-themes.cjs
+
+
+> @opengsd/gsd-pi@1.0.2 copy-export-html
+> node scripts/copy-export-html.cjs
+
+[gsd] Web/src source has changed since last build �[gsd] Web/src source has changed 1.0.2 build:web-host
+> cross-env NODE_ENV=production npm --prefix web run build && npm run stage:web-host
+
+
+> gsd-web@0.1.0 build
+> next build --webpack
+
+▲ Next.js 16.2.4 (webpack)
+
+  Cating an optimized production build ...
+(node:79711) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+⚠ Coiled with warnings in 10.6s
+
+../packages/pi-ai/src/env-api-keys.ts
+Critical dependency: the request of a dependency is an expression
+
+Import trace for requested module:
+../packages/pi-ai/src/env-api-keys.ts
+../src/web/onboarding-service.ts
+./app/api/onboarding/route.ts
+
+../src/resources/extensions/gsd/file-lock.ts
+Critical dependency: the request of a dependency is an expression
+
+Import trace for requested module:
+../src/resources/extensions/gsd/file-lock.ts
+../src/resources/extensions/gsd/workflow-logger.ts
+../src/resources/extensions/gsd/onboarding-state.ts
+../src/web/onboarding-service.ts
+./app/api/onboarding/route.ts
+
+../src/resources/extensions/gsd/file-lock.ts
+module.createRequire failed parsing argument.
+
+Import trace for requested module:
+../src/resources/extensions/gsd/file-lock.ts
+../src/resources/extensions/gsd/workflow-logger.ts
+../src/resources/extensions/gsd/onboarding-state.ts
+../src/web/onboarding-service.ts
+./app/api/onboarding/route.ts
+
+../src/resources/extensions/gsd/file-lock.ts
+module.createRequire failed parsing argument.
+
+Import trace for requested module:
+../src/resources/extensions/gsd/file-lock.ts
+../src/resources/extensions/gsd/workflow-logger.ts
+../src/resources/extensions/gsd/onboarding-state.ts
+../src/web/onboarding-service.ts
+./app/api/onboarding/route.ts
+
+../src/resources/extensions/gsd/gsd-db.ts
+Critical dependency: the request of a dependency is an expression
+
+Import trace for requested module:
+../src/resources/extensions/gsd/gsd-db.ts
+../src/resources/extensions/gsd/uok/audit.ts
+../src/resources/extensions/gsd/workflow-logger.ts
+../src/resources/extensions/gsd/onboarding-state.ts
+../src/web/onboarding-service.ts
+./app/api/onboarding/route.ts
+
+  Skipping validation of types
+✓ Finished TypeScript config validation in 4ms    
+  Collecting page data using 9 workers  ...Error: Cannot find module 'node:fs'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:os'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:fs'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:os'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:path'
+    at <unkno> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:path'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:fs'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:os'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:path'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:fs'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:os'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:path'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:fs'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:os'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:path'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:fs'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:os'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:path'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:fs'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:os'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:path'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:fs'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:os'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:path'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:fs'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:os'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+Error: Cannot find module 'node:path'
+    at <unknown> (.next/server/chunks/6897.js:2:23944) {
+  code: 'MODULE_NOT_FOUND'
+}
+✓ Collecting page data using 9 workers in 474ms    
+✓ Generating static pages using 9 workers (3/3) in 116ms
+✓ Collecting build traces in 7.7s    
+✓ Finalizing page optimization in 8.0s    
+
+Rp)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/boot
+├ ƒ /api/bridge-terminal/input
+├ ƒ /api/bridge-terminal/resize
+├ ƒ /api/bridge-terminal/stream
+├ ƒ /api/browse-directories
+├ ƒ /api/captures
+├ ƒ /api/cleanup
+├ ƒ /api/dev-mode
+├ ƒ /api/doctor
+├ ƒ /api/experimental
+├ ƒ /api/export-data
+├ ƒ /api/files
+├ ƒ /api/forensics
+├ ƒ /api/git
+├ ƒ /api/history
+├ ƒ /api/hooks
+├ ƒ /api/inspect
+├ ƒ /api/knowledge
+├ ƒ /api/live-state
+├ ƒ /api/mcp-connections
+├ ƒ /api/notifications
+├ ƒ /api/onboarding
+├ ƒ /api/preferences
+├ ƒ /api/projects
+├ ƒ /api/recovery
+├ ƒ /api/remote-questions
+├ ƒ /api/session/browser
+├ ƒ /api/session/command
+├ ƒ /api/session/events
+├ ƒ /api/session/manage
+├ ƒ /api/settings-data
+├ ƒ /api/shutdown
+├ ƒ /api/skill-health
+├ ƒ /api/steer
+├ ƒ /api/switch-root
+├ ƒ /api/terminal/input
+├ ƒ /api/terminal/resize
+├ ƒ /api/terminal/sessions
+├ ƒ /api/terminal/stream
+├ ƒ /api/terminal/upload
+├ ƒ /ap-rendered on demand
+
+
+> @opengsd/gsd-pi@1.0.2 stage:web-host
+> node scripts/stage-web-standalone.cjs
+
+[gsd] Staged web standalone host at /Users/jeremymcspadden/github/open-gsd/gsd-pi/dist/web/standalone
+[gsd] Hydrated node-pty native assets in 1 location(s).> @opengsd/gsd-pi@1.0.2 build:native-pkg
+

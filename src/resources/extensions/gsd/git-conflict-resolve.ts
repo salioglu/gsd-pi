@@ -38,7 +38,7 @@ export function autoResolveSafeConflictPaths(
       resolved.push(file);
     } catch (error) {
       logWarning(
-        "git-conflict-resolve",
+        "worktree",
         `checkout --theirs failed for ${file}, removing: ${error instanceof Error ? error.message : String(error)}`,
       );
       try {

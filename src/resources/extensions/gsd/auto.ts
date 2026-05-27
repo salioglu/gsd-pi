@@ -85,6 +85,8 @@ import {
   getNewBudgetAlertLevel,
   getBudgetEnforcementAction,
   getContextPauseAction,
+  resolveCompactionThresholdPercent,
+  shouldRerootStepSessionForContext,
 } from "./auto-budget.js";
 import {
   markToolStart as _markToolStart,
@@ -636,6 +638,8 @@ export {
   getNewBudgetAlertLevel,
   getBudgetEnforcementAction,
   getContextPauseAction,
+  resolveCompactionThresholdPercent,
+  shouldRerootStepSessionForContext,
 } from "./auto-budget.js";
 
 function closeOutSignalInterruptedUnit(currentBasePath: string): void {
@@ -1139,6 +1143,59 @@ export async function rerootCommandSession(
   }
 }
 
+/**
+ * After a completed step-mode unit, reclaim context headroom when usage is at
+ * or above the compaction threshold. Writes a context-mode snapshot first, then
+ * re-roots the visible command session while leaving the NEXT progress surface.
+ */
+export async function maybeRerootStepSessionForHighContext(
+  ctx: ExtensionContext,
+  workspaceRoot: string,
+  cmdCtx: Pick<ExtensionCommandContext, "getContextUsage" | "newSession"> | null | undefined,
+  originalBasePath?: string | null,
+): Promise<{ rerooted: boolean }> {
+  if (!cmdCtx) return { rerooted: false };
+
+  const contextPercent = cmdCtx.getContextUsage?.()?.percent;
+  const { loadEffectiveGSDPreferences } = await import("./preferences.js");
+  const prefs = loadEffectiveGSDPreferences(workspaceRoot);
+  const compactionThreshold = prefs?.preferences.context_management?.compaction_threshold_percent;
+
+  if (!shouldRerootStepSessionForContext(contextPercent, compactionThreshold)) {
+    return { rerooted: false };
+  }
+
+  const { resolveWorktreeProjectRoot } = await import("./worktree-root.js");
+  const snapshotBase = resolveWorktreeProjectRoot(workspaceRoot, originalBasePath);
+  const { writeContextModeCompactionSnapshot } = await import("./context-mode-snapshot.js");
+  await writeContextModeCompactionSnapshot(snapshotBase);
+
+  const displayPercent = (contextPercent as number).toFixed(1);
+  const thresholdDisplay = resolveCompactionThresholdPercent(compactionThreshold).toFixed(0);
+  const result = await rerootCommandSession(cmdCtx, workspaceRoot);
+  if (result.status === "ok") {
+    ctx.ui.notify(
+      `Step complete — context at ${displayPercent}% (threshold: ${thresholdDisplay}%). Fresh session ready for /gsd next.`,
+      "info",
+    );
+    return { rerooted: true };
+  }
+  if (result.status === "cancelled") {
+    logWarning(
+      "engine",
+      "step-boundary session re-root was cancelled",
+      { file: "auto.ts", basePath: workspaceRoot },
+    );
+  } else if (result.status === "failed") {
+    logWarning(
+      "engine",
+      `step-boundary session re-root failed: ${result.error ?? "unknown"}`,
+      { file: "auto.ts", basePath: workspaceRoot },
+    );
+  }
+  return { rerooted: false };
+}
+
 export async function cleanupAfterLoopExit(ctx: ExtensionContext): Promise<void> {
   const preserveStepSurface = s.preserveStepSurfaceAfterLoopExit;
   const preserveCompletionSurface = s.completionStopInProgress;
@@ -1203,6 +1260,13 @@ export async function cleanupAfterLoopExit(ctx: ExtensionContext): Promise<void>
       logWarning("engine", "post-loop session re-root was cancelled", { file: "auto.ts", basePath: s.originalBasePath });
     } else if (result.status === "failed") {
       logWarning("engine", `post-loop session re-root failed: ${result.error ?? "unknown"}`, { file: "auto.ts", basePath: s.originalBasePath });
+    }
+  }
+
+  if (preserveStepSurface && s.cmdCtx) {
+    const workspaceRoot = s.basePath || s.originalBasePath;
+    if (workspaceRoot) {
+      await maybeRerootStepSessionForHighContext(ctx, workspaceRoot, s.cmdCtx, s.originalBasePath);
     }
   }
 }
@@ -2259,6 +2323,7 @@ export function createWiredAutoOrchestrationModule(
           return {
             kind: "fail",
             reason: gate.reason ?? "Pre-dispatch health check failed — run /gsd doctor for details.",
+            action: gate.severity ?? "pause",
           };
         } catch (error) {
           return { kind: "threw", error };
