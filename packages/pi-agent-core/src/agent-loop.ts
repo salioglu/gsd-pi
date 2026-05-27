@@ -25,6 +25,18 @@ import type {
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 
+/** Cap consecutive turns where every tool call fails preparation (schema / not-found). */
+export const MAX_CONSECUTIVE_VALIDATION_FAILURES = 3;
+
+const ZERO_USAGE = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+} as const;
+
 /**
  * Start an agent loop with a new prompt message.
  * The prompt is added to the context and events are emitted for it.
@@ -166,6 +178,7 @@ async function runLoop(
 	let firstTurn = true;
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
+	let consecutiveAllToolErrorTurns = 0;
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
@@ -213,6 +226,43 @@ async function runLoop(
 				for (const result of toolResults) {
 					currentContext.messages.push(result);
 					newMessages.push(result);
+				}
+
+				const hasPreparationErrors = executedToolBatch.preparationErrorCount > 0;
+				const allToolsFailedPreparation =
+					toolResults.length > 0 &&
+					executedToolBatch.preparationErrorCount === toolResults.length;
+				if (allToolsFailedPreparation) {
+					consecutiveAllToolErrorTurns++;
+				} else if (!hasPreparationErrors) {
+					consecutiveAllToolErrorTurns = 0;
+				}
+
+				if (consecutiveAllToolErrorTurns >= MAX_CONSECUTIVE_VALIDATION_FAILURES) {
+					const stopMessage: AssistantMessage = {
+						role: "assistant",
+						content: [
+							{
+								type: "text",
+								text: `Agent stopped: ${consecutiveAllToolErrorTurns} consecutive turns with all tool calls failing. This usually means the model is repeatedly sending arguments that do not match the tool schema.`,
+							},
+						],
+						api: config.model.api,
+						provider: config.model.provider,
+						model: config.model.id,
+						usage: ZERO_USAGE,
+						stopReason: "error",
+						errorMessage: "Schema overload: consecutive tool validation failures exceeded cap",
+						timestamp: Date.now(),
+					};
+					await emit({ type: "turn_end", message, toolResults });
+					await emit({ type: "message_start", message: stopMessage });
+					await emit({ type: "message_end", message: stopMessage });
+					newMessages.push(stopMessage);
+					currentContext.messages.push(stopMessage);
+					await emit({ type: "turn_end", message: stopMessage, toolResults: [] });
+					await emit({ type: "agent_end", messages: newMessages });
+					return;
 				}
 			}
 
@@ -391,6 +441,7 @@ async function executeToolCalls(
 type ExecutedToolCallBatch = {
 	messages: ToolResultMessage[];
 	terminate: boolean;
+	preparationErrorCount: number;
 };
 
 async function executeToolCallsSequential(
@@ -403,6 +454,7 @@ async function executeToolCallsSequential(
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallOutcome[] = [];
 	const messages: ToolResultMessage[] = [];
+	let preparationErrorCount = 0;
 
 	for (const toolCall of toolCalls) {
 		await emit({
@@ -415,6 +467,9 @@ async function executeToolCallsSequential(
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
 		let finalized: FinalizedToolCallOutcome;
 		if (preparation.kind === "immediate") {
+			if (preparation.isError) {
+				preparationErrorCount++;
+			}
 			finalized = {
 				toolCall,
 				result: preparation.result,
@@ -446,6 +501,7 @@ async function executeToolCallsSequential(
 	return {
 		messages,
 		terminate: shouldTerminateToolBatch(finalizedCalls),
+		preparationErrorCount,
 	};
 }
 
@@ -458,6 +514,7 @@ async function executeToolCallsParallel(
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallEntry[] = [];
+	let preparationErrorCount = 0;
 
 	for (const toolCall of toolCalls) {
 		await emit({
@@ -469,6 +526,9 @@ async function executeToolCallsParallel(
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
 		if (preparation.kind === "immediate") {
+			if (preparation.isError) {
+				preparationErrorCount++;
+			}
 			const finalized = {
 				toolCall,
 				result: preparation.result,
@@ -513,6 +573,7 @@ async function executeToolCallsParallel(
 	return {
 		messages,
 		terminate: shouldTerminateToolBatch(orderedFinalizedCalls),
+		preparationErrorCount,
 	};
 }
 
