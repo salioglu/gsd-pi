@@ -516,6 +516,11 @@ export async function renderPlanCheckboxes(
   if (artifactPath) {
     content = loadArtifactContent(artifactPath);
   }
+  if (!content && absPath && existsSync(absPath)) {
+    // Preserve operator edits in existing PLAN.md when artifact DB rows are
+    // missing/out-of-sync; only patch checkboxes for completion state.
+    content = readFileSync(absPath, "utf-8");
+  }
 
   if (!content) {
     await renderPlanFromDb(basePath, milestoneId, sliceId);

@@ -425,6 +425,59 @@ test('── markdown-renderer: renderPlanCheckboxes bidirectional ──', asyn
   }
 });
 
+test('── markdown-renderer: renderPlanCheckboxes preserves manual Verify edits when artifact row is missing ──', async () => {
+  const tmpDir = makeTmpDir();
+  const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+  clearAllCaches();
+
+  try {
+    scaffoldDirs(tmpDir, 'M001', ['S01']);
+
+    insertMilestone({ id: 'M001', title: 'Test', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Slice', status: 'pending' });
+    insertTask({
+      id: 'T01',
+      sliceId: 'S01',
+      milestoneId: 'M001',
+      title: 'First task',
+      status: 'done',
+      planning: {
+        description: 'Task',
+        estimate: '30m',
+        files: [],
+        verify: 'grep -q "old" output.md',
+      },
+    });
+
+    const planPath = path.join(tmpDir, '.gsd', 'milestones', 'M001', 'slices', 'S01', 'S01-PLAN.md');
+    fs.writeFileSync(
+      planPath,
+      [
+        '# S01: Slice',
+        '',
+        '## Tasks',
+        '',
+        '- [ ] **T01: First task**',
+        '  - Verify: grep -q "| " output.md',
+        '',
+      ].join('\n'),
+    );
+    clearAllCaches();
+
+    const ok = await renderPlanCheckboxes(tmpDir, 'M001', 'S01');
+    assert.ok(ok, 'renderPlanCheckboxes returns true');
+
+    const rendered = fs.readFileSync(planPath, 'utf-8');
+    assert.match(rendered, /- \[x\] \*\*T01: First task\*\*/);
+    assert.match(rendered, /- Verify: grep -q "\| " output\.md/);
+    assert.doesNotMatch(rendered, /grep -q "old" output\.md/);
+  } finally {
+    closeDatabase();
+    cleanupDir(tmpDir);
+  }
+});
+
 test('── markdown-renderer: renderPlanFromDb creates parse-compatible slice plan + task plan files ──', async () => {
   const tmpDir = makeTmpDir();
   const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
