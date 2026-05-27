@@ -20,6 +20,11 @@ import type {
 } from "@gsd/pi-coding-agent";
 
 import { deriveState } from "./state.js";
+import {
+  buildRequirementsBacklogSummaryLines,
+  countUnmappedActiveRequirements,
+  getUnmappedActiveRequirements,
+} from "./requirements-backlog.js";
 import { parseUnitId } from "./unit-id.js";
 import type { GSDState } from "./types.js";
 import {
@@ -1602,7 +1607,7 @@ export async function stopAuto(
     try {
       if (!preserveCompletionSurface) {
         const ledger = getLedger();
-        const isAllComplete = reason === "All milestones complete";
+        const isAllComplete = (reason ?? "").startsWith("All milestones complete");
         const isMilestoneComplete = /^Milestone\s+\S+\s+complete$/i.test(reason ?? "");
         const notificationPrefix = isAllComplete
           ? "All milestones complete"
@@ -1648,6 +1653,16 @@ export async function stopAuto(
       const contextUsage = s.cmdCtx?.getContextUsage?.();
       const milestoneId = completionMilestoneId;
       const rollup = loadMilestoneCompletionRollup(s.originalBasePath || s.basePath, milestoneId);
+      const unmappedActiveRequirements = options.completionWidget.allMilestonesComplete
+        ? countUnmappedActiveRequirements()
+        : 0;
+      const requirementsBacklogPreview = unmappedActiveRequirements > 0
+        ? buildRequirementsBacklogSummaryLines(
+          unmappedActiveRequirements,
+          getUnmappedActiveRequirements(),
+          3,
+        ).slice(1)
+        : undefined;
       setCompletionProgressWidget(ctx, {
         milestoneId,
         milestoneTitle: options.completionWidget.milestoneTitle ?? rollup.milestoneTitle,
@@ -1673,6 +1688,8 @@ export async function stopAuto(
         completedSlices,
         totalSlices,
         allMilestonesComplete: options.completionWidget.allMilestonesComplete,
+        unmappedActiveRequirements,
+        requirementsBacklogPreview,
         basePath: s.originalBasePath || s.basePath || null,
       });
       if (process.env.GSD_HEADLESS === "1") {

@@ -70,6 +70,10 @@ import {
   handleCloseoutChoice,
   loadCloseoutContext,
 } from "./closeout-wizard.js";
+import {
+  countUnmappedActiveRequirements,
+  showRequirementsBacklogReview,
+} from "./requirements-backlog.js";
 import { selectAndApplyModel } from "./auto-model-selection.js";
 import { DISCUSS_TOOLS_ALLOWLIST } from "./constants.js";
 import {
@@ -207,6 +211,27 @@ async function runQuickTaskChoice(ctx: ExtensionCommandContext, pi: ExtensionAPI
 
   const { handleQuick } = await import("./quick.js");
   await handleQuick(task, ctx, pi);
+}
+
+async function launchNextMilestoneDiscuss(
+  ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+  basePath: string,
+  stepMode: boolean,
+): Promise<void> {
+  const milestoneIds = findMilestoneIds(basePath);
+  const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
+  const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds, basePath);
+
+  setPendingAutoStart(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode });
+  await dispatchWorkflow(
+    pi,
+    await prepareAndBuildDiscussPrompt(ctx, pi, nextId, `New milestone ${nextId}.`, basePath),
+    "gsd-run",
+    ctx,
+    "discuss-milestone",
+    { basePath },
+  );
 }
 
 /**
@@ -2414,11 +2439,18 @@ export async function showSmartEntry(
       notifySmartEntryNeedsInteractiveMenu(ctx, "all milestones are complete");
       return;
     }
+    const unmappedActive = countUnmappedActiveRequirements();
     const choice = await showNextAction(ctx, {
-      title: `GSD — ${milestoneId}: ${milestoneTitle}`,
+      title: "GSD — All milestones complete",
       summary: buildIdleMenuSummary(state, closeout),
       actions: [
         ...buildCloseoutMenuActions(closeout),
+        ...(unmappedActive > 0 ? [{
+          id: "review_requirements_backlog",
+          label: "Review requirements backlog",
+          description: `Inspect ${unmappedActive} unmapped active requirement${unmappedActive === 1 ? "" : "s"} before starting new work.`,
+          recommended: primaryCloseout === null,
+        }] : []),
         {
           id: "status",
           label: "Review status",
@@ -2429,7 +2461,7 @@ export async function showSmartEntry(
           id: "new_milestone",
           label: "Start new milestone",
           description: "Define and plan the next milestone.",
-          recommended: primaryCloseout === null,
+          recommended: primaryCloseout === null && unmappedActive === 0,
         },
         {
           id: "quick_task",
@@ -2444,16 +2476,13 @@ export async function showSmartEntry(
     if (await handleCloseoutChoice(ctx, basePath, choice, closeout)) return;
     if (choice === "quick_task") {
       await runQuickTaskChoice(ctx, pi);
+    } else if (choice === "review_requirements_backlog") {
+      const reviewChoice = await showRequirementsBacklogReview(ctx, basePath);
+      if (reviewChoice === "new_milestone") {
+        await launchNextMilestoneDiscuss(ctx, pi, basePath, stepMode);
+      }
     } else if (choice === "new_milestone") {
-      const milestoneIds = findMilestoneIds(basePath);
-      const uniqueMilestoneIds = !!loadEffectiveGSDPreferences()?.preferences?.unique_milestone_ids;
-      const nextId = nextMilestoneIdReserved(milestoneIds, uniqueMilestoneIds, basePath);
-
-      setPendingAutoStart(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode });
-      await dispatchWorkflow(pi, await prepareAndBuildDiscussPrompt(ctx, pi, nextId,
-        `New milestone ${nextId}.`,
-        basePath
-      ), "gsd-run", ctx, "discuss-milestone", { basePath });
+      await launchNextMilestoneDiscuss(ctx, pi, basePath, stepMode);
     } else if (choice === "status") {
       const { fireStatusViaCommand } = await import("./commands.js");
       await fireStatusViaCommand(ctx);

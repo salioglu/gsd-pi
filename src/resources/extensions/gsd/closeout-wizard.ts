@@ -12,6 +12,7 @@ import {
   findUnmergedCompletedMilestones,
   type UnmergedMilestoneBlocker,
 } from "./unmerged-milestone-guard.js";
+import { appendRequirementsBacklogToSummary } from "./requirements-backlog.js";
 
 export type CloseoutActionId = "finish_quick" | "finish_milestone";
 
@@ -80,11 +81,11 @@ export function buildIdleMenuSummary(state: GSDState, closeout: CloseoutContext)
 
   if (state.phase === "complete") {
     const last = state.lastCompletedMilestone;
-    return [
+    return appendRequirementsBacklogToSummary(state, [
       last
         ? `All milestones complete after ${last.id}: ${last.title}.`
         : "All milestones complete.",
-    ];
+    ]);
   }
 
   return [state.nextAction || "No active milestone."];

@@ -16,11 +16,17 @@ import {
 import { deriveState } from "./state.js";
 import type { GSDState } from "./types.js";
 import type { UnmergedMilestoneBlocker } from "./unmerged-milestone-guard.js";
+import {
+  appendRequirementsBacklogToSummary,
+  countUnmappedActiveRequirements,
+  showRequirementsBacklogReview,
+} from "./requirements-backlog.js";
 
 export type GsdHomeActionId =
   | "continue_step"
   | "run_auto"
   | "review_status"
+  | "review_requirements_backlog"
   | "fix_recover"
   | "finish_quick"
   | "finish_milestone"
@@ -77,6 +83,7 @@ export function buildGsdHomeModel(
         : "";
 
   const canAdvance = hasActiveWork && !blocked && !complete;
+  const unmappedActive = complete ? countUnmappedActiveRequirements() : 0;
 
   const recommended: GsdHomeActionId = strandedQuick
     ? "finish_quick"
@@ -86,19 +93,27 @@ export function buildGsdHomeModel(
         ? "fix_recover"
         : canAdvance
           ? "continue_step"
-          : "start_configure";
+          : complete && unmappedActive > 0
+            ? "review_requirements_backlog"
+            : "start_configure";
+
+  const completionSummary = complete
+    ? appendRequirementsBacklogToSummary(state, [
+        `All milestones complete${state.lastCompletedMilestone ? ` after ${state.lastCompletedMilestone.id}: ${state.lastCompletedMilestone.title}` : ""}.`,
+      ])
+    : [workLabel];
+
+  const primarySummary = strandedQuick
+    ? [`Quick task Q${strandedQuick.taskNum} finished on ${strandedQuick.quickBranch} but is not merged to ${strandedQuick.originalBranch}.`]
+    : unmergedMilestone
+      ? [`${unmergedMilestone.milestoneId} is complete but not merged into ${unmergedMilestone.integrationBranch}.`]
+      : completionSummary;
 
   return {
     title: "GSD — What now?",
     summary: [
-      strandedQuick
-        ? `Quick task Q${strandedQuick.taskNum} finished on ${strandedQuick.quickBranch} but is not merged to ${strandedQuick.originalBranch}.`
-        : unmergedMilestone
-          ? `${unmergedMilestone.milestoneId} is complete but not merged into ${unmergedMilestone.integrationBranch}.`
-          : complete
-            ? `All milestones complete${state.lastCompletedMilestone ? ` after ${state.lastCompletedMilestone.id}: ${state.lastCompletedMilestone.title}` : ""}.`
-            : workLabel,
-      state.nextAction ? `Next: ${state.nextAction}` : "",
+      ...primarySummary,
+      state.nextAction && state.nextAction !== "All milestones complete." ? `Next: ${state.nextAction}` : "",
       ...state.blockers,
     ].filter(Boolean),
     strandedQuick: strandedQuick ?? undefined,
@@ -150,6 +165,16 @@ export function buildGsdHomeModel(
         description: "Open the live run dashboard. For shipped work, use /gsd visualize.",
         enabled: true,
         recommended: false,
+      },
+      {
+        id: "review_requirements_backlog",
+        label: "Review requirements backlog",
+        description: unmappedActive > 0
+          ? `Inspect ${unmappedActive} unmapped active requirement${unmappedActive === 1 ? "" : "s"} in REQUIREMENTS.md.`
+          : disabled("Use this when active requirements still need milestone ownership.", "no unmapped active requirements"),
+        enabled: unmappedActive > 0,
+        recommended: recommended === "review_requirements_backlog",
+        disabledReason: unmappedActive > 0 ? undefined : "no unmapped active requirements",
       },
       {
         id: "fix_recover",
@@ -259,6 +284,13 @@ export async function showGsdHome(
   }
   if (choice === "review_status" || choice === "fix_recover") {
     await runStatus(ctx);
+    return;
+  }
+  if (choice === "review_requirements_backlog") {
+    const reviewChoice = await showRequirementsBacklogReview(ctx, basePath);
+    if (reviewChoice === "new_milestone") {
+      await runDetailedEntry(ctx, pi, basePath);
+    }
     return;
   }
   if (choice === "start_configure") {
