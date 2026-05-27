@@ -31,6 +31,9 @@ bun.lock
 .bg-shell/
 .artifacts/
 .planning/
+# Hermes integration test fixtures (minimal tracked GSD projects)
+!integrations/hermes/tests/fixtures/minimal-project/.planning/
+!integrations/hermes/tests/fixtures/minimal-project/.planning/**
 .audits/
 .plans/
 docs/coherence-audit/
