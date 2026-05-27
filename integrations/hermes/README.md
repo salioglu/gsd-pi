@@ -11,7 +11,13 @@ hermes plugins enable open-gsd-hermes
 
 ## Configuration
 
-`~/.hermes/gsd.yaml` — see `docs/setup.md`.
+`~/.hermes/gsd.yaml` — see [`docs/setup.md`](docs/setup.md) for Slack/Telegram gateway checklist.
+
+**Before gateway testing:**
+
+```bash
+bash integrations/hermes/scripts/preflight.sh
+```
 
 ## Slash commands
 
