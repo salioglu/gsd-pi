@@ -115,6 +115,17 @@ export function registerGsdExtension(pi: ExtensionAPI): void {
     },
   });
 
+  // ToolSearch is a compatibility stub — register early so it stays in the
+  // active tool set even when later bootstrap steps fail partially.
+  try {
+    registerToolSearchShim(pi);
+  } catch (err) {
+    logWarning(
+      "bootstrap",
+      `Failed to register tool-search-shim: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   // Wrap non-critical registrations individually so one failure
   // doesn't prevent the others from loading.
   const nonCriticalRegistrations: Array<[string, () => void]> = [
@@ -123,7 +134,6 @@ export function registerGsdExtension(pi: ExtensionAPI): void {
     ["journal-tools", () => registerJournalTools(pi)],
     ["query-tools", () => registerQueryTools(pi)],
     ["memory-tools", () => registerMemoryTools(pi)],
-    ["tool-search-shim", () => registerToolSearchShim(pi)],
     ["exec-tools", () => registerExecTools(pi)],
     ["schedule-wakeup-tool", () => registerScheduleWakeupTool(pi)],
     ["shortcuts", () => registerShortcuts(pi)],

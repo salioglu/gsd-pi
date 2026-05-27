@@ -21,6 +21,20 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
+async function armDepthGate(
+  handlers: Map<string, Array<(event: any, ctx?: any) => Promise<any> | any>>,
+  toolName: string,
+  questions: unknown[],
+): Promise<void> {
+  const input = { questions };
+  for (const handler of handlers.get("tool_call") ?? []) {
+    await handler({ toolName, input });
+  }
+  for (const handler of handlers.get("tool_execution_start") ?? []) {
+    await handler({ toolName, args: input });
+  }
+}
+
 test("register-hooks unlocks milestone depth verification from question id without guided-flow state (#4047)", async (t) => {
   const dir = makeTempDir("manual");
   const originalCwd = process.cwd();
@@ -59,17 +73,10 @@ test("register-hooks unlocks milestone depth verification from question id witho
     },
   ];
 
-  const toolCallHandlers = handlers.get("tool_call");
   const toolResultHandlers = handlers.get("tool_result");
-  assert.ok(toolCallHandlers?.length, "tool_call handler should be registered");
   assert.ok(toolResultHandlers?.length, "tool_result handler should be registered");
 
-  for (const handler of toolCallHandlers ?? []) {
-    await handler({
-      toolName: "ask_user_questions",
-      input: { questions },
-    });
-  }
+  await armDepthGate(handlers, "ask_user_questions", questions);
 
   assert.equal(getPendingGate(), questionId, "gate should be set even without guided-flow state");
   assert.equal(
@@ -138,9 +145,7 @@ test("register-hooks clears depth gate when remote (Telegram/Slack/Discord) answ
     },
   ];
 
-  for (const handler of handlers.get("tool_call") ?? []) {
-    await handler({ toolName: "ask_user_questions", input: { questions } });
-  }
+  await armDepthGate(handlers, "ask_user_questions", questions);
   assert.equal(getPendingGate(), questionId);
 
   // Simulate the normalized response the remote manager now emits:
@@ -207,9 +212,7 @@ test("register-hooks returns hard blocker when depth question is cancelled", asy
     },
   ];
 
-  for (const handler of handlers.get("tool_call") ?? []) {
-    await handler({ toolName: "ask_user_questions", input: { questions } });
-  }
+  await armDepthGate(handlers, "ask_user_questions", questions);
   assert.equal(getPendingGate(), questionId);
 
   let patch: any;
@@ -225,18 +228,12 @@ test("register-hooks returns hard blocker when depth question is cancelled", asy
   assert.equal(getPendingGate(), questionId, "cancelled question must leave gate pending");
   assert.match(
     patch?.content?.[0]?.text ?? "",
-    /HARD BLOCK: approval gate "depth_verification_M003_confirm" is still pending/,
+    /Waiting for depth confirmation on gate "depth_verification_M003_confirm"/,
   );
   assert.match(
     patch?.content?.[0]?.text ?? "",
     /Do not infer approval from earlier or prior messages/,
   );
-  // Regression for milestone-hang: the cancelled-gate instruction must direct
-  // the agent toward the most reliable recovery path — re-calling
-  // ask_user_questions with the same gate id. The plain-text path also clears
-  // the gate via isExplicitApprovalResponse on the next before_agent_start,
-  // but the structured re-ask is more deterministic, so the message points
-  // there and avoids the prior dead-end "ask in plain chat, then stop" wording.
   assert.match(
     patch?.content?.[0]?.text ?? "",
     /Re-call ask_user_questions with the same gate question id/,
@@ -288,9 +285,7 @@ test("register-hooks recovers from a cancelled depth question via re-asked ask_u
   ];
 
   // 1. Initial ask sets the gate.
-  for (const handler of handlers.get("tool_call") ?? []) {
-    await handler({ toolName: "ask_user_questions", input: { questions } });
-  }
+  await armDepthGate(handlers, "ask_user_questions", questions);
   assert.equal(getPendingGate(), questionId, "initial ask must set the gate");
 
   // 2. User cancels (simulates the trap from the screenshot: question never
@@ -321,6 +316,9 @@ test("register-hooks recovers from a cancelled depth question via re-asked ask_u
 
   // 4. The re-asked question receives a confirming response, which clears the
   //    gate and unlocks the milestone context save.
+  for (const handler of handlers.get("tool_execution_start") ?? []) {
+    await handler({ toolName: "ask_user_questions", args: { questions } });
+  }
   for (const handler of handlers.get("tool_result") ?? []) {
     await handler({
       toolName: "ask_user_questions",
@@ -390,12 +388,20 @@ test("register-hooks gates MCP ask_user_questions cancellation before requiremen
     if (result) askBlocks.push(result);
   }
 
-  assert.equal(getPendingGate(), questionId, "MCP ask_user_questions should set the pending gate");
+  assert.equal(getPendingGate(), null, "MCP ask_user_questions should defer the gate until execution starts");
   assert.equal(
     askBlocks.some((result) => result?.block === true),
     false,
     "the gate-setting MCP ask_user_questions call itself should be allowed",
   );
+
+  for (const handler of handlers.get("tool_execution_start") ?? []) {
+    await handler({
+      toolName: "mcp__gsd-workflow__ask_user_questions",
+      args: { questions },
+    });
+  }
+  assert.equal(getPendingGate(), questionId, "execution start should activate the pending gate");
 
   let hardBlock: any;
   for (const handler of handlers.get("tool_result") ?? []) {
@@ -410,7 +416,7 @@ test("register-hooks gates MCP ask_user_questions cancellation before requiremen
   assert.equal(getPendingGate(), questionId, "cancelled MCP question must leave gate pending");
   assert.match(
     hardBlock?.content?.[0]?.text ?? "",
-    /approval gate "depth_verification_requirements_confirm" is still pending/,
+    /Waiting for depth confirmation on gate "depth_verification_requirements_confirm"/,
   );
 
   let toolSearchBlock: any;

@@ -47,6 +47,7 @@ export type {
 export * from "./utils/overflow.js";
 export * from "./utils/typebox-helpers.js";
 export * from "./utils/validation.js";
+export * from "./utils/tool-shims.js";
 export {
 	getProviderCapabilities,
 	getRegisteredApis,

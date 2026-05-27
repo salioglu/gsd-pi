@@ -105,14 +105,44 @@ function prepareEditArguments(input: unknown): EditToolInput {
 		} catch {}
 	}
 
-	const legacy = args as LegacyEditToolInput;
-	if (typeof legacy.oldText !== "string" || typeof legacy.newText !== "string") {
+	const legacy = args as LegacyEditToolInput & {
+		old_string?: unknown;
+		new_string?: unknown;
+		file_path?: unknown;
+		replace_all?: unknown;
+		replaceAll?: unknown;
+	};
+	const oldText =
+		typeof legacy.oldText === "string"
+			? legacy.oldText
+			: typeof legacy.old_string === "string"
+				? legacy.old_string
+				: undefined;
+	const newText =
+		typeof legacy.newText === "string"
+			? legacy.newText
+			: typeof legacy.new_string === "string"
+				? legacy.new_string
+				: undefined;
+	if (typeof oldText !== "string" || typeof newText !== "string") {
 		return args as EditToolInput;
 	}
 
 	const edits = Array.isArray(legacy.edits) ? [...legacy.edits] : [];
-	edits.push({ oldText: legacy.oldText, newText: legacy.newText });
-	const { oldText: _oldText, newText: _newText, ...rest } = legacy;
+	edits.push({ oldText, newText });
+	const {
+		oldText: _oldText,
+		newText: _newText,
+		old_string: _oldString,
+		new_string: _newString,
+		file_path: _filePath,
+		replace_all: _replaceAll,
+		replaceAll: _replaceAllCamel,
+		...rest
+	} = legacy;
+	if (typeof rest.path !== "string" && typeof _filePath === "string") {
+		rest.path = _filePath;
+	}
 	return { ...rest, edits } as EditToolInput;
 }
 

@@ -4,6 +4,14 @@ import { Value } from "typebox/value";
 import type { Tool, ToolCall } from "../types.js";
 import { normalizeToolArguments } from "./normalize-tool-arguments.js";
 
+export { isEmptyPathToolArguments, normalizeToolArguments } from "./normalize-tool-arguments.js";
+export {
+	createToolSearchShimResult,
+	extractToolSearchQuery,
+	isToolSearchToolName,
+	parseToolSearchSelectQuery,
+} from "./tool-search-shim.js";
+
 const validatorCache = new WeakMap<object, ReturnType<typeof Compile>>();
 const TYPEBOX_KIND = Symbol.for("TypeBox.Kind");
 
@@ -292,6 +300,7 @@ export function validateToolCall(tools: Tool[], toolCall: ToolCall): any {
  */
 export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	const args = structuredClone(toolCall.arguments);
+	normalizeToolArguments(tool.name, args);
 	Value.Convert(tool.parameters, args);
 
 	const validator = getValidator(tool.parameters);

@@ -63,6 +63,10 @@ import {
 import { hasPendingCaptures, loadPendingCaptures, revertExecutorResolvedCaptures } from "./captures.js";
 import { debugLog } from "./debug-logger.js";
 import { runSafely } from "./auto-utils.js";
+import {
+  isMilestoneCloseoutSettled,
+  runMilestoneCloseoutGitHub,
+} from "./milestone-closeout.js";
 import type { AutoSession, SidecarItem } from "./auto/session.js";
 import { getEvidence, clearEvidenceFromDisk } from "./safety/evidence-collector.js";
 import { validateFileChanges } from "./safety/file-change-validator.js";
@@ -80,6 +84,7 @@ import { UokGateRunner } from "./uok/gate-runner.js";
 import { writeTurnGitTransaction } from "./uok/gitops.js";
 import { isClosedStatus } from "./status-guards.js";
 import { detectAbandonMilestone } from "./abandon-detect.js";
+import { getPendingGate } from "./bootstrap/write-gate.js";
 import { isDeterministicPolicyError } from "./auto-tool-tracking.js";
 import { formatConnectedStepStack, formatPostUnitStatusCard } from "./auto-status-message.js";
 import {
@@ -223,8 +228,6 @@ function formatPreExecutionRetryContext(input: {
   ].join("\n");
 }
 
-const COMPLETE_MILESTONE_DB_SETTLE_MS = 1500;
-const COMPLETE_MILESTONE_DB_SETTLE_POLL_MS = 100;
 const GIT_ACTION_FAILURE_LOG_REL_PATH = ".gsd/git-action-failures.log";
 const DEFAULT_PER_UNIT_COST_CAP_USD = 5.0;
 const MAX_PRE_EXEC_RETRIES = 2;
@@ -395,17 +398,16 @@ async function buildTaskCommitContextForUnit(
   };
 }
 
-async function waitForMilestoneDbClose(mid: string): Promise<boolean> {
-  const deadline = Date.now() + COMPLETE_MILESTONE_DB_SETTLE_MS;
-  while (Date.now() < deadline) {
-    if (!isDbAvailable()) return false;
-    const milestone = getMilestone(mid);
-    if (milestone && isClosedStatus(milestone.status)) return true;
-    await new Promise((resolve) => setTimeout(resolve, COMPLETE_MILESTONE_DB_SETTLE_POLL_MS));
-  }
-  return false;
+async function runPostUnitGitHubSyncIfNeeded(
+  basePath: string,
+  unit: NonNullable<AutoSession["currentUnit"]>,
+): Promise<void> {
+  if (unit.type === "complete-milestone") return;
+  await runSafely("postUnit", "github-sync", async () => {
+    const { runGitHubSync } = await import("../github-sync/sync.js");
+    await runGitHubSync(basePath, unit.type, unit.id);
+  });
 }
-
 
 /** Enqueue a sidecar item (hook, triage, or quick-task) for the main loop to
  *  drain via runUnit. Logs the enqueue event and notifies the UI. */
@@ -1058,12 +1060,6 @@ async function runCloseoutGitAction(
     }
   }
 
-  // GitHub sync (non-blocking, opt-in)
-  await runSafely("postUnit", "github-sync", async () => {
-    const { runGitHubSync } = await import("../github-sync/sync.js");
-    await runGitHubSync(s.basePath, unit.type, unit.id);
-  });
-
   return "continue";
 }
 
@@ -1525,12 +1521,10 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           try {
             const { milestone: mid } = parseUnitId(s.currentUnit.id);
             if (mid) {
-              const settled = await waitForMilestoneDbClose(mid);
+              const settled = await isMilestoneCloseoutSettled(mid, verificationBasePath);
               if (settled) {
-                triggerArtifactVerified = verifyExpectedArtifact(s.currentUnit.type, s.currentUnit.id, verificationBasePath);
-                if (triggerArtifactVerified) {
-                  invalidateAllCaches();
-                }
+                triggerArtifactVerified = true;
+                invalidateAllCaches();
               }
             }
           } catch (e) {
@@ -1692,6 +1686,21 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         });
         ctx.ui.notify(
           `${s.currentUnit.type} ${s.currentUnit.id} is waiting for your input — pausing auto-mode instead of retrying the missing artifact.`,
+          "info",
+        );
+        s.lastToolInvocationError = null;
+        await pauseAuto(ctx, pi);
+        return "dispatched";
+      } else if (!triggerArtifactVerified && getPendingGate(verificationBasePath)) {
+        const pendingGateId = getPendingGate(verificationBasePath);
+        debugLog("postUnit", {
+          phase: "artifact-verify-pending-depth-gate",
+          unitType: s.currentUnit.type,
+          unitId: s.currentUnit.id,
+          pendingGateId,
+        });
+        ctx.ui.notify(
+          `${s.currentUnit.type} ${s.currentUnit.id} is waiting for depth confirmation (${pendingGateId}) — pausing auto-mode.`,
           "info",
         );
         s.lastToolInvocationError = null;
@@ -1886,10 +1895,21 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         }
         s.verificationRetryCount.delete(retryKey);
         s.verificationRetryFailureHashes.delete(retryKey);
+
+        if (s.currentUnit.type === "complete-milestone") {
+          const { milestone: mid } = parseUnitId(s.currentUnit.id);
+          if (mid) {
+            await runMilestoneCloseoutGitHub(s.basePath, mid);
+          }
+        }
       }
     } else {
       // Hook unit completed — no additional processing needed
     }
+  }
+
+  if (s.currentUnit && !s.currentUnit.type.startsWith("hook/")) {
+    await runPostUnitGitHubSyncIfNeeded(s.basePath, s.currentUnit);
   }
 
   return "continue";

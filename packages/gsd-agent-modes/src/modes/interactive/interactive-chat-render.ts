@@ -9,7 +9,7 @@ import type { TruncationResult } from "@gsd/pi-coding-agent/core/tools/truncate.
 import { Container, Markdown, Spacer, Text } from "@gsd/pi-tui";
 import { theme } from "@gsd/pi-coding-agent/theme/theme.js";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
-import { chatTurnFollowsUser } from "./components/chat-turn-connect.js";
+import { connectAssistantToPrecedingUser, reconcileChatTurnConnections } from "./components/chat-turn-connect.js";
 import { BashExecutionComponent } from "./components/bash-execution.js";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.js";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.js";
@@ -59,6 +59,15 @@ export function showStatus(host: InteractiveModeDelegateHost, message: string, o
 		host.lastStatusText = text;
 		host.ui.requestRender();
 	}
+
+function addUserMessageComponent(host: InteractiveModeDelegateHost, userComponent: UserMessageComponent): void {
+	host.chatContainer.addChild(userComponent);
+}
+
+function finalizeChatMutation(host: InteractiveModeDelegateHost): void {
+	reconcileChatTurnConnections(host.chatContainer.children);
+	trimChatHistory(host);
+}
 
 export function addMessageToChat(host: InteractiveModeDelegateHost, message: AgentMessage, options?: { populateHistory?: boolean }): void {
 		const timestampFormat = host.settingsManager.getTimestampFormat();
@@ -121,11 +130,11 @@ export function addMessageToChat(host: InteractiveModeDelegateHost, message: Age
 								message.timestamp,
 								timestampFormat,
 							);
-							host.chatContainer.addChild(userComponent);
+							addUserMessageComponent(host, userComponent);
 						}
 					} else {
 						const userComponent = new UserMessageComponent(textContent, host.getMarkdownThemeWithSettings(), message.timestamp, timestampFormat);
-						host.chatContainer.addChild(userComponent);
+						addUserMessageComponent(host, userComponent);
 					}
 					if (options?.populateHistory) {
 						host.editor.addToHistory?.(textContent);
@@ -134,13 +143,14 @@ export function addMessageToChat(host: InteractiveModeDelegateHost, message: Age
 				break;
 			}
 			case "assistant": {
+				const connectedToUser = connectAssistantToPrecedingUser(host.chatContainer.children);
 				const assistantComponent = new AssistantMessageComponent(
 					message,
 					host.hideThinkingBlock,
 					host.getMarkdownThemeWithSettings(),
 					timestampFormat,
 					undefined,
-					chatTurnFollowsUser(host.chatContainer.children),
+					connectedToUser,
 				);
 				host.chatContainer.addChild(assistantComponent);
 				break;
@@ -153,7 +163,7 @@ export function addMessageToChat(host: InteractiveModeDelegateHost, message: Age
 				const _exhaustive: never = message;
 			}
 		}
-		trimChatHistory(host);
+		finalizeChatMutation(host);
 	}
 
 	/**
@@ -199,13 +209,14 @@ export function renderSessionContext(host: InteractiveModeDelegateHost,
 
 				for (const segment of replaySegments) {
 					if (segment.kind === "assistant") {
+						const connectedToUser = connectAssistantToPrecedingUser(host.chatContainer.children);
 						const assistantComponent = new AssistantMessageComponent(
 							message,
 							host.hideThinkingBlock,
 							host.getMarkdownThemeWithSettings(),
 							timestampFormat,
 							{ startIndex: segment.startIndex, endIndex: segment.endIndex },
-							chatTurnFollowsUser(host.chatContainer.children),
+							connectedToUser,
 						);
 						host.chatContainer.addChild(assistantComponent);
 						assistantSegments.push(assistantComponent);
@@ -296,6 +307,7 @@ export function renderSessionContext(host: InteractiveModeDelegateHost,
 			component.markHistoricalNoResult();
 		}
 		host.pendingTools.clear();
+		reconcileChatTurnConnections(host.chatContainer.children);
 		trimChatHistory(host);
 		host.ui.requestRender();
 	}

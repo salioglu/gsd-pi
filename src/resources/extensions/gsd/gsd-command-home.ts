@@ -5,15 +5,25 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent
 
 import { showNextAction } from "../shared/tui.js";
 import type { NextAction } from "../shared/next-action-ui.js";
+import { isInteractiveCommandContext } from "./command-feedback.js";
 import { startAutoDetached } from "./auto.js";
+import {
+  loadCloseoutContext,
+  runMergeMilestone,
+  runMergeQuickTask,
+  type CloseoutContext,
+} from "./closeout-wizard.js";
 import { deriveState } from "./state.js";
 import type { GSDState } from "./types.js";
+import type { UnmergedMilestoneBlocker } from "./unmerged-milestone-guard.js";
 
 export type GsdHomeActionId =
   | "continue_step"
   | "run_auto"
   | "review_status"
   | "fix_recover"
+  | "finish_quick"
+  | "finish_milestone"
   | "start_configure";
 
 export interface GsdHomeAction {
@@ -29,6 +39,8 @@ export interface GsdHomeModel {
   title: string;
   summary: string[];
   actions: GsdHomeAction[];
+  strandedQuick?: CloseoutContext["strandedQuick"];
+  unmergedMilestone?: UnmergedMilestoneBlocker;
 }
 
 function activeWorkLabel(state: GSDState): string {
@@ -46,11 +58,16 @@ function disabled(description: string, reason: string): string {
   return `Unavailable: ${reason}. ${description}`;
 }
 
-export function buildGsdHomeModel(state: GSDState): GsdHomeModel {
+export function buildGsdHomeModel(
+  state: GSDState,
+  closeout?: Pick<CloseoutContext, "strandedQuick" | "unmergedMilestones">,
+): GsdHomeModel {
   const blocked = isBlocked(state);
   const complete = state.phase === "complete";
   const hasActiveWork = Boolean(state.activeMilestone);
   const workLabel = activeWorkLabel(state);
+  const strandedQuick = closeout?.strandedQuick ?? null;
+  const unmergedMilestone = closeout?.unmergedMilestones?.[0];
   const nextReason = complete
     ? "all milestones are complete"
     : blocked
@@ -59,24 +76,54 @@ export function buildGsdHomeModel(state: GSDState): GsdHomeModel {
         ? "there is no active milestone"
         : "";
 
-  const recommended: GsdHomeActionId = blocked
-    ? "fix_recover"
-    : complete || !hasActiveWork
-      ? "start_configure"
-      : "continue_step";
-
   const canAdvance = hasActiveWork && !blocked && !complete;
+
+  const recommended: GsdHomeActionId = strandedQuick
+    ? "finish_quick"
+    : unmergedMilestone
+      ? "finish_milestone"
+      : blocked
+        ? "fix_recover"
+        : canAdvance
+          ? "continue_step"
+          : "start_configure";
 
   return {
     title: "GSD — What now?",
     summary: [
-      complete
-        ? `All milestones complete${state.lastCompletedMilestone ? ` after ${state.lastCompletedMilestone.id}: ${state.lastCompletedMilestone.title}` : ""}.`
-        : workLabel,
+      strandedQuick
+        ? `Quick task Q${strandedQuick.taskNum} finished on ${strandedQuick.quickBranch} but is not merged to ${strandedQuick.originalBranch}.`
+        : unmergedMilestone
+          ? `${unmergedMilestone.milestoneId} is complete but not merged into ${unmergedMilestone.integrationBranch}.`
+          : complete
+            ? `All milestones complete${state.lastCompletedMilestone ? ` after ${state.lastCompletedMilestone.id}: ${state.lastCompletedMilestone.title}` : ""}.`
+            : workLabel,
       state.nextAction ? `Next: ${state.nextAction}` : "",
       ...state.blockers,
     ].filter(Boolean),
+    strandedQuick: strandedQuick ?? undefined,
+    unmergedMilestone,
     actions: [
+      {
+        id: "finish_quick",
+        label: "Merge quick task",
+        description: strandedQuick
+          ? `Squash-merge ${strandedQuick.quickBranch} into ${strandedQuick.originalBranch}, then return to the integration branch.`
+          : disabled("Use this when a quick-task branch still has unmerged product changes.", "no stranded quick branch"),
+        enabled: Boolean(strandedQuick),
+        recommended: recommended === "finish_quick",
+        disabledReason: strandedQuick ? undefined : "no stranded quick branch",
+      },
+      {
+        id: "finish_milestone",
+        label: "Merge milestone",
+        description: unmergedMilestone
+          ? `Merge ${unmergedMilestone.milestoneId} from ${unmergedMilestone.branch} into ${unmergedMilestone.integrationBranch}.`
+          : disabled("Use this when a completed milestone branch still has unmerged product changes.", "no unmerged milestone"),
+        enabled: Boolean(unmergedMilestone),
+        recommended: recommended === "finish_milestone",
+        disabledReason: unmergedMilestone ? undefined : "no unmerged milestone",
+      },
       {
         id: "continue_step",
         label: "Continue one step",
@@ -100,7 +147,7 @@ export function buildGsdHomeModel(state: GSDState): GsdHomeModel {
       {
         id: "review_status",
         label: "Review status",
-        description: "Open the dashboard for milestone, slice, task, and blocker details.",
+        description: "Open the live run dashboard. For shipped work, use /gsd visualize.",
         enabled: true,
         recommended: false,
       },
@@ -167,10 +214,13 @@ export async function showGsdHome(
   pi: ExtensionAPI,
   basePath: string,
 ): Promise<void> {
-  const state = await deriveState(basePath);
-  const model = buildGsdHomeModel(state);
+  const [state, closeout] = await Promise.all([
+    deriveState(basePath),
+    loadCloseoutContext(basePath),
+  ]);
+  const model = buildGsdHomeModel(state, closeout);
 
-  if (!ctx.hasUI || process.env.GSD_HEADLESS === "1") {
+  if (!isInteractiveCommandContext(ctx)) {
     ctx.ui.notify(formatHomeText(model), "info");
     return;
   }
@@ -193,6 +243,14 @@ export async function showGsdHome(
 
   if (choice === "continue_step") {
     startAutoDetached(ctx, pi, basePath, false, { step: true });
+    return;
+  }
+  if (choice === "finish_quick") {
+    await runMergeQuickTask(ctx, basePath, closeout.strandedQuick);
+    return;
+  }
+  if (choice === "finish_milestone") {
+    await runMergeMilestone(ctx, basePath, closeout.unmergedMilestones[0]?.milestoneId);
     return;
   }
   if (choice === "run_auto") {
