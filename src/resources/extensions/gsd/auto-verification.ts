@@ -14,7 +14,7 @@
  */
 
 import type { ExtensionContext, ExtensionAPI } from "@gsd/pi-coding-agent";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { gsdProjectionRoot, resolveSliceFile, resolveSlicePath, resolveMilestoneFile } from "./paths.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { parseUnitId } from "./unit-id.js";
@@ -573,7 +573,15 @@ export async function runPostUnitVerification(
         const sDir = resolveSlicePath(s.basePath, mid, sid);
         if (sDir) {
           const tasksDir = join(sDir, "tasks");
-          if (result.passed) {
+          if (verdict.reason === "no-host-checks") {
+            // Do not persist stale failed evidence when no runnable checks exist.
+            // If a stale failure file exists from a previous run, remove it so a
+            // corrected plan can be re-verified cleanly.
+            const staleEvidencePath = join(tasksDir, `${tid}-VERIFY.json`);
+            if (existsSync(staleEvidencePath)) {
+              unlinkSync(staleEvidencePath);
+            }
+          } else if (result.passed) {
             writeVerificationJSON(result, tasksDir, tid, s.currentUnit.id);
           } else {
             const nextAttempt = attempt + 1;

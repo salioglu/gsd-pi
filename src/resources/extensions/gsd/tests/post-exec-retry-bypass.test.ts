@@ -11,7 +11,7 @@
 import { describe, test, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { runPostUnitVerification, type VerificationContext } from "../auto-verification.ts";
@@ -442,11 +442,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.equal(s.pendingVerificationRetry, null);
 
     const evidencePath = join(tempDir, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-VERIFY.json");
-    const evidence = JSON.parse(readFileSync(evidencePath, "utf-8"));
-    assert.equal(evidence.passed, false);
-    assert.equal(evidence.discoverySource, "none");
-    assert.ok(!("retryAttempt" in evidence), "no-host-checks evidence must not include retryAttempt");
-    assert.ok(!("maxRetries" in evidence), "no-host-checks evidence must not include maxRetries");
+    assert.equal(existsSync(evidencePath), false, "no-host-checks should not persist stale VERIFY.json evidence");
   });
 
   test("auto-discovered package.json verification failure retries instead of continuing", async () => {
