@@ -37,7 +37,11 @@ class GsdMemoryProvider:
         if query and len(query) >= 2:
             try:
                 data = self._client.memory_query(project_dir, query)
-                memories = data.get("memories") or data.get("results") or data
+                memories = data.get("memories")
+                if memories is None:
+                    memories = data.get("results")
+                if memories is None:
+                    memories = data
                 if memories:
                     sections.append("## GSD memories")
                     if isinstance(memories, list):

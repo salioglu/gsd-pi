@@ -76,12 +76,16 @@ class SupervisorFsm:
         self._thread = None
 
     def _loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                self._tick()
-            except Exception:
-                pass
-            self._stop.wait(self._config.poll_interval_seconds)
+        try:
+            while not self._stop.is_set():
+                try:
+                    self._tick()
+                except Exception:
+                    pass
+                self._stop.wait(self._config.poll_interval_seconds)
+        finally:
+            if self._thread is threading.current_thread():
+                self._thread = None
 
     def _tick(self) -> None:
         ctx = self._get_context()
@@ -109,7 +113,7 @@ class SupervisorFsm:
                 self._notifications.notify_terminal(
                     status.status, status.error
                 )
-                self.stop()
+                self._stop.set()
 
         self._diff_progress(ctx, progress)
         ctx.last_progress = progress

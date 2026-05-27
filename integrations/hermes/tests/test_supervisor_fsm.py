@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock
 
 from open_gsd_hermes.config import GsdConfig
@@ -60,3 +61,51 @@ def test_supervisor_detects_blocker() -> None:
     fsm._tick()
     assert ctx.state == SupervisorState.BLOCKED
     assert any("blocker" in t.lower() or "Approve" in t for t in sent)
+
+
+def test_supervisor_terminal_tick_updates_progress_before_stopping() -> None:
+    ctx = SupervisorContext(
+        session_id="s1",
+        project_dir="/tmp/p",
+        state=SupervisorState.RUNNING,
+        last_progress=ProgressSnapshot(
+            active_task={"id": "old-task"},
+            phase="execute",
+        ),
+    )
+    client = MockClient()
+    client._status = SessionStatus(status="complete")
+    client._progress = ProgressSnapshot(
+        active_task={"id": "new-task"},
+        phase="complete",
+    )
+    stored: list[SupervisorContext] = []
+    sent: list[str] = []
+
+    def dispatch(_name: str, args: dict) -> None:
+        sent.append(args.get("text", ""))
+
+    target = DeliveryTarget("slack", "channel", "C123")
+    notifications = NotificationService(
+        MagicMock(),
+        GsdConfig(),
+        lambda: target,
+        dispatch=dispatch,
+    )
+    fsm = SupervisorFsm(
+        GsdConfig(),
+        client,  # type: ignore[arg-type]
+        notifications,
+        lambda: ctx,
+        stored.append,
+    )
+    fsm._thread = threading.current_thread()
+
+    fsm._tick()
+
+    assert fsm._stop.is_set()
+    assert ctx.notified_terminal
+    assert ctx.last_progress == client._progress
+    assert stored == [ctx]
+    assert any("finished" in t for t in sent)
+    assert any("new-task" in t for t in sent)

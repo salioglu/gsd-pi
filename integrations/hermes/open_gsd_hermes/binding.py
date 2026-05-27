@@ -66,15 +66,15 @@ def resolve_project_dir(
       5. profile default
       6. cwd heuristic
     """
-    # Tier order: cron → channel map → /gsd bind (session) → profile default → cwd
+    # Tier order: cron → slash arg → session bind → channel map → default → cwd
     candidates: list[tuple[str, str | None]] = [
         ("cron", ctx.cron_project),
+        ("slash", ctx.slash_path),
+        ("session", ctx.session_bind),
         (
             "channel",
             _resolve_channel_binding(config, ctx.platform, ctx.channel_id),
         ),
-        ("session", ctx.session_bind),
-        ("slash", ctx.slash_path),
         ("default", config.default_project),
         ("cwd", _cwd_heuristic(ctx.cwd)),
     ]

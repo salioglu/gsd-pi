@@ -21,7 +21,23 @@ def config() -> GsdConfig:
     )
 
 
-def test_channel_wins_over_session_bind(config: GsdConfig, tmp_path: Path) -> None:
+def test_slash_path_wins_over_channel_binding(
+    config: GsdConfig, tmp_path: Path
+) -> None:
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / ".gsd").mkdir()
+    ctx = BindingContext(
+        slash_path=str(other),
+        platform="slack",
+        channel_id="#eng-bot",
+    )
+    assert resolve_project_dir(config, ctx) == str(other.resolve())
+
+
+def test_session_bind_wins_over_channel_binding(
+    config: GsdConfig, tmp_path: Path
+) -> None:
     other = tmp_path / "other"
     other.mkdir()
     (other / ".gsd").mkdir()
@@ -32,7 +48,7 @@ def test_channel_wins_over_session_bind(config: GsdConfig, tmp_path: Path) -> No
         platform="slack",
         channel_id="#eng-bot",
     )
-    assert resolve_project_dir(config, ctx) == str(FIXTURE.resolve())
+    assert resolve_project_dir(config, ctx) == str(other.resolve())
 
 
 def test_session_bind_wins_over_default(config: GsdConfig, tmp_path: Path) -> None:

@@ -26,3 +26,14 @@ def test_memory_prefetch_golden(tmp_path: Path) -> None:
     rendered = provider.prefetch("/tmp/project", query="auth")
     expected = GOLDEN.read_text(encoding="utf-8").strip()
     assert rendered.strip() == expected
+
+
+def test_memory_prefetch_ignores_empty_memory_results() -> None:
+    config = GsdConfig()
+    client = MagicMock(spec=GsdMcpClient)
+    client.memory_query.return_value = {"memories": []}
+
+    provider = GsdMemoryProvider(config, client)
+    rendered = provider.prefetch("/tmp/project", query="auth")
+
+    assert rendered == ""
