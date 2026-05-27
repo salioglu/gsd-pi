@@ -95,6 +95,7 @@ class SupervisorFsm:
         status = self._client.status(ctx.session_id)
         progress = self._client.progress(ctx.project_dir)
         ctx.last_status = status
+        terminal_notification: tuple[str, str | None] | None = None
 
         new_state = self._map_status(status.status)
         if status.pending_blocker and new_state != SupervisorState.BLOCKED:
@@ -110,12 +111,12 @@ class SupervisorFsm:
                 self._notifications.notify_blocker(status)
             elif new_state in TERMINAL and not ctx.notified_terminal:
                 ctx.notified_terminal = True
-                self._notifications.notify_terminal(
-                    status.status, status.error
-                )
-                self._stop.set()
+                terminal_notification = (status.status, status.error)
 
         self._diff_progress(ctx, progress)
+        if terminal_notification:
+            self._notifications.notify_terminal(*terminal_notification)
+            self._stop.set()
         ctx.last_progress = progress
         self._set_context(ctx)
 
@@ -148,7 +149,7 @@ class SupervisorFsm:
                 parts.append(f"{label} → {_fmt_ref(new)}")
         if parts:
             self._notifications.notify_transition(", ".join(parts))
-        self._client.invalidate_cache(ctx.project_dir)
+            self._client.invalidate_cache(ctx.project_dir)
 
 
 def _fmt_ref(ref: dict[str, str] | None) -> str:

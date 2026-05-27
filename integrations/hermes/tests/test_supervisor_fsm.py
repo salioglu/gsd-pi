@@ -16,6 +16,7 @@ class MockClient:
         self.status_calls = 0
         self._status = SessionStatus(status="running")
         self._progress = ProgressSnapshot(phase="execute")
+        self.invalidated: list[str | None] = []
 
     def status(self, _session_id: str) -> SessionStatus:
         self.status_calls += 1
@@ -25,7 +26,7 @@ class MockClient:
         return self._progress
 
     def invalidate_cache(self, _project_dir: str | None = None) -> None:
-        pass
+        self.invalidated.append(_project_dir)
 
 
 def test_supervisor_detects_blocker() -> None:
@@ -109,3 +110,43 @@ def test_supervisor_terminal_tick_updates_progress_before_stopping() -> None:
     assert stored == [ctx]
     assert any("finished" in t for t in sent)
     assert any("new-task" in t for t in sent)
+    assert sent == [
+        "📋 GSD: task → new-task",
+        "✅ GSD auto mode finished.",
+    ]
+
+
+def test_supervisor_keeps_cache_when_progress_unchanged() -> None:
+    ctx = SupervisorContext(
+        session_id="s1",
+        project_dir="/tmp/p",
+        state=SupervisorState.RUNNING,
+        last_progress=ProgressSnapshot(
+            active_task={"id": "same-task"},
+            phase="execute",
+        ),
+    )
+    client = MockClient()
+    client._status = SessionStatus(status="running")
+    client._progress = ProgressSnapshot(
+        active_task={"id": "same-task"},
+        phase="execute",
+    )
+
+    notifications = NotificationService(
+        MagicMock(),
+        GsdConfig(),
+        lambda: DeliveryTarget("slack", "channel", "C123"),
+        dispatch=lambda _name, _args: None,
+    )
+    fsm = SupervisorFsm(
+        GsdConfig(),
+        client,  # type: ignore[arg-type]
+        notifications,
+        lambda: ctx,
+        lambda c: None,
+    )
+
+    fsm._tick()
+
+    assert client.invalidated == []

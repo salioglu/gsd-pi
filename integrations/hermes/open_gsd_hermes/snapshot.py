@@ -8,9 +8,11 @@ from open_gsd_hermes.types import ProgressSnapshot
 def _fmt_ref(ref: dict[str, str] | None) -> str:
     if not ref:
         return "—"
-    title = ref.get("title") or ref.get("id") or "—"
     rid = ref.get("id", "")
-    return f"{rid}: {title}" if rid else title
+    title = ref.get("title") or ""
+    if rid and title:
+        return f"{rid}: {title}"
+    return rid or title or "—"
 
 
 def format_snapshot(progress: ProgressSnapshot) -> str:

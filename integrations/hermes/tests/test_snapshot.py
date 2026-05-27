@@ -27,3 +27,19 @@ def test_snapshot_golden() -> None:
     expected = GOLDEN.read_text(encoding="utf-8").strip()
     # Phase maps "execution" -> execute in MCP; golden uses execute
     assert rendered.strip() == expected
+
+
+def test_snapshot_omits_duplicate_id_when_title_missing() -> None:
+    progress = ProgressSnapshot(
+        active_milestone={"id": "M001"},
+        active_slice={"id": "S01", "title": ""},
+        active_task={"id": "T01", "title": "Plugin scaffold"},
+        phase="execute",
+    )
+
+    rendered = format_snapshot(progress)
+
+    assert "Active milestone: M001" in rendered
+    assert "Active slice: S01" in rendered
+    assert "M001: M001" not in rendered
+    assert "S01: S01" not in rendered
