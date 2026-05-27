@@ -35,10 +35,6 @@ def register(ctx: PluginContext) -> None:
     def get_binding_ctx() -> BindingContext:
         return binding_ctx
 
-    def set_binding_ctx(ctx: BindingContext) -> None:
-        nonlocal binding_ctx
-        binding_ctx = ctx
-
     def get_supervisor_ctx() -> SupervisorContext:
         return supervisor_ctx
 

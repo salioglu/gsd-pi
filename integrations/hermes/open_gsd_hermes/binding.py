@@ -56,7 +56,7 @@ def resolve_project_dir(
     ctx: BindingContext,
     *,
     fail_closed: bool = True,
-) -> str:
+) -> str | None:
     """
     Resolve projectDir in order:
       1. cron explicit (cron_project)
@@ -93,4 +93,4 @@ def resolve_project_dir(
             "No GSD project bound. Use `/gsd bind <path>`, set `default_project` in "
             "~/.hermes/gsd.yaml, or add a channel binding."
         )
-    raise BindingError("unreachable")
+    return None

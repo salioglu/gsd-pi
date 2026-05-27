@@ -84,6 +84,10 @@ def test_fail_closed(config: GsdConfig) -> None:
         resolve_project_dir(config, BindingContext())
 
 
+def test_fail_open_returns_none(config: GsdConfig) -> None:
+    assert resolve_project_dir(config, BindingContext(), fail_closed=False) is None
+
+
 def test_cwd_heuristic(config: GsdConfig) -> None:
     ctx = BindingContext(cwd=str(FIXTURE))
     assert resolve_project_dir(config, ctx) == str(FIXTURE.resolve())

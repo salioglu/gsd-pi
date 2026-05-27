@@ -34,7 +34,9 @@ export interface ReadCliOptions {
 }
 
 function parseReadArgs(argv: string[]): ReadCliOptions | null {
-  const args = argv.slice(3) // gsd read <kind> ...
+  const readIndex = argv.indexOf('read', 2)
+  if (readIndex === -1) return null
+  const args = argv.slice(readIndex + 1)
   if (args.length < 1) return null
   const kind = args[0] as ReadKind
   if (!['progress', 'roadmap', 'memory'].includes(kind)) return null
