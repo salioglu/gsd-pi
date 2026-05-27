@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from unittest.mock import MagicMock
 
+from open_gsd_hermes.binding import SessionBindStore
+from open_gsd_hermes.commands import GsdCommandRouter
 from open_gsd_hermes.config import GsdConfig
 from open_gsd_hermes.notifications import NotificationService
 from open_gsd_hermes.supervisor import SupervisorContext, SupervisorFsm, SupervisorState
-from open_gsd_hermes.types import DeliveryTarget, ProgressSnapshot, SessionStatus
+from open_gsd_hermes.types import (
+    BindingContext,
+    DeliveryTarget,
+    ProgressSnapshot,
+    SessionStatus,
+)
 
 
 class MockClient:
@@ -27,6 +35,55 @@ class MockClient:
 
     def invalidate_cache(self, _project_dir: str | None = None) -> None:
         self.invalidated.append(_project_dir)
+
+
+class MockSupervisor:
+    def __init__(self) -> None:
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+
+def test_auto_resets_session_specific_supervisor_context(tmp_path) -> None:
+    project_dir = tmp_path / "project"
+    (project_dir / ".gsd").mkdir(parents=True)
+    ctx = SupervisorContext(
+        session_id="old-session",
+        project_dir="/tmp/old",
+        state=SupervisorState.COMPLETE,
+        last_progress=ProgressSnapshot(active_task={"id": "old-task"}),
+        last_status=SessionStatus(status="complete"),
+        pending_blocker_id="old-blocker",
+        notified_terminal=True,
+    )
+    supervisor = MockSupervisor()
+    client = MagicMock()
+    client.execute.return_value = {"sessionId": "new-session"}
+
+    router = GsdCommandRouter(
+        GsdConfig(default_project=str(project_dir)),
+        client,
+        SessionBindStore(),
+        supervisor,  # type: ignore[arg-type]
+        lambda: "session-key",
+        lambda: BindingContext(),
+        lambda: ctx,
+        lambda c: None,
+        lambda: (None, None),
+    )
+
+    result = asyncio.run(router._cmd_auto([]))
+
+    assert result == "Started GSD auto mode (session `new-session`)"
+    assert supervisor.started
+    assert ctx.session_id == "new-session"
+    assert ctx.project_dir == str(project_dir)
+    assert ctx.state == SupervisorState.RUNNING
+    assert ctx.last_progress is None
+    assert ctx.last_status is None
+    assert ctx.pending_blocker_id is None
+    assert not ctx.notified_terminal
 
 
 def test_supervisor_detects_blocker() -> None:
@@ -114,6 +171,47 @@ def test_supervisor_terminal_tick_updates_progress_before_stopping() -> None:
         "📋 GSD: task → new-task",
         "✅ GSD auto mode finished.",
     ]
+
+
+def test_supervisor_terminal_status_takes_precedence_over_pending_blocker() -> None:
+    ctx = SupervisorContext(
+        session_id="s1",
+        project_dir="/tmp/p",
+        state=SupervisorState.BLOCKED,
+    )
+    client = MockClient()
+    client._status = SessionStatus(
+        status="completed",
+        pending_blocker={"id": "b1", "question": "Approve deploy?"},
+    )
+    stored: list[SupervisorContext] = []
+    sent: list[str] = []
+
+    def dispatch(_name: str, args: dict) -> None:
+        sent.append(args.get("text", ""))
+
+    notifications = NotificationService(
+        MagicMock(),
+        GsdConfig(),
+        lambda: DeliveryTarget("slack", "channel", "C123"),
+        dispatch=dispatch,
+    )
+    fsm = SupervisorFsm(
+        GsdConfig(),
+        client,  # type: ignore[arg-type]
+        notifications,
+        lambda: ctx,
+        stored.append,
+    )
+    fsm._thread = threading.current_thread()
+
+    fsm._tick()
+
+    assert ctx.state == SupervisorState.COMPLETE
+    assert ctx.notified_terminal
+    assert fsm._stop.is_set()
+    assert stored == [ctx]
+    assert sent == ["✅ GSD auto mode finished."]
 
 
 def test_supervisor_keeps_cache_when_progress_unchanged() -> None:

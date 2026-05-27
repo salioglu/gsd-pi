@@ -98,7 +98,11 @@ class SupervisorFsm:
         terminal_notification: tuple[str, str | None] | None = None
 
         new_state = self._map_status(status.status)
-        if status.pending_blocker and new_state != SupervisorState.BLOCKED:
+        if (
+            status.pending_blocker
+            and new_state not in TERMINAL
+            and new_state != SupervisorState.BLOCKED
+        ):
             new_state = SupervisorState.BLOCKED
 
         if new_state != ctx.state:

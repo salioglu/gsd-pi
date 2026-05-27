@@ -117,6 +117,9 @@ class GsdCommandRouter:
         ctx.session_id = session_id
         ctx.project_dir = project_dir
         ctx.state = SupervisorState.RUNNING
+        ctx.last_progress = None
+        ctx.last_status = None
+        ctx.pending_blocker_id = None
         ctx.notified_terminal = False
         self._set_supervisor_ctx(ctx)
         self._supervisor.start()
