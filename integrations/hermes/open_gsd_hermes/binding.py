@@ -51,6 +51,17 @@ def _cwd_heuristic(cwd: str | None) -> str | None:
     return None
 
 
+def resolve_explicit_project_dir(raw: str) -> str:
+    """Resolve a user-provided project path without falling back to other bindings."""
+    path = Path(os.path.expanduser(str(raw))).resolve()
+    if not path.is_dir() or not _looks_like_gsd_project(path):
+        raise BindingError(
+            f"`{raw}` is not a GSD project. Choose a directory containing "
+            "`.gsd/` or `.planning/`."
+        )
+    return str(path)
+
+
 def resolve_project_dir(
     config: GsdConfig,
     ctx: BindingContext,

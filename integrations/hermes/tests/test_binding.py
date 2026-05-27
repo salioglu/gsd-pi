@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from open_gsd_hermes.binding import BindingError, SessionBindStore, resolve_project_dir
+from open_gsd_hermes.binding import (
+    BindingError,
+    SessionBindStore,
+    resolve_explicit_project_dir,
+    resolve_project_dir,
+)
 from open_gsd_hermes.config import GsdConfig
 from open_gsd_hermes.types import BindingContext
 
@@ -33,6 +38,11 @@ def test_slash_path_wins_over_channel_binding(
         channel_id="#eng-bot",
     )
     assert resolve_project_dir(config, ctx) == str(other.resolve())
+
+
+def test_explicit_project_dir_rejects_invalid_project(tmp_path: Path) -> None:
+    with pytest.raises(BindingError):
+        resolve_explicit_project_dir(str(tmp_path / "missing"))
 
 
 def test_session_bind_wins_over_channel_binding(

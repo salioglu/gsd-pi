@@ -40,9 +40,41 @@ class MockClient:
 class MockSupervisor:
     def __init__(self) -> None:
         self.started = False
+        self.stopped = False
+        self.calls: list[str] = []
 
     def start(self) -> None:
         self.started = True
+        self.calls.append("start")
+
+    def stop(self) -> None:
+        self.stopped = True
+        self.calls.append("stop")
+
+
+def test_bind_rejects_invalid_path_instead_of_falling_back_to_default(tmp_path) -> None:
+    project_dir = tmp_path / "project"
+    (project_dir / ".gsd").mkdir(parents=True)
+    bind_store = SessionBindStore()
+    client = MagicMock()
+
+    router = GsdCommandRouter(
+        GsdConfig(default_project=str(project_dir)),
+        client,
+        bind_store,
+        MockSupervisor(),  # type: ignore[arg-type]
+        lambda: "session-key",
+        lambda: BindingContext(),
+        lambda: SupervisorContext(),
+        lambda c: None,
+        lambda: (None, None),
+    )
+
+    result = asyncio.run(router._cmd_bind([str(tmp_path / "missing")]))
+
+    assert "is not a GSD project" in result
+    assert bind_store.get("session-key") is None
+    client.invalidate_cache.assert_not_called()
 
 
 def test_auto_resets_session_specific_supervisor_context(tmp_path) -> None:
@@ -77,6 +109,7 @@ def test_auto_resets_session_specific_supervisor_context(tmp_path) -> None:
 
     assert result == "Started GSD auto mode (session `new-session`)"
     assert supervisor.started
+    assert supervisor.calls == ["stop", "start"]
     assert ctx.session_id == "new-session"
     assert ctx.project_dir == str(project_dir)
     assert ctx.state == SupervisorState.RUNNING

@@ -5,7 +5,12 @@ from __future__ import annotations
 import shlex
 from typing import Any, Callable
 
-from open_gsd_hermes.binding import BindingError, SessionBindStore, resolve_project_dir
+from open_gsd_hermes.binding import (
+    BindingError,
+    SessionBindStore,
+    resolve_explicit_project_dir,
+    resolve_project_dir,
+)
 from open_gsd_hermes.config import GsdConfig
 from open_gsd_hermes.gsd_client import GsdMcpClient
 from open_gsd_hermes.snapshot import format_snapshot
@@ -84,10 +89,7 @@ class GsdCommandRouter:
         path = rest[0]
         sk = self._get_session_key()
         try:
-            project_dir = resolve_project_dir(
-                self._config,
-                self._binding_ctx(slash_path=path),
-            )
+            project_dir = resolve_explicit_project_dir(path)
         except BindingError as e:
             return str(e)
         self._bind_store.set(sk, project_dir)
@@ -113,6 +115,7 @@ class GsdCommandRouter:
             return str(e)
         result = self._client.execute(project_dir)
         session_id = result.get("sessionId") or result.get("session_id")
+        self._supervisor.stop()
         ctx = self._get_supervisor_ctx()
         ctx.session_id = session_id
         ctx.project_dir = project_dir
