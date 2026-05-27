@@ -1,0 +1,153 @@
+"""Background supervisor — poll gsd_status, diff progress, notify transitions."""
+
+from __future__ import annotations
+
+import threading
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Callable
+
+from open_gsd_hermes.config import GsdConfig
+from open_gsd_hermes.gsd_client import GsdMcpClient
+from open_gsd_hermes.notifications import NotificationService
+from open_gsd_hermes.types import ProgressSnapshot, SessionStatus
+
+
+class SupervisorState(str, Enum):
+    IDLE = "idle"
+    RUNNING = "running"
+    BLOCKED = "blocked"
+    COMPLETE = "complete"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+TERMINAL = frozenset(
+    {
+        SupervisorState.COMPLETE,
+        SupervisorState.FAILED,
+        SupervisorState.CANCELLED,
+    }
+)
+
+
+@dataclass
+class SupervisorContext:
+    session_id: str | None = None
+    project_dir: str | None = None
+    state: SupervisorState = SupervisorState.IDLE
+    last_progress: ProgressSnapshot | None = None
+    last_status: SessionStatus | None = None
+    pending_blocker_id: str | None = None
+    notified_terminal: bool = False
+
+
+class SupervisorFsm:
+    """Poll loop with transition detection for unit/blocker/terminal changes."""
+
+    def __init__(
+        self,
+        config: GsdConfig,
+        client: GsdMcpClient,
+        notifications: NotificationService,
+        get_context: Callable[[], SupervisorContext],
+        set_context: Callable[[SupervisorContext], None],
+    ) -> None:
+        self._config = config
+        self._client = client
+        self._notifications = notifications
+        self._get_context = get_context
+        self._set_context = set_context
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+        self._thread = None
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._tick()
+            except Exception:
+                pass
+            self._stop.wait(self._config.poll_interval_seconds)
+
+    def _tick(self) -> None:
+        ctx = self._get_context()
+        if not ctx.session_id or not ctx.project_dir:
+            return
+
+        status = self._client.status(ctx.session_id)
+        progress = self._client.progress(ctx.project_dir)
+        ctx.last_status = status
+
+        new_state = self._map_status(status.status)
+        if status.pending_blocker and new_state != SupervisorState.BLOCKED:
+            new_state = SupervisorState.BLOCKED
+
+        if new_state != ctx.state:
+            ctx.state = new_state
+            if new_state == SupervisorState.BLOCKED:
+                ctx.pending_blocker_id = (
+                    (status.pending_blocker or {}).get("id")
+                    or (status.pending_blocker or {}).get("blockerId")
+                )
+                self._notifications.notify_blocker(status)
+            elif new_state in TERMINAL and not ctx.notified_terminal:
+                ctx.notified_terminal = True
+                self._notifications.notify_terminal(
+                    status.status, status.error
+                )
+                self.stop()
+
+        self._diff_progress(ctx, progress)
+        ctx.last_progress = progress
+        self._set_context(ctx)
+
+    def _map_status(self, raw: str) -> SupervisorState:
+        mapping = {
+            "running": SupervisorState.RUNNING,
+            "blocked": SupervisorState.BLOCKED,
+            "complete": SupervisorState.COMPLETE,
+            "completed": SupervisorState.COMPLETE,
+            "done": SupervisorState.COMPLETE,
+            "failed": SupervisorState.FAILED,
+            "error": SupervisorState.FAILED,
+            "cancelled": SupervisorState.CANCELLED,
+        }
+        return mapping.get(raw.lower(), SupervisorState.RUNNING)
+
+    def _diff_progress(
+        self, ctx: SupervisorContext, progress: ProgressSnapshot
+    ) -> None:
+        prev = ctx.last_progress
+        if prev is None:
+            return
+        parts: list[str] = []
+        for label, old, new in (
+            ("milestone", prev.active_milestone, progress.active_milestone),
+            ("slice", prev.active_slice, progress.active_slice),
+            ("task", prev.active_task, progress.active_task),
+        ):
+            if old != new and new:
+                parts.append(f"{label} → {_fmt_ref(new)}")
+        if parts:
+            self._notifications.notify_transition(", ".join(parts))
+        self._client.invalidate_cache(ctx.project_dir)
+
+
+def _fmt_ref(ref: dict[str, str] | None) -> str:
+    if not ref:
+        return "—"
+    return ref.get("id") or ref.get("title") or "—"
