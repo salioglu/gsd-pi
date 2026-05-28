@@ -30,7 +30,6 @@ test("complete-slice with gsd_task_reopen handoff continues instead of artifact-
     const s = new AutoSession();
     s.active = true;
     s.basePath = base;
-    s.canonicalProjectRoot = base;
     s.currentUnit = { type: "complete-slice", id: "M001/S01", startedAt: Date.now() };
 
     const retryKey = "complete-slice:M001/S01";
@@ -76,7 +75,6 @@ test("complete-slice with gsd_replan_slice tool result continues instead of arti
     const s = new AutoSession();
     s.active = true;
     s.basePath = base;
-    s.canonicalProjectRoot = base;
     s.currentUnit = { type: "complete-slice", id: "M001/S01", startedAt: Date.now() };
 
     const retryKey = "complete-slice:M001/S01";
