@@ -328,7 +328,13 @@ try {
         npm_config_cache: npmCacheDir,
       },
     });
-    const globalRoot = join(globalPrefix, 'lib', 'node_modules', '@opengsd', 'gsd-pi');
+    const globalNodeModules = execFileSync(getNpmCommand(), ['root', '-g', '--prefix', globalPrefix], {
+      encoding: 'utf8',
+      shell: process.platform === 'win32',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: DEFAULT_MAX_BUFFER,
+    }).trim();
+    const globalRoot = join(globalNodeModules, '@opengsd', 'gsd-pi');
     const globalUndiciPkg = join(globalRoot, 'node_modules', 'undici', 'package.json');
     if (!existsSync(globalUndiciPkg)) {
       console.log('ERROR: Global install left node_modules/undici unresolved.');
