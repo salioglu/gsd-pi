@@ -6,7 +6,7 @@ import time
 from unittest.mock import patch
 
 from open_gsd_hermes.config import GsdConfig
-from open_gsd_hermes.gsd_client import GsdMcpClient
+from open_gsd_hermes.gsd_client import GsdMcpClient, GsdVersionError
 from open_gsd_hermes.types import ProgressSnapshot
 
 
@@ -33,6 +33,26 @@ def test_progress_falls_back_to_mcp_when_cli_binary_is_missing() -> None:
     client = GsdMcpClient(GsdConfig())
 
     with patch.object(client, "ensure_version", side_effect=FileNotFoundError("gsd")):
+        with patch.object(
+            client,
+            "_call_tool",
+            return_value={"phase": "execute", "nextAction": "from mcp"},
+        ) as call_tool:
+            progress = client.progress("/tmp/p")
+
+    assert progress.phase == "execute"
+    assert progress.next_action == "from mcp"
+    call_tool.assert_called_once_with(
+        "gsd_progress",
+        {"projectDir": "/tmp/p"},
+        check_version=False,
+    )
+
+
+def test_progress_falls_back_to_mcp_when_cli_version_is_unsupported() -> None:
+    client = GsdMcpClient(GsdConfig())
+
+    with patch.object(client, "ensure_version", side_effect=GsdVersionError("old gsd")):
         with patch.object(
             client,
             "_call_tool",

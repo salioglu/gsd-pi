@@ -37,3 +37,23 @@ def test_memory_prefetch_ignores_empty_memory_results() -> None:
     rendered = provider.prefetch("/tmp/project", query="auth")
 
     assert rendered == ""
+
+
+def test_memory_prefetch_keeps_multiple_gsd_memories_in_one_list() -> None:
+    config = GsdConfig()
+    client = MagicMock(spec=GsdMcpClient)
+    client.memory_query.return_value = {
+        "memories": [
+            {"content": "Auth uses JWT with refresh rotation"},
+            {"content": "Billing runs through Stripe"},
+        ],
+    }
+
+    provider = GsdMemoryProvider(config, client)
+    rendered = provider.prefetch("/tmp/project", query="auth")
+
+    assert rendered == (
+        "## GSD memories\n"
+        "- Auth uses JWT with refresh rotation\n"
+        "- Billing runs through Stripe"
+    )

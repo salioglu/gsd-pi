@@ -209,6 +209,7 @@ class GsdMcpClient:
                 self.ensure_version()
                 return self._read_progress_cli(project_dir)
             except (
+                GsdVersionError,
                 McpProtocolError,
                 json.JSONDecodeError,
                 OSError,

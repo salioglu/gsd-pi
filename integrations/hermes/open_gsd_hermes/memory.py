@@ -43,15 +43,16 @@ class GsdMemoryProvider:
                 if memories is None:
                     memories = data
                 if memories:
-                    sections.append("## GSD memories")
+                    gsd_section = ["## GSD memories"]
                     if isinstance(memories, list):
                         for m in memories[:8]:
                             if isinstance(m, dict):
-                                sections.append(f"- {m.get('content', m)}")
+                                gsd_section.append(f"- {m.get('content', m)}")
                             else:
-                                sections.append(f"- {m}")
+                                gsd_section.append(f"- {m}")
                     else:
-                        sections.append(str(memories)[:2000])
+                        gsd_section.append(str(memories)[:2000])
+                    sections.append("\n".join(gsd_section))
             except Exception as e:
                 sections.append(f"## GSD memories\n(unavailable: {e})")
 
