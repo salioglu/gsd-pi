@@ -27,3 +27,23 @@ def test_progress_cache_ttl() -> None:
             time.sleep(1.1)
             client.progress("/tmp/p")
             assert calls["n"] == 2
+
+
+def test_progress_falls_back_to_mcp_when_cli_binary_is_missing() -> None:
+    client = GsdMcpClient(GsdConfig())
+
+    with patch.object(client, "ensure_version", side_effect=FileNotFoundError("gsd")):
+        with patch.object(
+            client,
+            "_call_tool",
+            return_value={"phase": "execute", "nextAction": "from mcp"},
+        ) as call_tool:
+            progress = client.progress("/tmp/p")
+
+    assert progress.phase == "execute"
+    assert progress.next_action == "from mcp"
+    call_tool.assert_called_once_with(
+        "gsd_progress",
+        {"projectDir": "/tmp/p"},
+        check_version=False,
+    )

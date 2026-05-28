@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from open_gsd_hermes.formatting import format_ref
 from open_gsd_hermes.snapshot import format_snapshot
 from open_gsd_hermes.types import ProgressSnapshot
 
@@ -43,3 +44,10 @@ def test_snapshot_omits_duplicate_id_when_title_missing() -> None:
     assert "Active slice: S01" in rendered
     assert "M001: M001" not in rendered
     assert "S01: S01" not in rendered
+
+
+def test_format_ref_supports_snapshot_and_transition_styles() -> None:
+    ref = {"id": "M001", "title": "Hermes Integration"}
+
+    assert format_ref(ref) == "M001: Hermes Integration"
+    assert format_ref(ref, include_title=False) == "M001"

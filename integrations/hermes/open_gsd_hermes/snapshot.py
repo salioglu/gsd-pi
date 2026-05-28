@@ -2,17 +2,8 @@
 
 from __future__ import annotations
 
+from open_gsd_hermes.formatting import format_ref
 from open_gsd_hermes.types import ProgressSnapshot
-
-
-def _fmt_ref(ref: dict[str, str] | None) -> str:
-    if not ref:
-        return "—"
-    rid = ref.get("id", "")
-    title = ref.get("title") or ""
-    if rid and title:
-        return f"{rid}: {title}"
-    return rid or title or "—"
 
 
 def format_snapshot(progress: ProgressSnapshot) -> str:
@@ -20,9 +11,9 @@ def format_snapshot(progress: ProgressSnapshot) -> str:
     lines = [
         "## GSD Project Snapshot",
         f"Phase: {progress.phase}",
-        f"Active milestone: {_fmt_ref(progress.active_milestone)}",
-        f"Active slice: {_fmt_ref(progress.active_slice)}",
-        f"Active task: {_fmt_ref(progress.active_task)}",
+        f"Active milestone: {format_ref(progress.active_milestone)}",
+        f"Active slice: {format_ref(progress.active_slice)}",
+        f"Active task: {format_ref(progress.active_task)}",
     ]
     if progress.milestones:
         m = progress.milestones

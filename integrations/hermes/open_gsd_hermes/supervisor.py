@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Callable
 
 from open_gsd_hermes.config import GsdConfig
+from open_gsd_hermes.formatting import format_ref
 from open_gsd_hermes.gsd_client import GsdMcpClient
 from open_gsd_hermes.notifications import NotificationService
 from open_gsd_hermes.types import ProgressSnapshot, SessionStatus
@@ -150,13 +151,7 @@ class SupervisorFsm:
             ("task", prev.active_task, progress.active_task),
         ):
             if old != new and new:
-                parts.append(f"{label} → {_fmt_ref(new)}")
+                parts.append(f"{label} → {format_ref(new, include_title=False)}")
         if parts:
             self._notifications.notify_transition(", ".join(parts))
             self._client.invalidate_cache(ctx.project_dir)
-
-
-def _fmt_ref(ref: dict[str, str] | None) -> str:
-    if not ref:
-        return "—"
-    return ref.get("id") or ref.get("title") or "—"

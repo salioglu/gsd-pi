@@ -127,9 +127,12 @@ class GsdMcpClient:
         _ = self._read_message()
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
-    def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _call_tool(
+        self, name: str, arguments: dict[str, Any], *, check_version: bool = True
+    ) -> dict[str, Any]:
         with self._lock:
-            self.ensure_version()
+            if check_version:
+                self.ensure_version()
             self._request_id += 1
             req_id = self._request_id
             self._send(
@@ -205,8 +208,17 @@ class GsdMcpClient:
             try:
                 self.ensure_version()
                 return self._read_progress_cli(project_dir)
-            except (McpProtocolError, json.JSONDecodeError, subprocess.TimeoutExpired):
-                data = self._call_tool("gsd_progress", {"projectDir": project_dir})
+            except (
+                McpProtocolError,
+                json.JSONDecodeError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ):
+                data = self._call_tool(
+                    "gsd_progress",
+                    {"projectDir": project_dir},
+                    check_version=False,
+                )
                 return ProgressSnapshot.from_mcp(data)
 
         key = f"progress:{project_dir}"
