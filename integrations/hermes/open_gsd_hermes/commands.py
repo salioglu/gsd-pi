@@ -138,20 +138,24 @@ class GsdCommandRouter:
     async def _cmd_cancel(self, _rest: list[str]) -> str:
         ctx = self._get_supervisor_ctx()
         try:
-            project_dir = resolve_project_dir(
-                self._config, self._binding_ctx()
-            )
-        except BindingError as e:
-            return str(e)
-        try:
-            if ctx.session_id:
-                self._client.cancel(session_id=ctx.session_id, project_dir=project_dir)
+            try:
+                project_dir = resolve_project_dir(
+                    self._config, self._binding_ctx()
+                )
+            except BindingError as e:
+                result = str(e)
             else:
-                self._client.cancel_by_project(project_dir)
-        except Exception as e:
-            result = f"Cancel request failed: {e}"
-        else:
-            result = "Cancel requested."
+                try:
+                    if ctx.session_id:
+                        self._client.cancel(
+                            session_id=ctx.session_id, project_dir=project_dir
+                        )
+                    else:
+                        self._client.cancel_by_project(project_dir)
+                except Exception as e:
+                    result = f"Cancel request failed: {e}"
+                else:
+                    result = "Cancel requested."
         finally:
             self._supervisor.stop()
             ctx.state = SupervisorState.CANCELLED

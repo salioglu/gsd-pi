@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -77,8 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         if idx + 1 < len(args):
             timeout = int(args[idx + 1])
     cfg = load_config()
-    cron_project = os.environ.get("GSD_CRON_PROJECT", project_dir)
-    res = run_headless_auto(cron_project, cfg, timeout_seconds=timeout)
+    res = run_headless_auto(project_dir, cfg, timeout_seconds=timeout)
     print(json.dumps({"exit_code": res.exit_code, "project_dir": res.project_dir, "output": res.output}))
     return res.exit_code
 

@@ -219,6 +219,39 @@ def test_cancel_stops_supervisor_when_mcp_cancel_fails(tmp_path) -> None:
     assert stored == [ctx]
 
 
+def test_cancel_stops_supervisor_when_binding_resolution_fails(tmp_path) -> None:
+    supervisor = MockSupervisor()
+    client = MagicMock()
+    ctx = SupervisorContext(
+        session_id="s1",
+        project_dir=str(tmp_path / "missing"),
+        state=SupervisorState.RUNNING,
+    )
+    bind_store = SessionBindStore()
+    bind_store.set("session-key", str(tmp_path / "missing"))
+    stored: list[SupervisorContext] = []
+    router = GsdCommandRouter(
+        GsdConfig(default_project=None),
+        client,
+        bind_store,
+        supervisor,  # type: ignore[arg-type]
+        lambda: "session-key",
+        lambda: BindingContext(),
+        lambda: ctx,
+        stored.append,
+        lambda: (None, None),
+    )
+
+    result = asyncio.run(router._cmd_cancel([]))
+
+    assert result.startswith("No GSD project bound.")
+    client.cancel.assert_not_called()
+    client.cancel_by_project.assert_not_called()
+    assert supervisor.calls == ["stop"]
+    assert ctx.state == SupervisorState.CANCELLED
+    assert stored == [ctx]
+
+
 def test_reply_returns_friendly_message_when_mcp_resolve_fails(tmp_path) -> None:
     client = MagicMock()
     client.resolve_blocker.side_effect = McpProtocolError("sidecar unavailable")
