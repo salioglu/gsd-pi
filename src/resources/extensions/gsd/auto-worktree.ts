@@ -1118,10 +1118,19 @@ export function checkoutBranchWithStashGuard(
     try {
       popStashByRef(basePath, stashMarker);
     } catch (popErr) {
+      const msg = popErr instanceof Error ? popErr.message : String(popErr);
+      const stderr = popErr && typeof popErr === "object"
+        ? (popErr as { stderr?: unknown }).stderr
+        : undefined;
+      const stderrText = typeof stderr === "string"
+        ? stderr
+        : stderr instanceof Uint8Array
+          ? Buffer.from(stderr).toString("utf-8")
+          : "";
+      const stashPopMessage = `${stderrText}\n${msg}`.trim();
       const alreadyExists = stashAlreadyExistsFilesFromError(popErr);
       const gsdAlreadyExists = alreadyExists.filter((f) => f.startsWith(".gsd/"));
       const nonGsdAlreadyExists = alreadyExists.filter((f) => !f.startsWith(".gsd/"));
-      const stashPopMessage = popErr instanceof Error ? popErr.message : String(popErr);
       const isUntrackedRestoreFailure = stashPopMessage.includes("could not restore untracked files from stash");
       const stashRefForDrop = stashRefFromError(popErr);
       const nonGsdUnmerged = nativeConflictFiles(basePath).filter((f) => !f.startsWith(".gsd/"));
@@ -1157,25 +1166,10 @@ export function checkoutBranchWithStashGuard(
         return;
       }
 
-      const msg = popErr instanceof Error ? popErr.message : String(popErr);
-      const stderr = popErr && typeof popErr === "object"
-        ? (popErr as { stderr?: unknown }).stderr
-        : undefined;
-      const stderrText = typeof stderr === "string"
-        ? stderr
-        : stderr instanceof Uint8Array
-          ? Buffer.from(stderr).toString("utf-8")
-          : "";
-      const stashPopMessage = `${stderrText}\n${msg}`;
-      const alreadyExists = stashAlreadyExistsFilesFromError(popErr);
-      const gsdAlreadyExists = alreadyExists.filter((f) => f.startsWith(".gsd/"));
-      const nonGsdAlreadyExists = alreadyExists.filter((f) => !f.startsWith(".gsd/"));
-      const isUntrackedRestoreFailure = stashPopMessage.includes("could not restore untracked files from stash");
       const gsdContentConflicts = isUntrackedRestoreFailure
         ? gsdJsonlFilesWithConflictMarkers(basePath)
         : [];
       const gsdConflictFiles = [...new Set([...gsdAlreadyExists, ...gsdContentConflicts])];
-      const ref = stashRefFromError(popErr);
 
       if (isUntrackedRestoreFailure && gsdConflictFiles.length > 0 && nonGsdAlreadyExists.length === 0) {
         for (const f of gsdConflictFiles) {
@@ -1186,9 +1180,9 @@ export function checkoutBranchWithStashGuard(
           });
           nativeAddPaths(basePath, [f]);
         }
-        if (ref) {
+        if (stashRefForDrop) {
           try {
-            execFileSync("git", ["stash", "drop", ref], {
+            execFileSync("git", ["stash", "drop", stashRefForDrop], {
               cwd: basePath,
               stdio: ["ignore", "pipe", "pipe"],
               encoding: "utf-8",
@@ -1204,7 +1198,7 @@ export function checkoutBranchWithStashGuard(
       const wrapped = new Error(
         `checkout to '${branch}' succeeded but stash restore failed; working tree changes remain in the stash list. Original error: ${msg}`,
       );
-      if (ref) (wrapped as { stashRef?: string }).stashRef = ref;
+      if (stashRefForDrop) (wrapped as { stashRef?: string }).stashRef = stashRefForDrop;
       throw wrapped;
     }
   }
