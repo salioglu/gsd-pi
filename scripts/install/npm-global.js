@@ -112,7 +112,7 @@ export function getGlobalPaths() {
   return {
     prefix,
     root,
-    binDir: join(prefix, 'bin'),
+    binDir: process.platform === 'win32' ? prefix : join(prefix, 'bin'),
     packageRoot: join(root, '@opengsd', 'gsd-pi'),
   }
 }

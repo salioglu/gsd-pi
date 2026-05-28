@@ -73,7 +73,7 @@ export function execGitCommand(cmd, args) {
 
 export function getGlobalBinDir() {
   const prefix = runNpm(['prefix', '-g'])
-  return join(prefix, 'bin')
+  return process.platform === 'win32' ? prefix : join(prefix, 'bin')
 }
 
 export function checkPrereqs({ isLocal, log }) {
