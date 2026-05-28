@@ -190,6 +190,27 @@ function unitActivityMentionsTool(basePath: string, unitType: string, unitId: st
   return false;
 }
 
+function completeSliceReopenReplanHandoffDetected(
+  s: AutoSession,
+  agentEndMessages: unknown[] | undefined,
+): boolean {
+  if (s.currentUnit?.type !== "complete-slice") return false;
+  const unitType = s.currentUnit.type;
+  const unitId = s.currentUnit.id;
+  return (
+    agentEndMessagesIncludeSuccessfulToolResult(agentEndMessages, "gsd_task_reopen") ||
+    agentEndMessagesIncludeToolCall(agentEndMessages, "gsd_task_reopen") ||
+    agentEndMessagesMentionTool(agentEndMessages, "gsd_task_reopen") ||
+    unitActivityMentionsTool(s.basePath, unitType, unitId, "gsd_task_reopen") ||
+    unitActivityMentionsTool(s.canonicalProjectRoot, unitType, unitId, "gsd_task_reopen") ||
+    agentEndMessagesIncludeSuccessfulToolResult(agentEndMessages, "gsd_replan_slice") ||
+    agentEndMessagesIncludeToolCall(agentEndMessages, "gsd_replan_slice") ||
+    agentEndMessagesMentionTool(agentEndMessages, "gsd_replan_slice") ||
+    unitActivityMentionsTool(s.basePath, unitType, unitId, "gsd_replan_slice") ||
+    unitActivityMentionsTool(s.canonicalProjectRoot, unitType, unitId, "gsd_replan_slice")
+  );
+}
+
 function formatPreExecutionCheckDetail(check: PreExecutionCheckJSON): string {
   const category = check.category?.trim() || "unknown category";
   const target = check.target?.trim() || "unknown target";
@@ -1738,6 +1759,24 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         );
         await pauseAuto(ctx, pi);
         return "dispatched";
+      } else if (
+        !triggerArtifactVerified &&
+        completeSliceReopenReplanHandoffDetected(s, opts?.agentEndMessages)
+      ) {
+        const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
+        s.pendingVerificationRetry = null;
+        s.verificationRetryCount.delete(retryKey);
+        s.verificationRetryFailureHashes.delete(retryKey);
+        debugLog("postUnit", {
+          phase: "artifact-verify-complete-slice-handoff",
+          unitType: s.currentUnit.type,
+          unitId: s.currentUnit.id,
+        });
+        ctx.ui.notify(
+          `complete-slice ${s.currentUnit.id} intentionally handed off via reopen/replan; continuing orchestration instead of retrying closeout.`,
+          "warning",
+        );
+        return "continue";
       } else if (!triggerArtifactVerified && !isDbAvailable()) {
         debugLog("postUnit", { phase: "artifact-verify-skip-db-unavailable", unitType: s.currentUnit.type, unitId: s.currentUnit.id });
         const dbSkipDiag = diagnoseExpectedArtifact(s.currentUnit.type, s.currentUnit.id, verificationBasePath);
@@ -1761,35 +1800,6 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         const hasExpectedArtifact = resolveExpectedArtifactPath(s.currentUnit.type, s.currentUnit.id, verificationBasePath) !== null;
         if (hasExpectedArtifact) {
           const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
-          if (
-            s.currentUnit.type === "complete-slice" &&
-            (
-              agentEndMessagesIncludeSuccessfulToolResult(opts?.agentEndMessages, "gsd_task_reopen") ||
-              agentEndMessagesIncludeToolCall(opts?.agentEndMessages, "gsd_task_reopen") ||
-              agentEndMessagesMentionTool(opts?.agentEndMessages, "gsd_task_reopen") ||
-              unitActivityMentionsTool(s.basePath, s.currentUnit.type, s.currentUnit.id, "gsd_task_reopen") ||
-              unitActivityMentionsTool(s.canonicalProjectRoot, s.currentUnit.type, s.currentUnit.id, "gsd_task_reopen") ||
-              agentEndMessagesIncludeSuccessfulToolResult(opts?.agentEndMessages, "gsd_replan_slice") ||
-              agentEndMessagesIncludeToolCall(opts?.agentEndMessages, "gsd_replan_slice") ||
-              agentEndMessagesMentionTool(opts?.agentEndMessages, "gsd_replan_slice") ||
-              unitActivityMentionsTool(s.basePath, s.currentUnit.type, s.currentUnit.id, "gsd_replan_slice") ||
-              unitActivityMentionsTool(s.canonicalProjectRoot, s.currentUnit.type, s.currentUnit.id, "gsd_replan_slice")
-            )
-          ) {
-            s.pendingVerificationRetry = null;
-            s.verificationRetryCount.delete(retryKey);
-            s.verificationRetryFailureHashes.delete(retryKey);
-            debugLog("postUnit", {
-              phase: "artifact-verify-complete-slice-handoff",
-              unitType: s.currentUnit.type,
-              unitId: s.currentUnit.id,
-            });
-            ctx.ui.notify(
-              `complete-slice ${s.currentUnit.id} intentionally handed off via reopen/replan; continuing orchestration instead of retrying closeout.`,
-              "warning",
-            );
-            return "continue";
-          }
           const verificationFailureMarker = resolveVerificationFailureMarkerPath(s.currentUnit.type, s.currentUnit.id, s.basePath);
           if (verificationFailureMarker && existsSync(verificationFailureMarker)) {
             s.pendingVerificationRetry = null;
