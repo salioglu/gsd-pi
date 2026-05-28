@@ -4,8 +4,19 @@ import assert from "node:assert/strict";
 import {
   applyUnitSkillVisibility,
   effectiveSkillNamesForUnit,
+  resolveVisibleSkillNames,
   unitHasSkillManifest,
 } from "../skill-scope.ts";
+
+test("resolveVisibleSkillNames: none policy suppresses catalog", () => {
+  assert.deepEqual(resolveVisibleSkillNames("workflow-preferences"), []);
+  assert.equal(unitHasSkillManifest("workflow-preferences"), true);
+});
+
+test("resolveVisibleSkillNames: wildcard units use full catalog", () => {
+  assert.equal(resolveVisibleSkillNames("execute-task"), undefined);
+  assert.equal(unitHasSkillManifest("execute-task"), false);
+});
 
 test("unitHasSkillManifest: manifest unit types return true", () => {
   assert.equal(unitHasSkillManifest("research-milestone"), true);
