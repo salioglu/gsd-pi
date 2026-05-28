@@ -4,7 +4,7 @@
 // Exit 0 = safe to publish, Exit 1 = broken package.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -86,23 +86,60 @@ try {
 
   const rootExternalDeps = new Set(Object.keys(rootPkg.dependencies || {}));
   const missingExternal = new Map();
-  for (const dep of bundled) {
-    if (!dep.startsWith('@gsd/')) continue;
-    const pkgName = dep.split('/')[1];
-    const pkgPath = join(ROOT, 'packages', pkgName, 'package.json');
-    if (!existsSync(pkgPath)) continue;
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-    for (const [externalDep, version] of Object.entries(pkg.dependencies || {})) {
-      if (externalDep.startsWith('@gsd/') || externalDep.startsWith('@opengsd/') || externalDep.startsWith('@earendil-works/')) {
-        continue;
-      }
+  const visitedBundled = new Set();
+  const bundledTransitiveRoots = new Set(['proper-lockfile', 'minimatch']);
+
+  function isInternalWorkspaceDep(dep) {
+    return dep.startsWith('@gsd/') || dep.startsWith('@opengsd/') || dep.startsWith('@earendil-works/');
+  }
+
+  function readInstalledPackageJson(dep) {
+    const pkgPath = join(ROOT, 'node_modules', dep, 'package.json');
+    if (!existsSync(pkgPath)) return null;
+    return JSON.parse(readFileSync(pkgPath, 'utf8'));
+  }
+
+  // Small bundled packages ship without nested node_modules; their transitive
+  // externals must be declared on the root package for tarball installs.
+  function collectBundledSubtreeExternalDeps(dep, pkgJson) {
+    for (const [externalDep, version] of Object.entries(pkgJson.dependencies || {})) {
+      if (isInternalWorkspaceDep(externalDep)) continue;
       if (!rootExternalDeps.has(externalDep)) {
         missingExternal.set(externalDep, version);
       }
+      if (visitedBundled.has(externalDep)) continue;
+      visitedBundled.add(externalDep);
+      const installed = readInstalledPackageJson(externalDep);
+      if (installed) collectBundledSubtreeExternalDeps(externalDep, installed);
     }
   }
+
+  for (const dep of bundled) {
+    if (dep.startsWith('@gsd/')) {
+      const ws = getCorePackages().find((entry) => entry.packageName === dep);
+      if (!ws) continue;
+      const pkg = JSON.parse(readFileSync(ws.packageJsonPath, 'utf8'));
+      for (const [externalDep, version] of Object.entries(pkg.dependencies || {})) {
+        if (isInternalWorkspaceDep(externalDep)) continue;
+        if (!rootExternalDeps.has(externalDep)) {
+          missingExternal.set(externalDep, version);
+        }
+      }
+      continue;
+    }
+
+    if (!bundledTransitiveRoots.has(dep)) continue;
+
+    const installed = readInstalledPackageJson(dep);
+    if (installed) {
+      collectBundledSubtreeExternalDeps(dep, installed);
+    } else if (!rootExternalDeps.has(dep)) {
+      missingExternal.set(dep, rootPkg.dependencies?.[dep] ?? 'unknown');
+    }
+  }
+
   if (missingExternal.size > 0) {
-    console.log('ERROR: Bundled workspace packages depend on externals missing from root dependencies:');
+    console.log('ERROR: Bundled packages depend on externals missing from root dependencies:');
     for (const [dep, version] of [...missingExternal.entries()].sort(([a], [b]) => a.localeCompare(b))) {
       console.log(`    ${dep}@${version}`);
     }
@@ -112,6 +149,12 @@ try {
   console.log('    Bundled workspace external dependency coverage is complete.');
 
   // --- Pack tarball ---
+  // npm pack --ignore-scripts skips prepack; resolve workspace:* for publishable tarballs.
+  execFileSync(process.execPath, [join(__dirname, 'prepack-resolve-workspace.cjs')], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+
   console.log('==> Packing tarball...');
   const packOutput = runNpm(['pack', '--json', '--ignore-scripts']);
   const packEntries = JSON.parse(packOutput);
@@ -126,6 +169,17 @@ try {
 
   const stats = statSync(tarball);
   console.log(`==> Tarball: ${tarballName} (${formatBytes(stats.size)} compressed)`);
+
+  // npm install can consume/delete a cwd-local tarball; keep a temp copy for later smoke tests.
+  const packedTarballPath = tarball;
+  tarball = join(mkdtempSync(join(tmpdir(), 'validate-pack-tarball-')), tarballName);
+  copyFileSync(packedTarballPath, tarball);
+  rmSync(packedTarballPath, { force: true });
+
+  execFileSync(process.execPath, [join(__dirname, 'postpack-restore-workspace.cjs')], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
 
   // --- Check critical files using npm pack metadata ---
   console.log('==> Checking critical files...');
@@ -398,6 +452,7 @@ try {
       env: {
         ...process.env,
         npm_config_cache: npmCacheDir,
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=8192`.trim(),
       },
     });
 
@@ -467,6 +522,14 @@ try {
   console.log('Package is installable. Safe to publish.');
   process.exit(0);
 } finally {
+  try {
+    execFileSync(process.execPath, [join(__dirname, 'postpack-restore-workspace.cjs')], {
+      cwd: ROOT,
+      stdio: 'ignore',
+    });
+  } catch {
+    // postpack restore is best-effort when pack fails before npm postpack runs
+  }
   if (installDir && existsSync(installDir)) {
     rmSync(installDir, { recursive: true, force: true });
   }

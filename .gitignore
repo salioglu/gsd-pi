@@ -20,6 +20,8 @@ coverage/
 *.tsbuildinfo
 *.tgz
 .gsd*.tgz
+.prepack-backup/
+.package.json.prepack.bak
 bun.lock
 
 # GSD project state and generated runtime files

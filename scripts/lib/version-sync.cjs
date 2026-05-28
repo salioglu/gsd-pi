@@ -230,6 +230,7 @@ function verifyVersionSync(root) {
 }
 
 module.exports = {
+  INTERNAL_PACKAGE_NAMES,
   PLATFORM_PACKAGE_DIRS,
   RELEASE_WORKSPACE_PACKAGE_DIRS,
   resolveEngineOptionalDependencyVersion,
