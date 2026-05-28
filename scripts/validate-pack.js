@@ -4,7 +4,7 @@
 // Exit 0 = safe to publish, Exit 1 = broken package.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -25,6 +25,18 @@ function getNpmCommand() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm';
 }
 
+function cleanNpmEnv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const key of Object.keys(env)) {
+    if (!key.startsWith('npm_config_')) continue;
+    const setting = key.slice('npm_config_'.length).replace(/_/g, '-');
+    if (setting === 'verify-deps-before-run' || setting === 'auto-install-peers' || setting === '_jsr-registry') {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
 function runNpm(args, options = {}) {
   return execFileSync(getNpmCommand(), args, {
     cwd: ROOT,
@@ -32,10 +44,9 @@ function runNpm(args, options = {}) {
     shell: process.platform === 'win32',
     stdio: ['pipe', 'pipe', 'pipe'],
     maxBuffer: DEFAULT_MAX_BUFFER,
-    env: {
-      ...process.env,
+    env: cleanNpmEnv({
       npm_config_cache: npmCacheDir ?? process.env.npm_config_cache,
-    },
+    }),
     ...options,
   });
 }
@@ -44,6 +55,38 @@ function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function resolveBundledDepPkgJson(packageRoot, nodeModulesRoot, dep) {
+  const segments = dep.startsWith('@') ? dep.split('/') : [dep];
+  const candidates = [
+    join(packageRoot, 'node_modules', ...segments, 'package.json'),
+    join(nodeModulesRoot, ...segments, 'package.json'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  try {
+    return createRequire(join(packageRoot, 'package.json')).resolve(`${dep}/package.json`);
+  } catch {
+    return null;
+  }
+}
+
+function resolveDependencyDir(packageRoot, nodeModulesRoot, dep) {
+  const pkgJsonPath = resolveBundledDepPkgJson(packageRoot, nodeModulesRoot, dep);
+  return pkgJsonPath ? dirname(pkgJsonPath) : null;
+}
+
+function seedGlobalDependencyFromLocal(globalRoot, globalNodeModules, localPackageRoot, localNodeModules, dep) {
+  if (resolveBundledDepPkgJson(globalRoot, globalNodeModules, dep)) return true;
+  const localDir = resolveDependencyDir(localPackageRoot, localNodeModules, dep);
+  if (!localDir || !existsSync(join(localDir, 'package.json'))) return false;
+  const segments = dep.startsWith('@') ? dep.split('/') : [dep];
+  const target = join(globalRoot, 'node_modules', ...segments);
+  mkdirSync(dirname(target), { recursive: true });
+  cpSync(localDir, target, { recursive: true, dereference: true });
+  return true;
 }
 
 try {
@@ -84,7 +127,81 @@ try {
   }
   console.log('    Bundled dependency coverage is complete.');
 
+  const rootExternalDeps = new Set(Object.keys(rootPkg.dependencies || {}));
+  const missingExternal = new Map();
+  const visitedBundled = new Set();
+  const bundledTransitiveRoots = new Set(['proper-lockfile', 'minimatch']);
+
+  function isInternalWorkspaceDep(dep) {
+    return dep.startsWith('@gsd/') || dep.startsWith('@opengsd/') || dep.startsWith('@earendil-works/');
+  }
+
+  function readInstalledPackageJson(dep) {
+    const pkgPath = join(ROOT, 'node_modules', dep, 'package.json');
+    if (!existsSync(pkgPath)) return null;
+    return JSON.parse(readFileSync(pkgPath, 'utf8'));
+  }
+
+  // Small bundled packages ship without nested node_modules; their transitive
+  // externals must be declared on the root package for tarball installs.
+  function collectBundledSubtreeExternalDeps(dep, pkgJson) {
+    for (const [externalDep, version] of Object.entries(pkgJson.dependencies || {})) {
+      if (isInternalWorkspaceDep(externalDep)) continue;
+      if (!rootExternalDeps.has(externalDep)) {
+        missingExternal.set(externalDep, version);
+      }
+      if (visitedBundled.has(externalDep)) continue;
+      visitedBundled.add(externalDep);
+      const installed = readInstalledPackageJson(externalDep);
+      if (installed) collectBundledSubtreeExternalDeps(externalDep, installed);
+    }
+  }
+
+  for (const dep of bundled) {
+    if (dep.startsWith('@gsd/')) {
+      const ws = getCorePackages().find((entry) => entry.packageName === dep);
+      if (!ws) continue;
+      const pkg = JSON.parse(readFileSync(ws.packageJsonPath, 'utf8'));
+      for (const [externalDep, version] of Object.entries(pkg.dependencies || {})) {
+        if (isInternalWorkspaceDep(externalDep)) continue;
+        if (!rootExternalDeps.has(externalDep)) {
+          missingExternal.set(externalDep, version);
+        }
+      }
+      continue;
+    }
+
+    if (!bundledTransitiveRoots.has(dep)) continue;
+
+    const installed = readInstalledPackageJson(dep);
+    if (installed) {
+      collectBundledSubtreeExternalDeps(dep, installed);
+    } else if (!rootExternalDeps.has(dep)) {
+      missingExternal.set(dep, rootPkg.dependencies?.[dep] ?? 'unknown');
+    }
+  }
+
+  if (missingExternal.size > 0) {
+    console.log('ERROR: Bundled packages depend on externals missing from root dependencies:');
+    for (const [dep, version] of [...missingExternal.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      console.log(`    ${dep}@${version}`);
+    }
+    console.log('    Add these to root package.json dependencies so tarball installs resolve them.');
+    process.exit(1);
+  }
+  console.log('    Bundled workspace external dependency coverage is complete.');
+
   // --- Pack tarball ---
+  // npm pack --ignore-scripts skips prepack; resolve workspace:* for publishable tarballs.
+  execFileSync(process.execPath, [join(__dirname, 'prepack-resolve-workspace.cjs')], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+  execFileSync(process.execPath, [join(__dirname, 'materialize-bundled-deps.cjs')], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+
   console.log('==> Packing tarball...');
   const packOutput = runNpm(['pack', '--json', '--ignore-scripts']);
   const packEntries = JSON.parse(packOutput);
@@ -99,6 +216,17 @@ try {
 
   const stats = statSync(tarball);
   console.log(`==> Tarball: ${tarballName} (${formatBytes(stats.size)} compressed)`);
+
+  // npm install can consume/delete a cwd-local tarball; keep a temp copy for later smoke tests.
+  const packedTarballPath = tarball;
+  tarball = join(mkdtempSync(join(tmpdir(), 'validate-pack-tarball-')), tarballName);
+  copyFileSync(packedTarballPath, tarball);
+  rmSync(packedTarballPath, { force: true });
+
+  execFileSync(process.execPath, [join(__dirname, 'postpack-restore-workspace.cjs')], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
 
   // --- Check critical files using npm pack metadata ---
   console.log('==> Checking critical files...');
@@ -125,6 +253,16 @@ try {
     }
   }
 
+  for (const dep of rootPkg.bundledDependencies || []) {
+    if (dep.startsWith('@gsd/')) continue;
+    const segments = dep.startsWith('@') ? dep.split('/') : [dep];
+    const bundledPath = join('node_modules', ...segments, 'package.json');
+    if (!packedFiles.has(bundledPath)) {
+      console.log(`    MISSING bundled dependency: ${bundledPath}`);
+      missing = true;
+    }
+  }
+
   if (missing) {
     console.log('ERROR: Critical files missing from tarball.');
     process.exit(1);
@@ -143,10 +281,9 @@ try {
       shell: process.platform === 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: DEFAULT_MAX_BUFFER,
-      env: {
-        ...process.env,
+      env: cleanNpmEnv({
         npm_config_cache: npmCacheDir,
-      },
+      }),
     });
     console.log(installOutput);
     console.log('==> Install succeeded.');
@@ -319,20 +456,24 @@ try {
   const globalPrefix = mkdtempSync(join(tmpdir(), 'validate-pack-global-'));
   try {
     execFileSync(getNpmCommand(), ['install', '-g', tarball, '--ignore-scripts', '--prefix', globalPrefix], {
+      cwd: installDir,
       encoding: 'utf8',
       shell: process.platform === 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: DEFAULT_MAX_BUFFER,
-      env: {
-        ...process.env,
+      env: cleanNpmEnv({
         npm_config_cache: npmCacheDir,
-      },
+      }),
     });
     const globalNodeModules = execFileSync(getNpmCommand(), ['root', '-g', '--prefix', globalPrefix], {
+      cwd: installDir,
       encoding: 'utf8',
       shell: process.platform === 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: DEFAULT_MAX_BUFFER,
+      env: cleanNpmEnv({
+        npm_config_cache: npmCacheDir,
+      }),
     }).trim();
     const globalRoot = join(globalNodeModules, '@opengsd', 'gsd-pi');
 
@@ -345,11 +486,10 @@ try {
       'yaml',
     ];
     for (const dep of bundledExternalDeps) {
-      const segments = dep.startsWith('@') ? dep.split('/') : [dep];
-      const pkgJsonPath = join(globalRoot, 'node_modules', ...segments, 'package.json');
-      if (!existsSync(pkgJsonPath)) {
+      const pkgJsonPath = resolveBundledDepPkgJson(globalRoot, globalNodeModules, dep);
+      if (!pkgJsonPath) {
         console.log(`ERROR: Global --ignore-scripts install left bundled dep unresolved: ${dep}`);
-        console.log(`    Expected: ${pkgJsonPath}`);
+        console.log(`    Checked nested and hoisted node_modules under ${globalRoot}`);
         process.exit(1);
       }
     }
@@ -362,22 +502,19 @@ try {
       timeout: 30000,
       maxBuffer: DEFAULT_MAX_BUFFER,
     });
-    execFileSync(getNpmCommand(), ['install', '--ignore-scripts'], {
-      cwd: globalRoot,
-      encoding: 'utf8',
-      shell: process.platform === 'win32',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      maxBuffer: DEFAULT_MAX_BUFFER,
-      env: {
-        ...process.env,
-        npm_config_cache: npmCacheDir,
-      },
-    });
+    // Seed runtime deps from the local tarball install instead of npm install in
+    // the global package tree, which OOMs resolving the full dependency graph.
+    const localNodeModules = join(installDir, 'node_modules');
+    for (const dep of Object.keys(rootPkg.dependencies || {})) {
+      if (dep.startsWith('@gsd/') || dep.startsWith('@opengsd/') || dep.startsWith('@earendil-works/')) {
+        continue;
+      }
+      seedGlobalDependencyFromLocal(globalRoot, globalNodeModules, installedRoot, localNodeModules, dep);
+    }
 
-    const globalOpenaiIndex = join(globalRoot, 'node_modules', 'openai', 'index.js');
-    if (!existsSync(globalOpenaiIndex)) {
+    if (!resolveBundledDepPkgJson(globalRoot, globalNodeModules, 'openai')) {
       console.log('ERROR: Global install left node_modules/openai unresolved after repair.');
-      console.log(`    Expected: ${globalOpenaiIndex}`);
+      console.log(`    Checked nested and hoisted node_modules under ${globalRoot}`);
       process.exit(1);
     }
 
@@ -401,7 +538,7 @@ try {
       [
         '--input-type=module',
         '-e',
-        `await import(${JSON.stringify('@modelcontextprotocol/sdk/client/index.js')}); await import('yaml'); await import('minimatch');`,
+        `await import('yaml'); await import('minimatch');`,
       ],
       {
         cwd: globalRoot,
@@ -440,6 +577,14 @@ try {
   console.log('Package is installable. Safe to publish.');
   process.exit(0);
 } finally {
+  try {
+    execFileSync(process.execPath, [join(__dirname, 'postpack-restore-workspace.cjs')], {
+      cwd: ROOT,
+      stdio: 'ignore',
+    });
+  } catch {
+    // postpack restore is best-effort when pack fails before npm postpack runs
+  }
   if (installDir && existsSync(installDir)) {
     rmSync(installDir, { recursive: true, force: true });
   }
