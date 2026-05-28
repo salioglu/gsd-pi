@@ -29,6 +29,28 @@ def test_progress_cache_ttl() -> None:
             assert calls["n"] == 2
 
 
+def test_invalidate_cache_only_removes_exact_project() -> None:
+    client = GsdMcpClient(GsdConfig(cache_ttl_seconds=60))
+    calls: dict[str, int] = {}
+
+    def fake_read(project_dir: str) -> ProgressSnapshot:
+        calls[project_dir] = calls.get(project_dir, 0) + 1
+        return ProgressSnapshot(phase="execute", blockers=[], next_action=project_dir)
+
+    with patch.object(client, "_read_progress_cli", side_effect=fake_read):
+        with patch.object(client, "ensure_version"):
+            client.progress("/tmp/app")
+            client.progress("/tmp/app-v2")
+
+            client.invalidate_cache("/tmp/app")
+
+            client.progress("/tmp/app-v2")
+            client.progress("/tmp/app")
+
+    assert calls["/tmp/app-v2"] == 1
+    assert calls["/tmp/app"] == 2
+
+
 def test_progress_falls_back_to_mcp_when_cli_binary_is_missing() -> None:
     client = GsdMcpClient(GsdConfig())
 

@@ -52,6 +52,27 @@ class MockSupervisor:
         self.calls.append("stop")
 
 
+def test_supervisor_restart_keeps_abandoned_thread_stop_event_set() -> None:
+    fsm = SupervisorFsm(
+        GsdConfig(poll_interval_seconds=1),
+        MagicMock(),
+        MagicMock(),
+        lambda: SupervisorContext(),
+        lambda c: None,
+    )
+    abandoned_stop = fsm._stop
+    abandoned_stop.set()
+    fsm._thread = None
+
+    fsm.start()
+
+    try:
+        assert abandoned_stop.is_set()
+        assert fsm._stop is not abandoned_stop
+    finally:
+        fsm.stop()
+
+
 def test_bind_rejects_invalid_path_instead_of_falling_back_to_default(tmp_path) -> None:
     project_dir = tmp_path / "project"
     (project_dir / ".gsd").mkdir(parents=True)

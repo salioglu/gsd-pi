@@ -66,8 +66,12 @@ class SupervisorFsm:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop,
+            args=(self._stop,),
+            daemon=True,
+        )
         self._thread.start()
 
     def stop(self) -> None:
@@ -76,19 +80,21 @@ class SupervisorFsm:
             self._thread.join(timeout=5)
         self._thread = None
 
-    def _loop(self) -> None:
+    def _loop(self, stop_event: threading.Event) -> None:
         try:
-            while not self._stop.is_set():
+            while not stop_event.is_set():
                 try:
-                    self._tick()
+                    self._tick(stop_event)
                 except Exception:
                     pass
-                self._stop.wait(self._config.poll_interval_seconds)
+                stop_event.wait(self._config.poll_interval_seconds)
         finally:
             if self._thread is threading.current_thread():
                 self._thread = None
 
-    def _tick(self) -> None:
+    def _tick(self, stop_event: threading.Event | None = None) -> None:
+        if stop_event is None:
+            stop_event = self._stop
         ctx = self._get_context()
         if not ctx.session_id or not ctx.project_dir:
             return
@@ -121,7 +127,7 @@ class SupervisorFsm:
         self._diff_progress(ctx, progress)
         if terminal_notification:
             self._notifications.notify_terminal(*terminal_notification)
-            self._stop.set()
+            stop_event.set()
         ctx.last_progress = progress
         self._set_context(ctx)
 

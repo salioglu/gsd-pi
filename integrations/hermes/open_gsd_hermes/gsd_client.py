@@ -173,10 +173,7 @@ class GsdMcpClient:
         if project_dir is None:
             self._cache.clear()
             return
-        prefix = f"progress:{project_dir}"
-        for key in list(self._cache):
-            if key.startswith(prefix):
-                del self._cache[key]
+        self._cache.pop(f"progress:{project_dir}", None)
 
     def _read_progress_cli(self, project_dir: str) -> ProgressSnapshot:
         """Read progress via `gsd read progress --json` (6c hot path)."""
