@@ -158,6 +158,34 @@ function execCommand(command, opts = {}) {
   })
 }
 
+/**
+ * npm install -g --ignore-scripts leaves empty node_modules/* placeholders for
+ * hoisted deps (openai, @anthropic-ai/sdk, …). Run npm install in packageRoot
+ * to materialize the real packages without re-running lifecycle scripts.
+ */
+export async function repairPackageDependencies(packageRoot, { ui, quiet = false } = {}) {
+  const pkgJson = join(packageRoot, 'package.json')
+  if (!existsSync(pkgJson)) return
+
+  const stop = ui?.start?.(quiet ? undefined : 'Installing dependencies...')
+  const result = await execCommand('npm install --ignore-scripts', { cwd: packageRoot })
+  stop?.()
+
+  if (!result.ok) {
+    const output = (result.stderr + '\n' + result.stdout).trim()
+    const meaningful = output.split('\n')
+      .filter((line) => !line.includes('npm warn') && !line.includes('npm WARN') && line.trim())
+      .slice(-3)
+      .join('; ')
+    ui?.warn?.('Dependencies', meaningful || 'npm install failed')
+    return
+  }
+
+  if (!quiet) {
+    ui?.step?.('Dependencies', 'installed')
+  }
+}
+
 export function linkWorkspacePackages(packageRoot, ui) {
   const scriptPath = join(packageRoot, 'scripts', 'link-workspace-packages.cjs')
   if (!existsSync(scriptPath)) return
@@ -302,6 +330,7 @@ export async function installRtk({ skip, ui, verifyOnly = false }) {
 export async function runPostinstallDeps(packageRoot, { skipChromium, skipRtk, quiet = true }) {
   const ui = quiet ? null : createPlainUi()
   linkWorkspacePackages(packageRoot, ui)
+  await repairPackageDependencies(packageRoot, { ui, quiet })
   await installChromium({ skip: skipChromium, ui })
   await installRtk({ skip: skipRtk, ui })
 }
@@ -315,6 +344,7 @@ export async function runInteractiveDeps(packageRoot, {
   promptRtk,
 }) {
   linkWorkspacePackages(packageRoot, ui)
+  await repairPackageDependencies(packageRoot, { ui, quiet: false })
 
   let installChromiumFlag = skipChromium
   if (!skipChromium && promptChromium) {
