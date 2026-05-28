@@ -33,3 +33,16 @@ test('git prerequisite executor throws when git command is unavailable', () => {
     /ENOENT|not found|spawn/,
   )
 })
+
+test('runtime checks fall back when CommonJS cannot require ESM output', () => {
+  const err = Object.assign(new Error('require() of ES Module'), {
+    code: 'ERR_REQUIRE_ESM',
+  })
+  const runtimeChecks = prereqs.loadRuntimeChecks(() => {
+    throw err
+  })
+
+  assert.equal(runtimeChecks.MIN_NODE_MAJOR, 22)
+  assert.deepEqual(runtimeChecks.checkNodeVersion('22.0.0'), { ok: true })
+  assert.equal(runtimeChecks.requireGit(() => undefined), true)
+})

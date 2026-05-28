@@ -7,13 +7,38 @@ import { fileURLToPath } from 'url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
 
-function loadRuntimeChecks() {
+const runtimeChecksFallback = {
+  MIN_NODE_MAJOR: 22,
+  checkNodeVersion(versionString, min = 22) {
+    const major = parseInt(versionString.split('.')[0], 10)
+    if (!Number.isFinite(major)) {
+      throw new Error(`checkNodeVersion: cannot parse major from "${versionString}"`)
+    }
+    return major < min ? { ok: false, actualMajor: major } : { ok: true }
+  },
+  requireGit(execFn) {
+    try {
+      execFn('git', ['--version'])
+      return true
+    } catch {
+      return false
+    }
+  },
+}
+
+function isRequireEsmError(err) {
+  return err && typeof err === 'object' && err.code === 'ERR_REQUIRE_ESM'
+}
+
+export function loadRuntimeChecks(requireRuntimeChecks = require) {
   const distPath = join(__dirname, '..', '..', 'dist', 'runtime-checks.js')
   try {
-    return require(distPath)
-  } catch {
+    return requireRuntimeChecks(distPath)
+  } catch (err) {
+    if (isRequireEsmError(err)) return runtimeChecksFallback
     throw new Error(
       'dist/runtime-checks.js not found — run npm run build before using the npx installer',
+      { cause: err },
     )
   }
 }
