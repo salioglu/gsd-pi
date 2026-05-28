@@ -39,9 +39,9 @@ function strip(s: string): string {
 
 test('renders GSD-Pi block logo', () => {
   const out = strip(capture({ version: '1.0.0' }))
-  assert.ok(out.includes('██████╗ ███████╗██████╗  ─  ██╗'), 'logo top row missing')
-  assert.ok(out.includes('██║  ███╗███████╗██║  ██║    ██║'), 'logo middle row missing')
-  assert.ok(out.includes('╚██████╔╝███████║██████╔╝    ██║'), 'logo bottom row missing')
+  assert.ok(out.includes('██████╗ ███████╗██████╗ ─ ██████╗ ██╗'), 'logo top row missing')
+  assert.ok(out.includes('██║  ███╗███████╗██║  ██║ ██████╔╝██║'), 'logo middle row missing')
+  assert.ok(out.includes('╚██████╔╝███████║██████╔╝ ██║     ██║'), 'logo bottom row missing')
   assert.ok(out.includes('GSD-Pi'), 'GSD-Pi brand label missing')
 })
 
@@ -170,9 +170,9 @@ test('command-center renders one GSD-Pi block logo with a full-width closing rul
 
   const out = strip(capture({ version: '1.0.0' }))
   const lines = out.split('\n')
-  assert.equal(lines.filter(l => l.includes('██████╗ ███████╗██████╗  ─  ██╗')).length, 1, 'expected one GSD-Pi logo top row')
-  assert.equal(lines.filter(l => l.includes('██║  ███╗███████╗██║  ██║    ██║')).length, 1, 'expected one GSD-Pi logo middle row')
-  assert.equal(lines.filter(l => l.includes('╚██████╔╝███████║██████╔╝    ██║')).length, 1, 'expected one GSD-Pi logo bottom row')
+  assert.equal(lines.filter(l => l.includes('██████╗ ███████╗██████╗ ─ ██████╗ ██╗')).length, 1, 'expected one GSD-Pi logo top row')
+  assert.equal(lines.filter(l => l.includes('██║  ███╗███████╗██║  ██║ ██████╔╝██║')).length, 1, 'expected one GSD-Pi logo middle row')
+  assert.equal(lines.filter(l => l.includes('╚██████╔╝███████║██████╔╝ ██║     ██║')).length, 1, 'expected one GSD-Pi logo bottom row')
   // Exactly one closing rule, spanning the terminal width (columns - 1 = 249).
   const ruleLines = lines.filter(l => /^─+$/.test(l.trim()))
   assert.equal(ruleLines.length, 1, 'expected exactly one closing rule line')
