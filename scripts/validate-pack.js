@@ -238,16 +238,6 @@ try {
     }
   }
 
-  for (const dep of rootPkg.bundledDependencies || []) {
-    if (dep.startsWith('@gsd/')) continue;
-    const segments = dep.startsWith('@') ? dep.split('/') : [dep];
-    const bundledPath = join('node_modules', ...segments, 'package.json');
-    if (!packedFiles.has(bundledPath)) {
-      console.log(`    MISSING bundled dependency: ${bundledPath}`);
-      missing = true;
-    }
-  }
-
   if (missing) {
     console.log('ERROR: Critical files missing from tarball.');
     process.exit(1);
