@@ -20,7 +20,9 @@
   "files": [
     "dist",
     "dist/web",
-    "packages",
+    "packages/*/dist/**",
+    "packages/*/package.json",
+    "packages/*/README.md",
     "pkg",
     "src/resources",
     "scripts/postinstall.js",
@@ -106,7 +108,7 @@
     "verify:native-platform-packages": "node scripts/verify-native-platform-packages.mjs",
     "verify:version-sync": "node scripts/verify-version-sync.cjs",
     "validate-pack": "node scripts/validate-pack.js",
-    "prepack": "node scripts/prepack-resolve-workspace.cjs && node scripts/materialize-bundled-deps.cjs",
+    "prepack": "node scripts/prepack-resolve-workspace.cjs",
     "postpack": "node scripts/postpack-restore-workspace.cjs",
     "typecheck:extensions": "tsc --noEmit --project tsconfig.extensions.json",
     "audit:test-confidence": "node scripts/audit-test-confidence.mjs",
@@ -188,23 +190,9 @@
     "strip-ansi": "^7.1.0",
     "typebox": "1.1.38",
     "undici": "^8.3.0",
-    "yaml": "^2.8.2"
+    "yaml": "^2.8.2",
+    "zod": "^4.0.0"
   },
-  "bundledDependencies": [
-    "@gsd/agent-core",
-    "@gsd/agent-modes",
-    "@gsd/native",
-    "@gsd/pi-agent-core",
-    "@gsd/pi-ai",
-    "@gsd/pi-coding-agent",
-    "@gsd/pi-tui",
-    "@modelcontextprotocol/sdk",
-    "minimatch",
-    "picomatch",
-    "proper-lockfile",
-    "undici",
-    "yaml"
-  ],
   "devDependencies": {
     "@types/node": "^24.12.0",
     "@types/picomatch": "^4.0.2",
@@ -230,20 +218,5 @@
     "c8": {
       "yargs": "^18.0.0"
     }
-  },
-  "bundleDependencies": [
-    "@gsd/agent-core",
-    "@gsd/agent-modes",
-    "@gsd/native",
-    "@gsd/pi-agent-core",
-    "@gsd/pi-ai",
-    "@gsd/pi-coding-agent",
-    "@gsd/pi-tui",
-    "@modelcontextprotocol/sdk",
-    "minimatch",
-    "picomatch",
-    "proper-lockfile",
-    "undici",
-    "yaml"
-  ]
+  }
 }
