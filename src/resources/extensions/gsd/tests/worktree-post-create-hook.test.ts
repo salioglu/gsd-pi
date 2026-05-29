@@ -94,6 +94,106 @@ test("reads git.worktree_post_create from project preferences without loading au
   }
 });
 
+test("prefers canonical project PREFERENCES.md over legacy lowercase preferences.md", () => {
+  const src = makeTmpDir();
+  const wt = makeTmpDir();
+  const previousGsdHome = process.env.GSD_HOME;
+  try {
+    process.env.GSD_HOME = join(src, "empty-gsd-home");
+    const hooksDir = join(src, ".gsd", "hooks");
+    mkdirSync(hooksDir, { recursive: true });
+    writeFileSync(
+      join(src, ".gsd", "PREFERENCES.md"),
+      [
+        "---",
+        "git:",
+        `  worktree_post_create: ${hookPath(".gsd/hooks/canonical")}`,
+        "---",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(src, ".gsd", "preferences.md"),
+      [
+        "---",
+        "git:",
+        `  worktree_post_create: ${hookPath(".gsd/hooks/legacy")}`,
+        "---",
+        "",
+      ].join("\n"),
+    );
+    writeNodeHookScript(
+      hookPath(join(hooksDir, "canonical")),
+      `require("fs").writeFileSync(require("path").join(process.env.WORKTREE_DIR, "configured-hook-ran"), "canonical");`,
+    );
+    writeNodeHookScript(
+      hookPath(join(hooksDir, "legacy")),
+      `require("fs").writeFileSync(require("path").join(process.env.WORKTREE_DIR, "configured-hook-ran"), "legacy");`,
+    );
+
+    const result = runWorktreePostCreateHook(src, wt);
+
+    assert.equal(result, null);
+    assert.equal(readFileSync(join(wt, "configured-hook-ran"), "utf-8"), "canonical");
+  } finally {
+    if (previousGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = previousGsdHome;
+    rmSync(src, { recursive: true, force: true });
+    rmSync(wt, { recursive: true, force: true });
+  }
+});
+
+test("prefers canonical global PREFERENCES.md over legacy lowercase preferences.md", () => {
+  const src = makeTmpDir();
+  const wt = makeTmpDir();
+  const previousGsdHome = process.env.GSD_HOME;
+  try {
+    const gsdHomeDir = join(src, "global-gsd-home");
+    process.env.GSD_HOME = gsdHomeDir;
+    const hooksDir = join(src, ".gsd", "hooks");
+    mkdirSync(hooksDir, { recursive: true });
+    mkdirSync(gsdHomeDir, { recursive: true });
+    writeFileSync(
+      join(gsdHomeDir, "PREFERENCES.md"),
+      [
+        "---",
+        "git:",
+        `  worktree_post_create: ${hookPath(".gsd/hooks/canonical")}`,
+        "---",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(gsdHomeDir, "preferences.md"),
+      [
+        "---",
+        "git:",
+        `  worktree_post_create: ${hookPath(".gsd/hooks/legacy")}`,
+        "---",
+        "",
+      ].join("\n"),
+    );
+    writeNodeHookScript(
+      hookPath(join(hooksDir, "canonical")),
+      `require("fs").writeFileSync(require("path").join(process.env.WORKTREE_DIR, "configured-hook-ran"), "canonical");`,
+    );
+    writeNodeHookScript(
+      hookPath(join(hooksDir, "legacy")),
+      `require("fs").writeFileSync(require("path").join(process.env.WORKTREE_DIR, "configured-hook-ran"), "legacy");`,
+    );
+
+    const result = runWorktreePostCreateHook(src, wt);
+
+    assert.equal(result, null);
+    assert.equal(readFileSync(join(wt, "configured-hook-ran"), "utf-8"), "canonical");
+  } finally {
+    if (previousGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = previousGsdHome;
+    rmSync(src, { recursive: true, force: true });
+    rmSync(wt, { recursive: true, force: true });
+  }
+});
+
 test("returns error when hook script does not exist", () => {
   const src = makeTmpDir();
   const wt = makeTmpDir();

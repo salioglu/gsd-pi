@@ -61,11 +61,11 @@ function extractHookPath(preferences: Record<string, unknown> | null): string | 
 
 function resolveConfiguredHookPath(sourceDir: string): string | null {
   const paths = [
-    join(gsdHome(), "PREFERENCES.md"),
-    join(gsdHome(), "preferences.md"),
     join(homedir(), ".pi", "agent", "gsd-preferences.md"),
-    join(gsdRoot(sourceDir), "PREFERENCES.md"),
+    join(gsdHome(), "preferences.md"),
+    join(gsdHome(), "PREFERENCES.md"),
     join(gsdRoot(sourceDir), "preferences.md"),
+    join(gsdRoot(sourceDir), "PREFERENCES.md"),
   ];
 
   let hookPath: string | null = null;
