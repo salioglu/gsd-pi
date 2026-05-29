@@ -21,7 +21,7 @@
     }
   },
   "bin": {
-    "gsd-cloud-mcp-gateway": "./dist/cli.js"
+    "gsd-cloud-mcp-gateway": "./bin/gsd-cloud-mcp-gateway.js"
   },
   "scripts": {
     "build": "node ../../scripts/clean-package-dist.cjs && tsc",
@@ -43,6 +43,7 @@
   },
   "files": [
     "README.md",
+    "bin",
     "dist",
     "!dist/**/*.test.*"
   ]

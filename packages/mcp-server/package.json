@@ -26,7 +26,7 @@
     }
   },
   "bin": {
-    "gsd-mcp-server": "./dist/cli.js"
+    "gsd-mcp-server": "./bin/gsd-mcp-server.js"
   },
   "scripts": {
     "build": "node ../../scripts/clean-package-dist.cjs && tsc --incremental false",
@@ -47,6 +47,7 @@
     "node": ">=22.0.0"
   },
   "files": [
+    "bin",
     "dist",
     "!dist/**/*.test.*"
   ]

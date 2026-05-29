@@ -57,9 +57,10 @@
     }
   },
   "bin": {
-    "pi-ai": "./dist/cli.js"
+    "pi-ai": "./bin/pi-ai.js"
   },
   "files": [
+    "bin",
     "dist",
     "README.md"
   ],

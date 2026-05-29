@@ -26,7 +26,18 @@ function getNpmCommand() {
 }
 
 function cleanNpmEnv(extra = {}) {
-  const env = { ...process.env, ...extra };
+  const env = {
+    ...process.env,
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1',
+    GSD_SKIP_RTK_INSTALL: '1',
+    NPM_CONFIG_AUDIT: 'false',
+    npm_config_audit: 'false',
+    NPM_CONFIG_FUND: 'false',
+    npm_config_fund: 'false',
+    NPM_CONFIG_LOGLEVEL: 'error',
+    npm_config_loglevel: 'error',
+    ...extra,
+  };
   for (const key of Object.keys(env)) {
     if (!key.startsWith('npm_config_')) continue;
     const setting = key.slice('npm_config_'.length).replace(/_/g, '-');
@@ -263,10 +274,15 @@ try {
   const requiredFiles = [
     'dist/loader.js',
     'packages/pi-coding-agent/dist/index.js',
+    'packages/pi-ai/bin/pi-ai.js',
+    'packages/pi-ai/dist/cli.js',
     'packages/daemon/bin/gsd-daemon.js',
     'packages/daemon/dist/cli.js',
     'packages/rpc-client/dist/index.js',
+    'packages/mcp-server/bin/gsd-mcp-server.js',
     'packages/mcp-server/dist/cli.js',
+    'packages/cloud-mcp-gateway/bin/gsd-cloud-mcp-gateway.js',
+    'packages/cloud-mcp-gateway/dist/cli.js',
     'scripts/link-workspace-packages.cjs',
     'dist/web/standalone/server.js',
   ];
