@@ -142,3 +142,66 @@ test("handleUsage renders interactive usage output inside a full border", async 
   assertFullOuterBorder(lines, 80);
   assert.match(lines.join("\n"), /claude-code\/claude-sonnet-4-6/);
 });
+
+test("handleUsage keeps short-terminal usage dialog scrollable", async () => {
+  const originalRowsDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+  Object.defineProperty(process.stdout, "rows", { value: 10, configurable: true });
+
+  try {
+    let component: { render(width: number): string[]; handleInput(data: string): void } | undefined;
+    let closed = false;
+    const ctx = {
+      hasUI: true,
+      model: { provider: "claude-code", id: "claude-sonnet-4-6", contextWindow: 200_000 },
+      getContextUsage: () => ({ tokens: 10_000, contextWindow: 200_000, percent: 5 }),
+      sessionManager: {
+        getEntries: () => sessionEntries({
+          role: "assistant",
+          usage: {
+            input: 1000,
+            output: 200,
+            cacheRead: 500,
+            cacheWrite: 100,
+            totalTokens: 1800,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.05 },
+          },
+          content: [{ type: "toolCall", id: "tc-1", name: "read", arguments: {} }],
+          timestamp: TS,
+        }),
+      },
+      ui: {
+        custom: async (factory: any) => {
+          const theme = {
+            fg: (_color: string, text: string) => text,
+            bold: (text: string) => text,
+          };
+          component = factory({ requestRender: () => {} }, theme, {}, () => {
+            closed = true;
+          });
+          return true;
+        },
+        notify() {},
+      },
+    };
+
+    await handleUsage("", ctx as any);
+
+    assert.ok(component, "usage dialog should render via custom UI");
+    const initialLines = component.render(80);
+    assert.ok(initialLines.length <= 8, `usage dialog should fit 80% terminal height, got ${initialLines.length}`);
+
+    for (let i = 0; i < 10; i++) component.handleInput("\u001b[B");
+
+    assert.equal(closed, false, "scroll keys should not close a scrollable usage dialog");
+    assert.match(component.render(80).join("\n"), /Tool calls: 1/);
+
+    component.handleInput("x");
+    assert.equal(closed, true, "non-scroll keys should close the usage dialog");
+  } finally {
+    if (originalRowsDescriptor) {
+      Object.defineProperty(process.stdout, "rows", originalRowsDescriptor);
+    } else {
+      delete (process.stdout as { rows?: number }).rows;
+    }
+  }
+});

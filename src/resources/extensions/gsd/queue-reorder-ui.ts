@@ -265,11 +265,19 @@ export async function showQueueReorder(
       }
       scrollOffset = Math.min(Math.max(scrollOffset, 0), maxScroll);
 
-      lines.push(...queueRows.slice(scrollOffset, scrollOffset + availableQueueRows), ...trailingLines);
+      const queueStartRow = lines.length;
+      const visibleQueueRows = queueRows.slice(scrollOffset, scrollOffset + availableQueueRows);
+      lines.push(...visibleQueueRows, ...trailingLines);
 
       cachedLines = renderDialogFrame(theme, headerText, lines, width, {
         footer: renderKeyHints(theme, hints, contentWidth),
-        scroll: { offset: scrollOffset, visibleRows: availableQueueRows, totalRows: queueRows.length },
+        scroll: {
+          offset: scrollOffset,
+          visibleRows: availableQueueRows,
+          totalRows: queueRows.length,
+          trackOffset: queueStartRow,
+          trackRows: visibleQueueRows.length,
+        },
       });
       cachedWidth = width;
       return cachedLines;

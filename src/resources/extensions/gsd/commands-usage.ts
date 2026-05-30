@@ -5,6 +5,7 @@
  */
 
 import type { ExtensionCommandContext, ContextUsage, SessionEntry, Theme } from "@gsd/pi-coding-agent";
+import { Key, matchesKey } from "@gsd/pi-tui";
 
 import { formatCost, formatPercent, formatTokenCount } from "./metrics.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
@@ -165,23 +166,51 @@ async function showUsageDialog(
   ctx: ExtensionCommandContext,
   reportText: string,
 ): Promise<boolean | undefined> {
-  return ctx.ui.custom<boolean>((_tui, theme: Theme, _kb, done) => {
+  return ctx.ui.custom<boolean>((tui, theme: Theme, _kb, done) => {
     let cachedLines: string[] | undefined;
     let cachedWidth: number | undefined;
+    let cachedScrollOffset: number | undefined;
+    let scrollOffset = 0;
+    let lastMaxScroll = 0;
+    let lastVisibleRows = 1;
 
     function render(width: number): string[] {
-      if (cachedLines && cachedWidth === width) return cachedLines;
+      if (cachedLines && cachedWidth === width && cachedScrollOffset === scrollOffset) return cachedLines;
 
       const contentWidth = Math.max(1, width - 4);
       const body = reportText.split("\n");
       if (body[0] === "Context Usage") body.shift();
       while (body[0] === "") body.shift();
+      const terminalRows = process.stdout.rows || 0;
+      const maxOverlayRows = terminalRows > 0 ? Math.max(5, Math.floor(terminalRows * 0.8)) : 24;
+      const frameRows = 4;
+      const visibleRows = Math.max(1, maxOverlayRows - frameRows);
+      const maxScroll = Math.max(0, body.length - visibleRows);
+      scrollOffset = Math.min(Math.max(scrollOffset, 0), maxScroll);
+      lastMaxScroll = maxScroll;
+      lastVisibleRows = visibleRows;
+      const visible = body.slice(scrollOffset, scrollOffset + visibleRows);
+      const scrollable = body.length > visibleRows;
 
-      cachedLines = renderDialogFrame(theme, "Context Usage", body, width, {
-        footer: renderKeyHints(theme, ["any key close"], contentWidth),
+      cachedLines = renderDialogFrame(theme, "Context Usage", visible, width, {
+        footer: renderKeyHints(theme, scrollable ? ["↑↓ scroll", "any key close"] : ["any key close"], contentWidth),
+        scroll: { offset: scrollOffset, visibleRows, totalRows: body.length },
       });
       cachedWidth = width;
+      cachedScrollOffset = scrollOffset;
       return cachedLines;
+    }
+
+    function scrollBy(delta: number): boolean {
+      if (lastMaxScroll <= 0) return false;
+      const nextOffset = Math.min(Math.max(scrollOffset + delta, 0), lastMaxScroll);
+      if (nextOffset !== scrollOffset) {
+        scrollOffset = nextOffset;
+        cachedLines = undefined;
+        cachedScrollOffset = undefined;
+        tui.requestRender();
+      }
+      return true;
     }
 
     return {
@@ -189,8 +218,23 @@ async function showUsageDialog(
       invalidate: () => {
         cachedLines = undefined;
         cachedWidth = undefined;
+        cachedScrollOffset = undefined;
       },
-      handleInput: () => done(true),
+      handleInput: (data: string) => {
+        if (matchesKey(data, Key.down) || matchesKey(data, "j")) {
+          if (scrollBy(1)) return;
+        }
+        if (matchesKey(data, Key.up) || matchesKey(data, "k")) {
+          if (scrollBy(-1)) return;
+        }
+        if (matchesKey(data, Key.pageDown)) {
+          if (scrollBy(lastVisibleRows)) return;
+        }
+        if (matchesKey(data, Key.pageUp)) {
+          if (scrollBy(-lastVisibleRows)) return;
+        }
+        done(true);
+      },
     };
   }, {
     overlay: true,

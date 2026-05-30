@@ -160,6 +160,8 @@ export interface DialogFrameOptions {
     offset: number;
     visibleRows: number;
     totalRows: number;
+    trackOffset?: number;
+    trackRows?: number;
   };
 }
 
@@ -198,14 +200,16 @@ export function renderDialogFrame(
 
   const scroll = options.scroll;
   const bodyRows = inner.length;
-  const scrollable = !!scroll && scroll.totalRows > scroll.visibleRows && bodyRows > 0;
+  const trackOffset = Math.max(0, Math.min(scroll?.trackOffset ?? 0, bodyRows));
+  const trackRows = Math.max(0, Math.min(scroll?.trackRows ?? bodyRows, bodyRows - trackOffset));
+  const scrollable = !!scroll && scroll.totalRows > scroll.visibleRows && trackRows > 0;
   const thumbLen = scrollable
-    ? Math.max(1, Math.round((scroll.visibleRows / scroll.totalRows) * bodyRows))
+    ? Math.max(1, Math.round((scroll.visibleRows / scroll.totalRows) * trackRows))
     : 0;
-  const maxThumbStart = Math.max(0, bodyRows - thumbLen);
+  const maxThumbStart = Math.max(0, trackRows - thumbLen);
   const maxScrollOffset = scrollable ? Math.max(1, scroll.totalRows - scroll.visibleRows) : 1;
   const thumbStart = scrollable
-    ? Math.min(maxThumbStart, Math.round((scroll.offset / maxScrollOffset) * maxThumbStart))
+    ? trackOffset + Math.min(maxThumbStart, Math.round((scroll.offset / maxScrollOffset) * maxThumbStart))
     : -1;
 
   for (let i = 0; i < inner.length; i++) {
