@@ -288,7 +288,6 @@ export function renderAssistantRail(
 		indent: 0,
 		titleRight,
 		railColor,
-		bodyBg: "customMessageBg",
 		closeBottom: !opts.continuesToUser,
 	});
 	let result = card;
