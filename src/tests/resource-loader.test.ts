@@ -31,6 +31,17 @@ function overrideHomeEnv(homeDir: string): () => void {
   };
 }
 
+function hasSyncedResourceFile(rootDir: string, relativePathWithoutExtension: string): boolean {
+  return existsSync(join(rootDir, `${relativePathWithoutExtension}.js`)) ||
+    existsSync(join(rootDir, `${relativePathWithoutExtension}.ts`));
+}
+
+function bundledSharedDir(): string {
+  return existsSync(join(process.cwd(), "dist", "resources", "shared"))
+    ? join(process.cwd(), "dist", "resources", "shared")
+    : join(process.cwd(), "src", "resources", "shared");
+}
+
 test("getExtensionKey normalizes top-level .ts and .js entry names to the same key", async () => {
   const { getExtensionKey } = await import("../resource-loader.ts");
   const extensionsDir = "/tmp/extensions";
@@ -214,6 +225,77 @@ test("initResources syncs bundled skills to the GSD agent dir by default", async
     existsSync(join(tmp, ".agents", "skills", "lint", "SKILL.md")),
     false,
     "initResources should not write bundled skills to ~/.agents/skills by default",
+  );
+});
+
+test("initResources syncs top-level shared resources used by extension imports", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-shared-"));
+  const fakeAgentDir = join(tmp, ".gsd", "agent");
+
+  t.after(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const { initResources } = await import("../resource-loader.ts");
+  initResources(fakeAgentDir, join(tmp, "skills"));
+
+  assert.equal(
+    hasSyncedResourceFile(join(fakeAgentDir, "shared"), "gsd-pi-logo"),
+    true,
+    "top-level resources/shared files must sync under ~/.gsd/agent/shared",
+  );
+  assert.equal(
+    hasSyncedResourceFile(join(fakeAgentDir, "shared"), "package-manager-detection"),
+    true,
+    "extension imports like ../../shared/package-manager-detection.js must resolve after fresh install",
+  );
+});
+
+test("initResources resyncs when current manifest is missing top-level shared resources", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-shared-stale-"));
+  const fakeAgentDir = join(tmp, ".gsd", "agent");
+
+  t.after(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const {
+    computeResourceFingerprint,
+    hasMissingBundledResourceFiles,
+    initResources,
+  } = await import("../resource-loader.ts");
+  initResources(fakeAgentDir, join(tmp, "skills"));
+
+  rmSync(join(fakeAgentDir, "shared"), { recursive: true, force: true });
+  const packageVersion = JSON.parse(
+    readFileSync(join(process.cwd(), "package.json"), "utf-8"),
+  ).version;
+  writeFileSync(
+    join(fakeAgentDir, "managed-resources.json"),
+    JSON.stringify({
+      gsdVersion: process.env.GSD_VERSION && process.env.GSD_VERSION !== "0.0.0"
+        ? process.env.GSD_VERSION
+        : packageVersion,
+      packageName: "@opengsd/gsd-pi",
+      contentHash: computeResourceFingerprint(),
+    }),
+  );
+
+  assert.equal(
+    hasMissingBundledResourceFiles(
+      join(fakeAgentDir, "shared"),
+      bundledSharedDir(),
+    ),
+    true,
+    "test setup should simulate a current manifest with missing shared files",
+  );
+
+  initResources(fakeAgentDir, join(tmp, "skills"));
+
+  assert.equal(
+    hasSyncedResourceFile(join(fakeAgentDir, "shared"), "package-manager-detection"),
+    true,
+    "current managed-resource manifests must not skip missing top-level shared files",
   );
 });
 

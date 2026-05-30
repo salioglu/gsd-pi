@@ -587,6 +587,7 @@ function pruneRemovedBundledExtensions(
  * Syncs all bundled resources to agentDir (~/.gsd/agent/) on every launch.
  *
  * - extensions/ → ~/.gsd/agent/extensions/   (overwrite when version changes)
+ * - shared/     → ~/.gsd/agent/shared/       (overwrite when version changes)
  * - agents/     → ~/.gsd/agent/agents/        (overwrite when version changes)
  * - skills/     → ~/.gsd/agent/skills/        (overwrite when version changes)
  * - GSD-WORKFLOW.md → ~/.gsd/agent/GSD-WORKFLOW.md (fallback for env var miss)
@@ -632,7 +633,16 @@ export function initResources(agentDir: string, skillsDir: string = join(agentDi
     // Version matches — check content fingerprint for same-version staleness.
     const currentHash = getCurrentResourceFingerprint()
     const hasStaleExtensionFiles = hasStaleCompiledExtensionSiblings(extensionsDir, bundledExtensionsDir)
-    if (manifest.contentHash && manifest.contentHash === currentHash && !hasStaleExtensionFiles) {
+    const hasMissingSharedFiles = hasMissingBundledResourceFiles(
+      join(agentDir, 'shared'),
+      join(resourcesDir, 'shared'),
+    )
+    if (
+      manifest.contentHash &&
+      manifest.contentHash === currentHash &&
+      !hasStaleExtensionFiles &&
+      !hasMissingSharedFiles
+    ) {
       return
     }
   }
@@ -640,6 +650,7 @@ export function initResources(agentDir: string, skillsDir: string = join(agentDi
   // Sync bundled resources — overwrite so updates land on next launch.
 
   syncResourceDir(bundledExtensionsDir, join(agentDir, 'extensions'))
+  syncResourceDir(join(resourcesDir, 'shared'), join(agentDir, 'shared'))
   syncResourceDir(join(resourcesDir, 'agents'), join(agentDir, 'agents'))
   syncResourceDir(join(resourcesDir, 'skills'), skillsDir)
 
@@ -722,6 +733,17 @@ export function hasStaleCompiledExtensionSiblings(extensionsDir: string, sourceD
     if (sourceFiles.has(bundledSibling)) return true
   }
 
+  return false
+}
+
+export function hasMissingBundledResourceFiles(destDir: string, sourceDir: string): boolean {
+  const sourceFiles = collectRelativeFiles(sourceDir)
+  if (sourceFiles.size === 0) return false
+
+  const installedFiles = collectRelativeFiles(destDir)
+  for (const relPath of sourceFiles) {
+    if (!installedFiles.has(relPath)) return true
+  }
   return false
 }
 
