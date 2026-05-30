@@ -676,7 +676,7 @@ function cleanupBundledSkillsFromEcosystemDir(): void {
       if (directoriesHaveExactFileContents(sourcePath, targetPath)) {
         makeTreeWritable(targetPath)
         rmSync(targetPath, { recursive: true, force: true })
-      } else {
+      } else if (process.env.GSD_RESOURCE_LOADER_DEBUG === '1') {
         console.warn(
           `[GSD] Leaving ambiguous skill collision in ${targetPath}; ` +
           `the bundled copy will be used from ~/.gsd/agent/skills/${entry.name}.`,
