@@ -1,6 +1,6 @@
 ---
 name: decompose-into-slices
-description: Break a plan or milestone brief into independently-grabbable vertical slices (tracer bullets). Produces slices in `M###-ROADMAP.md` by default, or GitHub issues only with explicit user confirmation. Use when asked to "break this into slices", "decompose the plan", "vertical slices", "break into issues", or when a plan is ready but needs task-level decomposition. Prefers many thin slices over few thick ones; marks dependency order explicitly.
+description: Break a plan or milestone brief into independently-grabbable vertical slices (tracer bullets), written to `M###-ROADMAP.md` by default (GitHub issues only on explicit confirmation). Prefers many thin slices over few thick ones and marks dependency order. Use when asked to "break this into slices", "decompose the plan", "vertical slices", "break into issues", or when a plan needs task-level decomposition.
 ---
 
 <objective>
