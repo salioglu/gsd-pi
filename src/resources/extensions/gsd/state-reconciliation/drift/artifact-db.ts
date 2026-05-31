@@ -389,6 +389,18 @@ function quarantineSliceDir(record: DiskSliceIdDivergenceDrift, basePath: string
   renameSync(record.sliceDir, target);
 }
 
+function diskSliceIdDivergenceGuidance(record: DiskSliceIdDivergenceDrift): string {
+  const quarantineExample = `.gsd/quarantine/milestones/${record.milestoneId}/slices/${record.sliceId}-manual-review`;
+  return (
+    `Slice ID drift in ${record.milestoneId}: ${record.reason}. ` +
+    "Runtime will not import disk-only slice IDs into the DB. " +
+    `Review ${record.sliceDir}. ` +
+    `If ${record.sliceId} is stale, move or delete that directory; to preserve it, move it under ${quarantineExample}. ` +
+    "If it contains work to keep, copy or merge that content into a DB-backed slice, or explicitly recreate the slice through GSD planning, then remove the disk-only directory. " +
+    `After repair, run /gsd doctor ${record.milestoneId}, then resume with /gsd next or /gsd auto.`
+  );
+}
+
 export function repairArtifactDbDrift(
   record:
     | DiskSliceIdDivergenceDrift
@@ -402,10 +414,7 @@ export function repairArtifactDbDrift(
     } else if (record.disposition === "quarantine-scaffold") {
       quarantineSliceDir(record, ctx.basePath);
     } else {
-      throw new Error(
-        `Slice ID drift in ${record.milestoneId}: ${record.reason}. ` +
-          "Runtime will not import disk-only slice IDs into the DB; run explicit recovery/repair after reviewing the directory.",
-      );
+      throw new Error(diskSliceIdDivergenceGuidance(record));
     }
     clearPathCache();
     clearParseCache();
@@ -429,6 +438,33 @@ export function repairArtifactDbDrift(
   );
 }
 
+export function describeArtifactDbDriftBlocker(
+  record:
+    | DiskSliceIdDivergenceDrift
+    | ArtifactDbStatusDivergenceDrift
+    | CompletedMilestoneReopenedDrift,
+): string | null {
+  if (record.kind === "disk-slice-id-divergence") {
+    if (record.disposition !== "block-meaningful") return null;
+    return diskSliceIdDivergenceGuidance(record);
+  }
+
+  if (record.kind === "completed-milestone-reopened") {
+    return (
+      `Milestone ${record.milestoneId} has completed complete-milestone dispatch history` +
+      ` (${record.completedDispatchAt ?? "time unknown"}) but the DB status is ${record.dbStatus}. ` +
+      "Refusing to plan it again without an explicit reopen or recovery."
+    );
+  }
+
+  return (
+    `Artifact/DB status drift in ${record.milestoneId}` +
+    `${record.sliceId ? `/${record.sliceId}` : ""}` +
+    `${record.taskId ? `/${record.taskId}` : ""}: ${record.reason}. ` +
+    "Runtime will not silently import completion artifacts into DB state; run explicit recovery/repair after review."
+  );
+}
+
 export const diskSliceIdDivergenceHandler: DriftHandler<DiskSliceIdDivergenceDrift> = {
   kind: "disk-slice-id-divergence",
   detect: (state, ctx) =>
@@ -436,6 +472,7 @@ export const diskSliceIdDivergenceHandler: DriftHandler<DiskSliceIdDivergenceDri
       (record): record is DiskSliceIdDivergenceDrift =>
         record.kind === "disk-slice-id-divergence",
     ),
+  blocker: describeArtifactDbDriftBlocker,
   repair: repairArtifactDbDrift,
 };
 
@@ -446,6 +483,7 @@ export const artifactDbStatusDivergenceHandler: DriftHandler<ArtifactDbStatusDiv
       (record): record is ArtifactDbStatusDivergenceDrift =>
         record.kind === "artifact-db-status-divergence",
     ),
+  blocker: describeArtifactDbDriftBlocker,
   repair: repairArtifactDbDrift,
 };
 
@@ -456,5 +494,6 @@ export const completedMilestoneReopenedHandler: DriftHandler<CompletedMilestoneR
       (record): record is CompletedMilestoneReopenedDrift =>
         record.kind === "completed-milestone-reopened",
     ),
+  blocker: describeArtifactDbDriftBlocker,
   repair: repairArtifactDbDrift,
 };

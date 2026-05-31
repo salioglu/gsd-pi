@@ -881,10 +881,37 @@ export async function autoLoop(
                 message: orchestrationResult.reason,
                 category: "unknown",
               });
+              finishTurn("paused", "manual-attention", "orchestration-blocked");
             } else {
               await deps.stopAuto(ctx, pi, orchestrationResult.reason);
+              finishTurn("stopped", "manual-attention", "orchestration-blocked");
             }
-            finishTurn("stopped", "manual-attention", "orchestration-blocked");
+            finishIncompleteIteration({
+              status: orchestrationResult.action === "pause" ? "paused" : "stopped",
+              reason: orchestrationResult.reason,
+              failureClass: "manual-attention",
+            });
+            break;
+          }
+
+          if (orchestrationResult.kind === "paused") {
+            s.pendingOrchestrationDispatch = null;
+            finishTurn("skipped");
+            continue;
+          }
+
+          if (orchestrationResult.kind === "error") {
+            s.pendingOrchestrationDispatch = null;
+            await deps.pauseAuto(ctx, pi, {
+              message: orchestrationResult.reason,
+              category: "unknown",
+            });
+            finishTurn("paused", "manual-attention", `orchestration-${orchestrationResult.kind}`);
+            finishIncompleteIteration({
+              status: "paused",
+              reason: orchestrationResult.reason,
+              failureClass: "manual-attention",
+            });
             break;
           }
 

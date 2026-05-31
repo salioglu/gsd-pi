@@ -1874,6 +1874,97 @@ test("autoLoop dev path dispatches orchestration.advance results without legacy 
   assert.equal(s.pendingOrchestrationDispatch, null, "pending dispatch should be one-shot");
 });
 
+test("autoLoop pauses once when orchestration reports reconciliation drift error", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+  let advanceCalls = 0;
+  const s = makeLoopSession({
+    currentMilestoneId: "M002",
+    orchestration: {
+      start: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      advance: async () => {
+        advanceCalls++;
+        return {
+          kind: "error" as const,
+          reason: "Reconciliation drift: Reconciliation repair failed in pass 0",
+        };
+      },
+      completeActiveUnit: async () => {},
+      retryActiveUnit: async () => {},
+      resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      stop: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      getStatus: () => ({ phase: "error" as const, transitionCount: 1 }),
+    },
+  });
+
+  const deps = makeMockDeps({
+    resolveDispatch: async () => {
+      deps.callLog.push("resolveDispatch");
+      throw new Error("legacy resolveDispatch must not run after orchestration error");
+    },
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.equal(advanceCalls, 1, "orchestration error must not be retried in the same loop");
+  assert.ok(deps.callLog.includes("pauseAuto"), "orchestration error should pause auto-mode");
+  assert.equal(
+    deps.callLog.includes("resolveDispatch"),
+    false,
+    "orchestration error must not fall back to legacy dispatch",
+  );
+  assert.equal(s.pendingOrchestrationDispatch, null, "no orchestration dispatch should remain pending");
+});
+
+test("autoLoop retries next iteration when orchestration reports paused", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+  let advanceCalls = 0;
+  const s = makeLoopSession({
+    currentMilestoneId: "M002",
+    orchestration: {
+      start: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      advance: async () => {
+        advanceCalls++;
+        return advanceCalls === 1
+          ? { kind: "paused" as const, reason: "provider transient; retry" }
+          : { kind: "stopped" as const, reason: "done retrying" };
+      },
+      completeActiveUnit: async () => {},
+      retryActiveUnit: async () => {},
+      resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      stop: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      getStatus: () => ({ phase: "running" as const, transitionCount: advanceCalls }),
+    },
+  });
+
+  const deps = makeMockDeps({
+    resolveDispatch: async () => {
+      deps.callLog.push("resolveDispatch");
+      throw new Error("legacy resolveDispatch must not run after orchestration paused");
+    },
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.equal(advanceCalls, 2, "orchestration paused should retry on the next loop iteration");
+  assert.equal(deps.callLog.includes("pauseAuto"), false, "orchestration paused should not pause auto-mode");
+  assert.equal(
+    deps.callLog.includes("resolveDispatch"),
+    false,
+    "orchestration paused must not fall back to legacy dispatch",
+  );
+  assert.equal(s.pendingOrchestrationDispatch, null, "no orchestration dispatch should remain pending");
+});
+
 test("autoLoop consumes pending orchestration dispatch without advancing twice", async () => {
   _resetPendingResolve();
 

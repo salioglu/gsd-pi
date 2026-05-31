@@ -231,6 +231,175 @@ test("ADR-017 (#5700): classifyFailure recognizes ReconciliationFailedError", ()
   assert.match(result.remediation, /persistent or repair-failed drift kinds/);
 });
 
+test("ADR-017: terminal drift blockers return blockers instead of repair exceptions", async () => {
+  const record: DriftRecord = { kind: "stale-sketch-flag", mid: "M001", sid: "S02" };
+  const handler: DriftHandler = {
+    kind: "stale-sketch-flag",
+    detect: () => [record],
+    blocker: () => "manual drift review required",
+    repair: () => {
+      throw new Error("repair should not run for terminal blockers");
+    },
+  };
+
+  const result = await reconcileBeforeDispatch("/project", {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+    registry: [handler],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.blockers, ["manual drift review required"]);
+  assert.equal(result.repaired.length, 0);
+});
+
+test("ADR-017: terminal blockers return a state snapshot refreshed after co-occurring repairs", async () => {
+  const repairDrift: DriftRecord = { kind: "stale-sketch-flag", mid: "M001", sid: "S02" };
+  const terminalDrift: DriftRecord = {
+    kind: "completed-milestone-reopened",
+    milestoneId: "M001",
+    dbStatus: "active",
+  };
+  let repaired = false;
+  const repairHandler: DriftHandler = {
+    kind: "stale-sketch-flag",
+    detect: (state) => (state.nextAction === "before repair" ? [repairDrift] : []),
+    repair: () => {
+      repaired = true;
+    },
+  };
+  const terminalHandler: DriftHandler = {
+    kind: "completed-milestone-reopened",
+    detect: (state) => (state.nextAction === "before repair" ? [terminalDrift] : []),
+    blocker: () => "manual completed-milestone review required",
+    repair: () => {
+      throw new Error("repair should not run for terminal blockers");
+    },
+  };
+
+  const result = await reconcileBeforeDispatch("/project", {
+    invalidateStateCache: () => {},
+    deriveState: async () =>
+      makeState({ nextAction: repaired ? "after repair" : "before repair" }),
+    registry: [repairHandler, terminalHandler],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.stateSnapshot.nextAction, "after repair");
+  assert.equal(result.repaired.length, 1);
+  assert.deepEqual(result.blockers, ["manual completed-milestone review required"]);
+});
+
+test("ADR-017: terminal drift blockers take precedence over co-occurring repair failures", async () => {
+  const terminalDrift: DriftRecord = {
+    kind: "completed-milestone-reopened",
+    milestoneId: "M001",
+    dbStatus: "active",
+  };
+  const repairDrift: DriftRecord = { kind: "stale-sketch-flag", mid: "M001", sid: "S02" };
+  const terminalHandler: DriftHandler = {
+    kind: "completed-milestone-reopened",
+    detect: () => [terminalDrift],
+    blocker: () => "manual completed-milestone review required",
+    repair: () => {
+      throw new Error("repair should not run for terminal blockers");
+    },
+  };
+  const repairHandler: DriftHandler = {
+    kind: "stale-sketch-flag",
+    detect: () => [repairDrift],
+    repair: () => {
+      throw new Error("simulated repair failure");
+    },
+  };
+
+  const result = await reconcileBeforeDispatch("/project", {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+    registry: [repairHandler, terminalHandler],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.blockers, ["manual completed-milestone review required"]);
+});
+
+test("ADR-017: terminal drift found after repair cap returns blockers", async () => {
+  const repairDrift: DriftRecord = { kind: "stale-sketch-flag", mid: "M001", sid: "S02" };
+  const terminalDrift: DriftRecord = {
+    kind: "completed-milestone-reopened",
+    milestoneId: "M001",
+    dbStatus: "active",
+  };
+  let repairCount = 0;
+  const repairHandler: DriftHandler = {
+    kind: "stale-sketch-flag",
+    detect: () => (repairCount < 2 ? [repairDrift] : []),
+    repair: () => {
+      repairCount++;
+    },
+  };
+  const terminalHandler: DriftHandler = {
+    kind: "completed-milestone-reopened",
+    detect: () => (repairCount >= 2 ? [terminalDrift] : []),
+    blocker: () => "manual completed-milestone review required",
+    repair: () => {
+      throw new Error("repair should not run for terminal blockers");
+    },
+  };
+
+  const result = await reconcileBeforeDispatch("/project", {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+    registry: [repairHandler, terminalHandler],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.repaired.length, 2);
+  assert.deepEqual(result.blockers, ["manual completed-milestone review required"]);
+});
+
+test("ADR-017: final persistent drift mixed with blockers still fails closed", async () => {
+  const repairDrift: DriftRecord = { kind: "stale-sketch-flag", mid: "M001", sid: "S02" };
+  const terminalDrift: DriftRecord = {
+    kind: "completed-milestone-reopened",
+    milestoneId: "M001",
+    dbStatus: "active",
+  };
+  let repairCount = 0;
+  const repairHandler: DriftHandler = {
+    kind: "stale-sketch-flag",
+    detect: () => [repairDrift],
+    repair: () => {
+      repairCount++;
+    },
+  };
+  const terminalHandler: DriftHandler = {
+    kind: "completed-milestone-reopened",
+    detect: () => (repairCount >= 2 ? [terminalDrift] : []),
+    blocker: () => "manual completed-milestone review required",
+    repair: () => {
+      throw new Error("repair should not run for terminal blockers");
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      reconcileBeforeDispatch("/project", {
+        invalidateStateCache: () => {},
+        deriveState: async () => makeState(),
+        registry: [repairHandler, terminalHandler],
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof ReconciliationFailedError);
+      assert.deepEqual(err.persistentDrift.map((d) => d.kind).sort(), [
+        "completed-milestone-reopened",
+        "stale-sketch-flag",
+      ]);
+      return true;
+    },
+  );
+});
+
 // ─── #5701: merge-state drift ────────────────────────────────────────────────
 
 function makeGitBase(): string {
@@ -1067,19 +1236,41 @@ test("ADR-017: artifact/DB status divergence fails closed instead of importing c
     "# S01 Summary\n\nAlready done on disk.\n",
   );
 
-  await assert.rejects(
-    () =>
-      reconcileBeforeDispatch(base, {
-        invalidateStateCache: () => {},
-        deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
-      }),
-    (err: unknown) => {
-      assert.ok(err instanceof ReconciliationFailedError);
-      assert.match((err as Error).message, /artifact-db-status-divergence/);
-      assert.equal(getSlice("M001", "S01")?.status, "pending", "DB status remains authoritative");
-      return true;
-    },
-  );
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.blockers.join("\n"), /Artifact\/DB status drift/);
+  assert.equal(getSlice("M001", "S01")?.status, "pending", "DB status remains authoritative");
+});
+
+test("ADR-017: meaningful disk-only slice drift blocker includes repair guidance", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-disk-slice-guidance-"));
+  const diskOnlySliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S99");
+  t.after(() => cleanup(base));
+
+  mkdirSync(diskOnlySliceDir, { recursive: true });
+  writeFileSync(join(diskOnlySliceDir, "S99-PLAN.md"), "# Disk-only plan\n\nWork to review.\n");
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Known Slice", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
+  });
+
+  assert.equal(result.ok, true);
+  const message = result.blockers.join("\n");
+  assert.match(message, /Slice ID drift in M001/);
+  assert.match(message, /Review .*S99/);
+  assert.match(message, /move or delete/);
+  assert.match(message, /\.gsd\/quarantine\/milestones\/M001\/slices\/S99-manual-review/);
+  assert.match(message, /copy or merge/);
+  assert.match(message, /\/gsd doctor M001/);
+  assert.match(message, /\/gsd next or \/gsd auto/);
 });
 
 test("ADR-017: orphan task completion artifact fails closed", async (t) => {
@@ -1100,18 +1291,13 @@ test("ADR-017: orphan task completion artifact fails closed", async (t) => {
     full_content: "# T99 Summary\n\nStale artifact after replan.\n",
   });
 
-  await assert.rejects(
-    () =>
-      reconcileBeforeDispatch(base, {
-        invalidateStateCache: () => {},
-        deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
-      }),
-    (err: unknown) => {
-      assert.ok(err instanceof ReconciliationFailedError);
-      assert.match((err as Error).message, /artifact-db-status-divergence/);
-      return true;
-    },
-  );
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.blockers.join("\n"), /Artifact\/DB status drift/);
 });
 
 test("ADR-017: completed milestone dispatch history blocks accidental re-planning", async (t) => {
@@ -1136,18 +1322,13 @@ test("ADR-017: completed milestone dispatch history blocks accidental re-plannin
       ('trace', 'w1', 1, 'M001', 'complete-milestone', 'M001', 'completed', 1, '2026-05-30T00:00:00.000Z', '2026-05-30T00:01:00.000Z')`,
   ).run();
 
-  await assert.rejects(
-    () =>
-      reconcileBeforeDispatch(base, {
-        invalidateStateCache: () => {},
-        deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
-      }),
-    (err: unknown) => {
-      assert.ok(err instanceof ReconciliationFailedError);
-      assert.match((err as Error).message, /completed-milestone-reopened/);
-      return true;
-    },
-  );
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.blockers.join("\n"), /completed complete-milestone dispatch history/);
 });
 
 test("ADR-017: synthetic parallel-research slice directory is ignored", async (t) => {
