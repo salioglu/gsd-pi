@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { registerHooks } from "../bootstrap/register-hooks.ts";
 import { GSD_WORKFLOW_MCP_SERVER_NAME } from "../mcp-project-config.ts";
+import { clearSkillSnapshot, snapshotSkills } from "../skill-discovery.js";
 import { prepareWorkflowMcpForProject, shouldAutoPrepareWorkflowMcp } from "../workflow-mcp-auto-prep.ts";
 
 test("shouldAutoPrepareWorkflowMcp enables prep for externalCli local transport", () => {
@@ -133,4 +134,76 @@ test("before_agent_start auto-prepares project workflow MCP for Claude Code CLI"
   };
   assert.ok(parsed.mcpServers?.[GSD_WORKFLOW_MCP_SERVER_NAME]);
   assert.match(notifications.join("\n"), /Claude Code MCP prepared/);
+});
+
+test("before_agent_start returns discovered skill fallback without project .gsd", async (t) => {
+  const projectRoot = mkdtempSync(join(tmpdir(), "gsd-skill-before-agent-"));
+  const skillHome = mkdtempSync(join(tmpdir(), "gsd-skill-home-"));
+  const originalCwd = process.cwd();
+  const originalHome = process.env.HOME;
+  const originalGsdHome = process.env.GSD_HOME;
+  const handlers = new Map<string, Array<(event: any, ctx?: any) => Promise<any> | any>>();
+  const pi = {
+    on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any) {
+      const existing = handlers.get(event) ?? [];
+      existing.push(handler);
+      handlers.set(event, existing);
+    },
+    getActiveTools: () => [],
+    getAllTools: () => [],
+    setActiveTools() {},
+  };
+
+  t.after(() => {
+    process.chdir(originalCwd);
+    clearSkillSnapshot();
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalGsdHome === undefined) {
+      delete process.env.GSD_HOME;
+    } else {
+      process.env.GSD_HOME = originalGsdHome;
+    }
+    rmSync(projectRoot, { recursive: true, force: true });
+    rmSync(skillHome, { recursive: true, force: true });
+  });
+
+  process.env.HOME = skillHome;
+  process.env.GSD_HOME = join(skillHome, ".gsd");
+  process.chdir(projectRoot);
+  snapshotSkills();
+
+  const skillDir = join(skillHome, ".agents", "skills", "late-skill");
+  mkdirSync(skillDir, { recursive: true });
+  const skillPath = join(skillDir, "SKILL.md");
+  writeFileSync(skillPath, "---\nname: late-skill\ndescription: Use for late skill.\n---\n\n# late-skill\n");
+
+  registerHooks(pi as any, []);
+  const beforeAgentStart = handlers.get("before_agent_start")?.[0];
+  assert.ok(beforeAgentStart, "before_agent_start hook should be registered");
+
+  const result = await beforeAgentStart(
+    { prompt: "hello", systemPrompt: "event system prompt" },
+    {
+      cwd: projectRoot,
+      model: { provider: "openai", baseUrl: "https://api.openai.com" },
+      modelRegistry: {
+        getProviderAuthMode: () => "apiKey",
+        isProviderRequestReady: () => false,
+      },
+      getSystemPrompt: () => "context system prompt",
+      reload: async () => {},
+      ui: {
+        notify() {},
+        setWidget() {},
+      },
+    },
+  );
+
+  assert.match(result?.systemPrompt ?? "", /<newly_discovered_skills>/);
+  assert.match(result?.systemPrompt ?? "", /late-skill/);
+  assert.equal(result?.systemPrompt?.includes(skillPath), true);
 });

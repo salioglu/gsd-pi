@@ -15,8 +15,10 @@ import {
 } from "../gsd-db.js";
 import { GATE_REGISTRY } from "../gate-registry.js";
 import { generateRequirementsMd, saveArtifactToDb } from "../db-writer.js";
-import { resolveMilestoneFile, resolveSliceFile } from "../paths.js";
+import { clearPathCache, resolveGsdPathContract, resolveMilestoneFile, resolveSliceFile } from "../paths.js";
+import { saveFile, clearParseCache } from "../files.js";
 import { unlinkSync } from "node:fs";
+import { join } from "node:path";
 import type { CompleteMilestoneParams } from "./complete-milestone.js";
 import { handleCompleteMilestone } from "./complete-milestone.js";
 import { handleCompleteTask } from "./complete-task.js";
@@ -94,6 +96,28 @@ function registerProjectMilestoneSequence(content: string): string[] {
     registered.push(milestone.id);
   }
   return registered;
+}
+
+async function mirrorArtifactToActiveWorktreeProjection(
+  basePath: string,
+  relativePath: string,
+  content: string,
+): Promise<void> {
+  const contract = resolveGsdPathContract(basePath);
+  if (!contract.worktreeGsd) return;
+  if (contract.worktreeGsd === contract.projectGsd) return;
+
+  const fullPath = join(contract.worktreeGsd, relativePath);
+  try {
+    await saveFile(fullPath, content);
+    clearPathCache();
+    clearParseCache();
+    invalidateStateCache();
+  } catch (err) {
+    logWarning("tool", `gsd_summary_save worktree projection mirror failed: ${(err as Error).message}`, {
+      path: relativePath,
+    });
+  }
 }
 
 export async function executeSummarySave(
@@ -197,6 +221,7 @@ export async function executeSummarySave(
       },
       basePath,
     );
+    await mirrorArtifactToActiveWorktreeProjection(basePath, relativePath, contentToSave);
 
     let registeredMilestones: string[] = [];
     if (params.artifact_type === "PROJECT") {

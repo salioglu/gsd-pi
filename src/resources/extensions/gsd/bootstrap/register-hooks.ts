@@ -33,6 +33,7 @@ import { resolveWorktreeProjectRoot } from "../worktree-root.js";
 import { extractSubagentAgentClasses } from "./subagent-input.js";
 import { approvalGateIdForUnit, isExplicitApprovalResponse, shouldPauseForUserApprovalQuestion } from "../user-input-boundary.js";
 import { resolveSkillManifest } from "../skill-manifest.js";
+import { applyUnitSkillVisibility, unitHasSkillManifest } from "../skill-scope.js";
 import { getGuidedUnitContext } from "../guided-unit-context.js";
 import { registerPlanMilestoneSchemaRecovery } from "./plan-milestone-schema-recovery.js";
 
@@ -415,8 +416,7 @@ export function scopeGsdWorkflowToolsForDispatch(
     ? buildMinimalAutoGsdToolSet(current, unitType, registeredToolNames)
     : buildMinimalGsdWorkflowToolSet(current, registeredToolNames);
   const toolsChanged = !(scoped.length === current.length && scoped.every((name, index) => name === current[index]));
-  const skillManifest = resolveSkillManifest(unitType);
-  const canScopeSkills = skillManifest !== null && pi.getVisibleSkills && pi.setVisibleSkills;
+  const canScopeSkills = unitHasSkillManifest(unitType) && pi.getVisibleSkills && pi.setVisibleSkills;
   if (!toolsChanged && !canScopeSkills) {
     return null;
   }
@@ -424,8 +424,8 @@ export function scopeGsdWorkflowToolsForDispatch(
     pi.setActiveTools(scoped);
   }
   const visibleSkills = canScopeSkills ? pi.getVisibleSkills!() : undefined;
-  if (canScopeSkills) {
-    pi.setVisibleSkills!(skillManifest);
+  if (canScopeSkills && pi.setVisibleSkills) {
+    applyUnitSkillVisibility({ setVisibleSkills: pi.setVisibleSkills }, unitType);
   }
   return {
     tools: toolsChanged ? current : null,
@@ -673,9 +673,21 @@ export function registerHooks(
     // project MCP config that /gsd mcp init would write.
     await prepareWorkflowMcpForHookContext(ctx, beforeAgentBasePath);
 
+    let systemPrompt = event.systemPrompt;
+    const { appendDiscoveredSkillsFallback, hasSkillSnapshot, refreshCatalogForNewSkills } = await import("../skill-discovery.js");
+    if (hasSkillSnapshot()) {
+      const loadedSkills = await refreshCatalogForNewSkills({
+        reload: () => (ctx as ExtensionContext & { reload: () => Promise<void> }).reload(),
+        notify: (message, level) => ctx.ui.notify(message, level),
+      });
+      if (loadedSkills.length > 0) {
+        systemPrompt = appendDiscoveredSkillsFallback(ctx.getSystemPrompt(), loadedSkills);
+      }
+    }
+
     // GSD's own context injection (existing behavior — unchanged).
     const { buildBeforeAgentStartResult } = await import("./system-context.js");
-    const gsdResult = await buildBeforeAgentStartResult(event, ctx);
+    const gsdResult = await buildBeforeAgentStartResult({ ...event, systemPrompt }, ctx);
 
     // Refresh the snapshot used by ecosystem getPhase()/getActiveUnit().
     // deriveState has its own ~100ms cache so this is cheap on repeat calls.
@@ -688,7 +700,7 @@ export function registerHooks(
 
     // Chain ecosystem handlers using pi's runner.ts chaining protocol:
     // each handler sees the systemPrompt mutated by prior handlers.
-    let currentSystemPrompt = gsdResult?.systemPrompt ?? event.systemPrompt;
+    let currentSystemPrompt = gsdResult?.systemPrompt ?? systemPrompt;
     // `any` because pi's BeforeAgentStartEventResult.message uses an internal
     // CustomMessage type that's not re-exported (see ecosystem/gsd-extension-api.ts).
     let lastMessage: any = gsdResult?.message;

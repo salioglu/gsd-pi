@@ -3,7 +3,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -15,6 +15,7 @@ import {
   _getAdapter,
   closeDatabase,
   getSliceTasks,
+  insertDecision,
   insertMilestone,
   insertSlice,
   openDatabase,
@@ -207,6 +208,45 @@ describe("workflow MCP tools", () => {
     assert.ok("reason" in taskReopen.params);
   });
 
+  it("registers gsd_checkpoint_db and flushes the open WAL", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const tool = server.tools.find((t) => t.name === "gsd_checkpoint_db");
+      assert.ok(tool, "gsd_checkpoint_db must be registered");
+      assert.ok("projectDir" in tool.params);
+
+      const dbPath = join(base, ".gsd", "gsd.db");
+      openDatabase(dbPath);
+      insertDecision({
+        id: "D001",
+        when_context: "test",
+        scope: "global",
+        decision: "Expose checkpoint tool over MCP",
+        choice: "register gsd_checkpoint_db",
+        rationale: "MCP clients need to flush WAL before staging gsd.db",
+        revisable: "yes",
+        made_by: "agent",
+        superseded_by: null,
+      });
+
+      const walPath = `${dbPath}-wal`;
+      assert.ok(existsSync(walPath), "WAL file should exist after a write");
+      assert.ok(statSync(walPath).size > 0, "WAL file should be non-empty after a write");
+
+      const result = await tool.handler({ projectDir: base });
+      const record = result as { content?: Array<{ text?: string }>; structuredContent?: Record<string, unknown> };
+      assert.equal(record.content?.[0]?.text, "WAL checkpoint complete. gsd.db is now up to date and safe to stage with git add.");
+      assert.deepEqual(record.structuredContent, { operation: "checkpoint_db", status: "ok" });
+
+      const walSizeAfter = existsSync(walPath) ? statSync(walPath).size : 0;
+      assert.equal(walSizeAfter, 0, "WAL file should be truncated to 0 after MCP checkpoint");
+    } finally {
+      cleanup(base);
+    }
+  });
+
   it("prefers source TypeScript for generic local module imports", () => {
     assert.deepEqual(
       _buildImportCandidates("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js"),
@@ -288,6 +328,28 @@ describe("workflow MCP tools", () => {
         new RegExp(base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
         "script should run relative to the requested projectDir",
       );
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("gsd_exec accepts command alias without an explicit runtime", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const tool = server.tools.find((t) => t.name === "gsd_exec");
+      assert.ok(tool, "exec tool should be registered");
+
+      const result = await tool!.handler({
+        projectDir: base,
+        command: "echo mcp-command-alias-defaults-to-bash",
+      });
+
+      const record = result as any;
+      assert.equal(record.isError, false);
+      assert.equal(record.structuredContent.runtime, "bash");
+      assert.match(record.content[0].text as string, /mcp-command-alias-defaults-to-bash/);
     } finally {
       cleanup(base);
     }

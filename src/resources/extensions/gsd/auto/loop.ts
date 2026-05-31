@@ -881,10 +881,37 @@ export async function autoLoop(
                 message: orchestrationResult.reason,
                 category: "unknown",
               });
+              finishTurn("paused", "manual-attention", "orchestration-blocked");
             } else {
               await deps.stopAuto(ctx, pi, orchestrationResult.reason);
+              finishTurn("stopped", "manual-attention", "orchestration-blocked");
             }
-            finishTurn("stopped", "manual-attention", "orchestration-blocked");
+            finishIncompleteIteration({
+              status: orchestrationResult.action === "pause" ? "paused" : "stopped",
+              reason: orchestrationResult.reason,
+              failureClass: "manual-attention",
+            });
+            break;
+          }
+
+          if (orchestrationResult.kind === "paused") {
+            s.pendingOrchestrationDispatch = null;
+            finishTurn("skipped");
+            continue;
+          }
+
+          if (orchestrationResult.kind === "error") {
+            s.pendingOrchestrationDispatch = null;
+            await deps.pauseAuto(ctx, pi, {
+              message: orchestrationResult.reason,
+              category: "unknown",
+            });
+            finishTurn("paused", "manual-attention", `orchestration-${orchestrationResult.kind}`);
+            finishIncompleteIteration({
+              status: "paused",
+              reason: orchestrationResult.reason,
+              failureClass: "manual-attention",
+            });
             break;
           }
 
@@ -918,6 +945,52 @@ export async function autoLoop(
             isRetry: false,
             previousTier: undefined,
           };
+          const preDispatchResult = deps.runPreDispatchHooks(
+            iterData.unitType,
+            iterData.unitId,
+            iterData.prompt,
+            s.basePath,
+          );
+          if (preDispatchResult.firedHooks.length > 0) {
+            ctx.ui.notify(
+              `Pre-dispatch hook${preDispatchResult.firedHooks.length > 1 ? "s" : ""}: ${preDispatchResult.firedHooks.join(", ")}`,
+              "info",
+            );
+            deps.emitJournalEvent({
+              ts: new Date().toISOString(),
+              flowId: ic.flowId,
+              seq: ic.nextSeq(),
+              eventType: "pre-dispatch-hook",
+              data: {
+                firedHooks: preDispatchResult.firedHooks,
+                action: preDispatchResult.action,
+              },
+            });
+          }
+          if (preDispatchResult.action === "skip") {
+            ctx.ui.notify(
+              `Skipping ${iterData.unitType} ${iterData.unitId} (pre-dispatch hook).`,
+              "info",
+            );
+            s.pendingOrchestrationDispatch = null;
+            emitIterationEnd({ skipped: true });
+            completeIteration();
+            finishTurn("skipped");
+            continue;
+          }
+          if (preDispatchResult.action === "replace") {
+            iterData.prompt = preDispatchResult.prompt ?? iterData.prompt;
+            iterData.finalPrompt = iterData.prompt;
+            if (preDispatchResult.unitType) {
+              iterData.unitType = preDispatchResult.unitType;
+            }
+          } else if (preDispatchResult.prompt) {
+            iterData.prompt = preDispatchResult.prompt;
+            iterData.finalPrompt = preDispatchResult.prompt;
+          }
+          if (preDispatchResult.model) {
+            iterData.hookModelOverride = preDispatchResult.model;
+          }
           s.pendingOrchestrationDispatch = null;
           phaseReporter.report("dispatch", "next", {
             unitType: iterData.unitType,
