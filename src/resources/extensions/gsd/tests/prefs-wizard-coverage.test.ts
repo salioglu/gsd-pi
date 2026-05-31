@@ -28,6 +28,7 @@ const PREF_SAMPLE_VALUES: Record<string, unknown> = {
   context_pause_threshold: 80,
   notifications: {
     enabled: true,
+    local_bell: true,
     on_complete: true,
     on_error: true,
     on_budget: true,

@@ -82,7 +82,7 @@ import {
   loadEffectiveGSDPreferences,
   getIsolationMode,
 } from "./preferences.js";
-import { sendDesktopNotification } from "./notifications.js";
+import { playNotificationBell, sendDesktopNotification } from "./notifications.js";
 import type { GSDPreferences } from "./preferences.js";
 import {
   type BudgetAlertLevel,
@@ -1389,6 +1389,7 @@ export async function stopAuto(
   const installCompletionWidget = completionStopRequested && !preserveCloseoutTranscript;
   const preserveCompletionSurface = completionStopRequested || preserveCloseoutTranscript;
   s.completionStopInProgress = preserveCompletionSurface;
+  playNotificationBell("stop", loadedPreferences?.notifications);
 
   // #4764 — telemetry: record the exit reason, isolation mode, whether an auto
   // worktree was active, and whether the current milestone was merged before
