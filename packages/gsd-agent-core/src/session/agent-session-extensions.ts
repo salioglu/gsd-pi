@@ -213,15 +213,14 @@ export class AgentSessionExtensionsModule {
 
 		runner.bindCore(
 			{
-				sendMessage: (message, options) => {
+				sendMessage: (message, options) =>
 					this.host.sendCustomMessage(message, options).catch((err) => {
 						runner.emitError({
 							extensionPath: "<runtime>",
 							event: "send_message",
 							error: err instanceof Error ? err.message : String(err),
 						});
-					});
-				},
+					}),
 				sendUserMessage: (content, options) => {
 					this.host.sendUserMessage(content, options).catch((err) => {
 						runner.emitError({

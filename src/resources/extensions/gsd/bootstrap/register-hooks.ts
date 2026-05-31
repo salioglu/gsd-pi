@@ -366,8 +366,8 @@ export function scopeGsdWorkflowToolsForDispatch(
     pi.setActiveTools(scoped);
   }
   const visibleSkills = canScopeSkills ? pi.getVisibleSkills!() : undefined;
-  if (canScopeSkills) {
-    applyUnitSkillVisibility(pi, unitType);
+  if (canScopeSkills && pi.setVisibleSkills) {
+    applyUnitSkillVisibility({ setVisibleSkills: pi.setVisibleSkills }, unitType);
   }
   return {
     tools: toolsChanged ? current : null,

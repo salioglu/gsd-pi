@@ -311,9 +311,9 @@ function createExtensionAPI(
 		},
 
 		// Action methods - delegate to shared runtime
-		sendMessage(message, options): void {
+		sendMessage(message, options): Promise<void> {
 			runtime.assertActive();
-			runtime.sendMessage(message, options);
+			return runtime.sendMessage(message, options);
 		},
 
 		sendUserMessage(content, options): void {
