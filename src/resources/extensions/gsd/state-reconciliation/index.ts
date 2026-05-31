@@ -76,6 +76,7 @@ export async function reconcileBeforeDispatch(
     }
 
     const failures: ReconciliationFailureDetail[] = [];
+    const blockers: string[] = [];
     for (const record of drift) {
       const handler = registry.find((h) => h.kind === record.kind);
       if (!handler) {
@@ -85,6 +86,11 @@ export async function reconcileBeforeDispatch(
             `No drift handler registered for kind "${record.kind}"`,
           ),
         });
+        continue;
+      }
+      const blocker = handler.blocker ? await handler.blocker(record, ctx) : null;
+      if (blocker) {
+        blockers.push(blocker);
         continue;
       }
       try {
@@ -97,6 +103,14 @@ export async function reconcileBeforeDispatch(
 
     if (failures.length > 0) {
       throw new ReconciliationFailedError({ failures, pass });
+    }
+    if (blockers.length > 0) {
+      return {
+        ok: true,
+        stateSnapshot,
+        repaired,
+        blockers: [...new Set([...(stateSnapshot.blockers ?? []), ...blockers])],
+      };
     }
     // Pass fully succeeded; loop runs again to detect cascading drift.
   }

@@ -429,6 +429,36 @@ export function repairArtifactDbDrift(
   );
 }
 
+export function describeArtifactDbDriftBlocker(
+  record:
+    | DiskSliceIdDivergenceDrift
+    | ArtifactDbStatusDivergenceDrift
+    | CompletedMilestoneReopenedDrift,
+): string | null {
+  if (record.kind === "disk-slice-id-divergence") {
+    if (record.disposition !== "block-meaningful") return null;
+    return (
+      `Slice ID drift in ${record.milestoneId}: ${record.reason}. ` +
+      "Runtime will not import disk-only slice IDs into the DB; run explicit recovery/repair after reviewing the directory."
+    );
+  }
+
+  if (record.kind === "completed-milestone-reopened") {
+    return (
+      `Milestone ${record.milestoneId} has completed complete-milestone dispatch history` +
+      ` (${record.completedDispatchAt ?? "time unknown"}) but the DB status is ${record.dbStatus}. ` +
+      "Refusing to plan it again without an explicit reopen or recovery."
+    );
+  }
+
+  return (
+    `Artifact/DB status drift in ${record.milestoneId}` +
+    `${record.sliceId ? `/${record.sliceId}` : ""}` +
+    `${record.taskId ? `/${record.taskId}` : ""}: ${record.reason}. ` +
+    "Runtime will not silently import completion artifacts into DB state; run explicit recovery/repair after review."
+  );
+}
+
 export const diskSliceIdDivergenceHandler: DriftHandler<DiskSliceIdDivergenceDrift> = {
   kind: "disk-slice-id-divergence",
   detect: (state, ctx) =>
@@ -436,6 +466,7 @@ export const diskSliceIdDivergenceHandler: DriftHandler<DiskSliceIdDivergenceDri
       (record): record is DiskSliceIdDivergenceDrift =>
         record.kind === "disk-slice-id-divergence",
     ),
+  blocker: describeArtifactDbDriftBlocker,
   repair: repairArtifactDbDrift,
 };
 
@@ -446,6 +477,7 @@ export const artifactDbStatusDivergenceHandler: DriftHandler<ArtifactDbStatusDiv
       (record): record is ArtifactDbStatusDivergenceDrift =>
         record.kind === "artifact-db-status-divergence",
     ),
+  blocker: describeArtifactDbDriftBlocker,
   repair: repairArtifactDbDrift,
 };
 
@@ -456,5 +488,6 @@ export const completedMilestoneReopenedHandler: DriftHandler<CompletedMilestoneR
       (record): record is CompletedMilestoneReopenedDrift =>
         record.kind === "completed-milestone-reopened",
     ),
+  blocker: describeArtifactDbDriftBlocker,
   repair: repairArtifactDbDrift,
 };

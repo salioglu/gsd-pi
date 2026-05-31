@@ -64,6 +64,12 @@ export interface DriftContext {
 export interface DriftHandler<T extends DriftRecord = DriftRecord> {
   kind: T["kind"];
   detect: (state: GSDState, ctx: DriftContext) => T[] | Promise<T[]>;
+  /**
+   * Return a terminal blocker message for drift that is intentionally
+   * non-repairable in runtime. This lets callers stop cleanly without
+   * classifying the condition as a repair exception.
+   */
+  blocker?: (record: T, ctx: DriftContext) => string | null | Promise<string | null>;
   repair: (record: T, ctx: DriftContext) => Promise<void> | void;
 }
 

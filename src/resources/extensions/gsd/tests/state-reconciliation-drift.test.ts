@@ -231,6 +231,28 @@ test("ADR-017 (#5700): classifyFailure recognizes ReconciliationFailedError", ()
   assert.match(result.remediation, /persistent or repair-failed drift kinds/);
 });
 
+test("ADR-017: terminal drift blockers return blockers instead of repair exceptions", async () => {
+  const record: DriftRecord = { kind: "stale-sketch-flag", mid: "M001", sid: "S02" };
+  const handler: DriftHandler = {
+    kind: "stale-sketch-flag",
+    detect: () => [record],
+    blocker: () => "manual drift review required",
+    repair: () => {
+      throw new Error("repair should not run for terminal blockers");
+    },
+  };
+
+  const result = await reconcileBeforeDispatch("/project", {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+    registry: [handler],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.blockers, ["manual drift review required"]);
+  assert.equal(result.repaired.length, 0);
+});
+
 // ─── #5701: merge-state drift ────────────────────────────────────────────────
 
 function makeGitBase(): string {
@@ -1067,19 +1089,14 @@ test("ADR-017: artifact/DB status divergence fails closed instead of importing c
     "# S01 Summary\n\nAlready done on disk.\n",
   );
 
-  await assert.rejects(
-    () =>
-      reconcileBeforeDispatch(base, {
-        invalidateStateCache: () => {},
-        deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
-      }),
-    (err: unknown) => {
-      assert.ok(err instanceof ReconciliationFailedError);
-      assert.match((err as Error).message, /artifact-db-status-divergence/);
-      assert.equal(getSlice("M001", "S01")?.status, "pending", "DB status remains authoritative");
-      return true;
-    },
-  );
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.blockers.join("\n"), /Artifact\/DB status drift/);
+  assert.equal(getSlice("M001", "S01")?.status, "pending", "DB status remains authoritative");
 });
 
 test("ADR-017: orphan task completion artifact fails closed", async (t) => {
@@ -1100,18 +1117,13 @@ test("ADR-017: orphan task completion artifact fails closed", async (t) => {
     full_content: "# T99 Summary\n\nStale artifact after replan.\n",
   });
 
-  await assert.rejects(
-    () =>
-      reconcileBeforeDispatch(base, {
-        invalidateStateCache: () => {},
-        deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
-      }),
-    (err: unknown) => {
-      assert.ok(err instanceof ReconciliationFailedError);
-      assert.match((err as Error).message, /artifact-db-status-divergence/);
-      return true;
-    },
-  );
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.blockers.join("\n"), /Artifact\/DB status drift/);
 });
 
 test("ADR-017: completed milestone dispatch history blocks accidental re-planning", async (t) => {
@@ -1136,18 +1148,13 @@ test("ADR-017: completed milestone dispatch history blocks accidental re-plannin
       ('trace', 'w1', 1, 'M001', 'complete-milestone', 'M001', 'completed', 1, '2026-05-30T00:00:00.000Z', '2026-05-30T00:01:00.000Z')`,
   ).run();
 
-  await assert.rejects(
-    () =>
-      reconcileBeforeDispatch(base, {
-        invalidateStateCache: () => {},
-        deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
-      }),
-    (err: unknown) => {
-      assert.ok(err instanceof ReconciliationFailedError);
-      assert.match((err as Error).message, /completed-milestone-reopened/);
-      return true;
-    },
-  );
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.blockers.join("\n"), /completed complete-milestone dispatch history/);
 });
 
 test("ADR-017: synthetic parallel-research slice directory is ignored", async (t) => {
