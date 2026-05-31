@@ -275,6 +275,28 @@ describe("workflow MCP tools", () => {
     }
   });
 
+  it("gsd_exec accepts command alias without an explicit runtime", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const tool = server.tools.find((t) => t.name === "gsd_exec");
+      assert.ok(tool, "exec tool should be registered");
+
+      const result = await tool!.handler({
+        projectDir: base,
+        command: "echo mcp-command-alias-defaults-to-bash",
+      });
+
+      const record = result as any;
+      assert.equal(record.isError, false);
+      assert.equal(record.structuredContent.runtime, "bash");
+      assert.match(record.content[0].text as string, /mcp-command-alias-defaults-to-bash/);
+    } finally {
+      cleanup(base);
+    }
+  });
+
   it("gsd_exec returns an MCP error when context mode is disabled", async () => {
     const base = makeTmpBase();
     try {

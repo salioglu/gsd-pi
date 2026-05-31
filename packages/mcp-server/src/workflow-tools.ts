@@ -1529,11 +1529,16 @@ const journalQueryParams = {
 };
 const journalQuerySchema = z.object(journalQueryParams);
 
-const execRuntimeSchema = z.enum(["bash", "node", "python"]);
+const execRuntimeSchema = z.string();
 const execParams = {
   projectDir: projectDirParam,
-  runtime: execRuntimeSchema.describe("Interpreter: bash (-c), node (-e), or python3 (-c)."),
-  script: nonEmptyString("script").describe("Script body. Keep output small; capped stdout/stderr are persisted under .gsd/exec."),
+  runtime: execRuntimeSchema
+    .optional()
+    .describe("Optional interpreter. Defaults to bash. Supported: bash, node, python; sh/shell, js/nodejs, and py/python3 aliases are accepted."),
+  script: z.string().optional().describe("Script body. Keep output small; capped stdout/stderr are persisted under .gsd/exec."),
+  command: z.string().optional().describe("Alias for script; defaults to bash when runtime is omitted."),
+  cmd: z.string().optional().describe("Short alias for script."),
+  code: z.string().optional().describe("Alias for script, useful for node/python snippets."),
   purpose: z.string().optional().describe("Short label recorded in meta.json for later review."),
   timeout_ms: z.number().int().min(1_000).max(600_000).optional().describe("Per-invocation timeout in milliseconds."),
 };
@@ -1542,7 +1547,7 @@ const execSchema = z.object(execParams);
 const execSearchParams = {
   projectDir: projectDirParam,
   query: z.string().optional().describe("Substring matched against id and purpose, case-insensitive."),
-  runtime: execRuntimeSchema.optional().describe("Restrict to one runtime."),
+  runtime: z.enum(["bash", "node", "python"]).optional().describe("Restrict to one runtime."),
   failing_only: z.boolean().optional().describe("Only non-zero exit codes and timeouts."),
   limit: z.number().int().min(1).max(200).optional().describe("Max results (default 20, cap 200)."),
 };
