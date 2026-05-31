@@ -123,12 +123,17 @@ export async function reconcileBeforeDispatch(
 
   if (persistent.length > 0) {
     const blockers: string[] = [];
+    const unblockedPersistent: DriftRecord[] = [];
     for (const record of persistent) {
       const handler = registry.find((h) => h.kind === record.kind);
       const blocker = handler?.blocker ? await handler.blocker(record, finalCtx) : null;
-      if (blocker) blockers.push(blocker);
+      if (blocker) {
+        blockers.push(blocker);
+      } else {
+        unblockedPersistent.push(record);
+      }
     }
-    if (blockers.length > 0) {
+    if (blockers.length > 0 && unblockedPersistent.length === 0) {
       return {
         ok: true,
         stateSnapshot: finalState,

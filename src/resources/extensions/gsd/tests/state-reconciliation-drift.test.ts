@@ -321,6 +321,48 @@ test("ADR-017: terminal drift found after repair cap returns blockers", async ()
   assert.deepEqual(result.blockers, ["manual completed-milestone review required"]);
 });
 
+test("ADR-017: final persistent drift mixed with blockers still fails closed", async () => {
+  const repairDrift: DriftRecord = { kind: "stale-sketch-flag", mid: "M001", sid: "S02" };
+  const terminalDrift: DriftRecord = {
+    kind: "completed-milestone-reopened",
+    milestoneId: "M001",
+    dbStatus: "active",
+  };
+  let repairCount = 0;
+  const repairHandler: DriftHandler = {
+    kind: "stale-sketch-flag",
+    detect: () => [repairDrift],
+    repair: () => {
+      repairCount++;
+    },
+  };
+  const terminalHandler: DriftHandler = {
+    kind: "completed-milestone-reopened",
+    detect: () => (repairCount >= 2 ? [terminalDrift] : []),
+    blocker: () => "manual completed-milestone review required",
+    repair: () => {
+      throw new Error("repair should not run for terminal blockers");
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      reconcileBeforeDispatch("/project", {
+        invalidateStateCache: () => {},
+        deriveState: async () => makeState(),
+        registry: [repairHandler, terminalHandler],
+      }),
+    (err: unknown) => {
+      assert.ok(err instanceof ReconciliationFailedError);
+      assert.deepEqual(err.persistentDrift.map((d) => d.kind).sort(), [
+        "completed-milestone-reopened",
+        "stale-sketch-flag",
+      ]);
+      return true;
+    },
+  );
+});
+
 // ─── #5701: merge-state drift ────────────────────────────────────────────────
 
 function makeGitBase(): string {
