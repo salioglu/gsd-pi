@@ -176,6 +176,19 @@ function isWorkflowAliasTool(toolName: string): boolean {
   return WORKFLOW_ALIAS_TOOL_NAMES.has(canonicalToolName(toolName));
 }
 
+/**
+ * True when any message in the request is driven by a GSD workflow command
+ * (customType starting "gsd-"). Plain interactive chat has none, and is scoped
+ * to the minimal GSD tool surface by default.
+ */
+export function requestHasGsdCustomType(
+  requestCustomMessages: readonly { customType?: string }[] | undefined,
+): boolean {
+  return (requestCustomMessages ?? []).some(
+    (message) => typeof message.customType === "string" && message.customType.startsWith("gsd-"),
+  );
+}
+
 const RUN_UAT_BROWSER_TOOL_NAMES = [
   "browser_navigate",
   "browser_click",
@@ -1386,6 +1399,14 @@ export function registerHooks(
       };
     }
     if (isGeneralGsdToolScopingRequested()) {
+      return { toolNames: buildMinimalGsdToolSet(providerCompatible) };
+    }
+    // Plain interactive chat (no GSD workflow command driving this request)
+    // never needs the full ~50-tool workflow surface — scope it to the minimal
+    // GSD set by default (all non-GSD tools are preserved). Requests carrying a
+    // gsd-* customType keep their existing surface, so no command is stranded.
+    // Set PI_GSD_FULL_TOOLS=1 (handled above) to restore the full surface.
+    if (!requestHasGsdCustomType(event.requestCustomMessages)) {
       return { toolNames: buildMinimalGsdToolSet(providerCompatible) };
     }
     return aliasesDropped ? { toolNames: providerCompatible } : undefined;

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { DISCUSS_TOOLS_ALLOWLIST } from "../constants.ts";
-import { buildMinimalAutoGsdToolSet, buildMinimalGsdToolSet, buildMinimalGsdWorkflowToolSet, buildRequestScopedGsdToolSet, MINIMAL_AUTO_BASE_TOOL_NAMES, MINIMAL_GSD_TOOL_NAMES, restoreGsdWorkflowTools, scopeGsdWorkflowToolsForDispatch } from "../bootstrap/register-hooks.ts";
+import { buildMinimalAutoGsdToolSet, buildMinimalGsdToolSet, buildMinimalGsdWorkflowToolSet, buildRequestScopedGsdToolSet, MINIMAL_AUTO_BASE_TOOL_NAMES, MINIMAL_GSD_TOOL_NAMES, requestHasGsdCustomType, restoreGsdWorkflowTools, scopeGsdWorkflowToolsForDispatch } from "../bootstrap/register-hooks.ts";
 import { applyUnitSkillVisibility } from "../skill-scope.ts";
 
 test("buildMinimalGsdToolSet preserves non-GSD tools and replaces broad GSD surface", () => {
@@ -53,6 +53,17 @@ test("buildMinimalGsdToolSet does not reintroduce provider-filtered GSD tools", 
 test("buildMinimalGsdToolSet always preserves ToolSearch shim", () => {
   const result = buildMinimalGsdToolSet(["bash", "read"]);
   assert.ok(result.includes("ToolSearch"));
+});
+
+test("requestHasGsdCustomType detects GSD-driven requests (drives interactive default scoping)", () => {
+  // Plain interactive chat → no gsd-* customType → scoped to the minimal set.
+  assert.equal(requestHasGsdCustomType(undefined), false);
+  assert.equal(requestHasGsdCustomType([]), false);
+  assert.equal(requestHasGsdCustomType([{ customType: "user" }, {}]), false);
+  // GSD workflow commands carry a gsd-* customType → keep their full surface.
+  assert.equal(requestHasGsdCustomType([{ customType: "gsd-quick-task" }]), true);
+  assert.equal(requestHasGsdCustomType([{}, { customType: "gsd-workflow-template" }]), true);
+  assert.equal(requestHasGsdCustomType([{ customType: "gsd-run" }]), true);
 });
 
 test("buildMinimalAutoGsdToolSet keeps unit-specific completion tools without aliases", () => {
