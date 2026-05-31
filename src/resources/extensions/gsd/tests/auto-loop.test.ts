@@ -4696,7 +4696,7 @@ test("autoLoop pauses on zero-tool-call rate-limit assistant messages instead of
 
     const loopPromise = autoLoop(ctx as any, pi as any, s, deps);
 
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => originalSetTimeout(r, 50));
     resolveAgentEnd(makeEvent([
       {
         role: "assistant",
