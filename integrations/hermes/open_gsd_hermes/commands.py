@@ -13,6 +13,7 @@ from open_gsd_hermes.binding import (
 )
 from open_gsd_hermes.config import GsdConfig
 from open_gsd_hermes.gsd_client import GsdMcpClient
+from open_gsd_hermes.notifications import NotificationService
 from open_gsd_hermes.snapshot import format_snapshot
 from open_gsd_hermes.supervisor import SupervisorContext, SupervisorFsm, SupervisorState
 from open_gsd_hermes.types import BindingContext
@@ -30,6 +31,7 @@ class GsdCommandRouter:
         get_supervisor_ctx: Callable[[], SupervisorContext],
         set_supervisor_ctx: Callable[[SupervisorContext], None],
         get_platform_channel: Callable[[], tuple[str | None, str | None]],
+        notifications: NotificationService | None = None,
     ) -> None:
         self._config = config
         self._client = client
@@ -40,6 +42,7 @@ class GsdCommandRouter:
         self._get_supervisor_ctx = get_supervisor_ctx
         self._set_supervisor_ctx = set_supervisor_ctx
         self._get_platform_channel = get_platform_channel
+        self._notifications = notifications
 
     async def handle(self, args: str = "", **_kwargs: Any) -> str:
         try:
@@ -155,6 +158,9 @@ class GsdCommandRouter:
                 except Exception as e:
                     result = f"Cancel request failed: {e}"
                 else:
+                    if self._notifications is not None:
+                        self._notifications.notify_terminal("cancelled")
+                        ctx.notified_terminal = True
                     result = "Cancel requested."
         finally:
             self._supervisor.stop()

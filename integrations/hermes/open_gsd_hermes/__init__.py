@@ -74,6 +74,7 @@ def register(ctx: PluginContext) -> None:
         get_supervisor_ctx,
         set_supervisor_ctx,
         get_platform_channel,
+        notifications,
     )
 
     ctx.register_hook(

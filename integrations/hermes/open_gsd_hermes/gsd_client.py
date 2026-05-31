@@ -209,6 +209,9 @@ class GsdMcpClient:
                 GsdVersionError,
                 McpProtocolError,
                 json.JSONDecodeError,
+                AttributeError,
+                TypeError,
+                KeyError,
                 OSError,
                 subprocess.TimeoutExpired,
             ):

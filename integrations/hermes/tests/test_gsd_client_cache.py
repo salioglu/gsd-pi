@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 import time
 from unittest.mock import patch
 
@@ -81,6 +83,33 @@ def test_progress_falls_back_to_mcp_when_cli_version_is_unsupported() -> None:
             return_value={"phase": "execute", "nextAction": "from mcp"},
         ) as call_tool:
             progress = client.progress("/tmp/p")
+
+    assert progress.phase == "execute"
+    assert progress.next_action == "from mcp"
+    call_tool.assert_called_once_with(
+        "gsd_progress",
+        {"projectDir": "/tmp/p"},
+        check_version=False,
+    )
+
+
+def test_progress_falls_back_to_mcp_when_cli_json_has_unexpected_shape() -> None:
+    client = GsdMcpClient(GsdConfig())
+    cli_result = subprocess.CompletedProcess(
+        args=["gsd", "read", "progress"],
+        returncode=0,
+        stdout=json.dumps(["unexpected"]),
+        stderr="",
+    )
+
+    with patch.object(client, "ensure_version"):
+        with patch("subprocess.run", return_value=cli_result):
+            with patch.object(
+                client,
+                "_call_tool",
+                return_value={"phase": "execute", "nextAction": "from mcp"},
+            ) as call_tool:
+                progress = client.progress("/tmp/p")
 
     assert progress.phase == "execute"
     assert progress.next_action == "from mcp"

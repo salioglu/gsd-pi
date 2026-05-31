@@ -53,7 +53,7 @@ class MockSupervisor:
         self.calls.append("stop")
 
 
-def build_router(tmp_path, client, supervisor=None, ctx=None):
+def build_router(tmp_path, client, supervisor=None, ctx=None, notifications=None):
     project_dir = tmp_path / "project"
     (project_dir / ".gsd").mkdir(parents=True, exist_ok=True)
     if supervisor is None:
@@ -71,6 +71,7 @@ def build_router(tmp_path, client, supervisor=None, ctx=None):
         lambda: ctx,
         stored.append,
         lambda: (None, None),
+        notifications,
     )
     return router, project_dir, supervisor, ctx, stored
 
@@ -216,6 +217,36 @@ def test_cancel_stops_supervisor_when_mcp_cancel_fails(tmp_path) -> None:
     assert result == "Cancel request failed: sidecar unavailable"
     assert supervisor.calls == ["stop"]
     assert ctx.state == SupervisorState.CANCELLED
+    assert stored == [ctx]
+
+
+def test_cancel_sends_terminal_notification_after_successful_mcp_cancel(tmp_path) -> None:
+    supervisor = MockSupervisor()
+    notifications = MagicMock()
+    client = MagicMock()
+    ctx = SupervisorContext(
+        session_id="s1",
+        state=SupervisorState.RUNNING,
+    )
+    router, project_dir, _supervisor, ctx, stored = build_router(
+        tmp_path,
+        client,
+        supervisor=supervisor,
+        ctx=ctx,
+        notifications=notifications,
+    )
+
+    result = asyncio.run(router._cmd_cancel([]))
+
+    assert result == "Cancel requested."
+    client.cancel.assert_called_once_with(
+        session_id="s1",
+        project_dir=str(project_dir),
+    )
+    notifications.notify_terminal.assert_called_once_with("cancelled")
+    assert supervisor.calls == ["stop"]
+    assert ctx.state == SupervisorState.CANCELLED
+    assert ctx.notified_terminal
     assert stored == [ctx]
 
 
