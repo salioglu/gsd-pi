@@ -108,6 +108,34 @@ test("executeSummarySave persists artifact and returns computed path", async () 
   }
 });
 
+test("executeSummarySave mirrors milestone artifacts into the active worktree projection", async () => {
+  const base = makeTmpBase();
+  const worktree = join(base, ".gsd", "worktrees", "M001");
+  try {
+    mkdirSync(join(worktree, ".gsd"), { recursive: true });
+    writeFileSync(join(worktree, ".git"), "gitdir: ../../../.git/worktrees/M001\n");
+    openTestDb(base);
+
+    const result = await inProjectDir(worktree, () => executeSummarySave({
+      milestone_id: "M001",
+      slice_id: "S02",
+      artifact_type: "RESEARCH",
+      content: "# S02 Research\n\ncanonical and worktree",
+    }, worktree));
+
+    assert.equal(result.details.operation, "save_summary");
+    const relPath = "milestones/M001/slices/S02/S02-RESEARCH.md";
+    const projectPath = join(base, ".gsd", relPath);
+    const worktreePath = join(worktree, ".gsd", relPath);
+    assert.equal(existsSync(projectPath), true, "canonical artifact should be written");
+    assert.equal(existsSync(worktreePath), true, "active worktree projection should be mirrored");
+    assert.match(readFileSync(worktreePath, "utf-8"), /S02 Research/);
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
 test("executeTaskComplete coerces string verificationEvidence entries", async () => {
   const base = makeTmpBase();
   try {
