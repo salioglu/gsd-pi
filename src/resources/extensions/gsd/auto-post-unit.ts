@@ -2061,6 +2061,11 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
           "info",
         );
 
+        await s.orchestration?.retryActiveUnit({
+          unitType: trigger.unitType,
+          unitId: trigger.unitId,
+        });
+
         // ── State reset: undo the completion so deriveState re-derives the unit ──
         try {
           const { milestone: mid, slice: sid, task: tid } = parseUnitId(trigger.unitId);
