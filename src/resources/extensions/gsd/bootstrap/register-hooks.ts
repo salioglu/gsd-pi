@@ -262,7 +262,7 @@ function isGsdManagedTool(name: string): boolean {
  *
  * MCP-scoped names follow `mcp__<namespace>__<toolname>`.
  * Example: if `requestedToolNames` contains `gsd_exec` and `activeToolNames` contains
- * `mcp__gsd-workflow__gsd_exec`, the MCP-scoped active name is included in the result.
+ * `mcp__custom-workflow__gsd_exec`, the MCP-scoped active name is included in the result.
  *
  * Returns deduplicated active tool names that satisfy the requested base names.
  */

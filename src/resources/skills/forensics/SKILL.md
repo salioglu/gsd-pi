@@ -126,7 +126,7 @@ Format the output as a GitHub-issue-ready report:
 <high / medium / low> — <what would change this confidence>
 ```
 
-Offer to file this as a GitHub issue via `mcp__github__issue_write` — explicit confirmation required per the outward-action rule. Also save a copy to `.gsd/forensics/<slug>.md` for future reference.
+Offer to file this as a GitHub issue via the active GitHub issue-write tool if one is available, using its exact active tool name — explicit confirmation required per the outward-action rule. Also save a copy to `.gsd/forensics/<slug>.md` for future reference.
 
 </process>
 

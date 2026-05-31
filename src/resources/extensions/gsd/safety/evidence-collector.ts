@@ -57,10 +57,9 @@ const EXECUTION_TOOL_NAMES = new Set([
   "functions.exec_command",
   "gsd_exec",
   "gsd_exec_search",
-  "mcp__gsd-workflow__gsd_exec",
-  "mcp__gsd-workflow__gsd_exec_search",
   "powershell",
 ]);
+const MCP_EXECUTION_TOOL_RE = /^mcp__.+__gsd_exec(?:_search)?$/;
 
 // ─── Module State ───────────────────────────────────────────────────────────
 
@@ -93,7 +92,8 @@ export function getFilePaths(): string[] {
 /** True when a tool name represents a shell/command execution surface. */
 export function isExecutionToolName(name: unknown): boolean {
   if (typeof name !== "string") return false;
-  return EXECUTION_TOOL_NAMES.has(name.trim().toLowerCase());
+  const normalized = name.trim().toLowerCase();
+  return EXECUTION_TOOL_NAMES.has(normalized) || MCP_EXECUTION_TOOL_RE.test(normalized);
 }
 
 // ─── Persistence (Bug #4385 — evidence must survive session restarts) ────────

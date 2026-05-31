@@ -31,7 +31,7 @@ Typical invocation points:
 1. Read `M###-CONTEXT.md` for the active milestone — the brief is the source of truth for scope.
 2. Read `M###-ROADMAP.md` if one exists — you may be refining rather than creating from scratch.
 3. Read `src/resources/extensions/gsd/templates/roadmap.md` for the exact slice format. The parser depends on it.
-4. If the plan came from a GitHub issue (user passed a URL or number), fetch it with `mcp__github__issue_read`.
+4. If the plan came from a GitHub issue (user passed a URL or number), fetch it with the active GitHub issue-read tool if one is available; use the exact tool name from the active tool list.
 
 ## Step 2: Explore the codebase briefly
 
@@ -84,7 +84,7 @@ Use `write` to the path `.gsd/milestones/<MID>/<MID>-ROADMAP.md`. Do not edit ch
 
 ## Step 6: Optionally file as GitHub issues
 
-If the user explicitly asks (and only if — outward actions need confirmation), create one GitHub issue per slice with `mcp__github__issue_write`. Create in dependency order so "Blocked by" references can cite real issue numbers.
+If the user explicitly asks (and only if — outward actions need confirmation), create one GitHub issue per slice with the active GitHub issue-write tool if one is available; use the exact tool name from the active tool list. Create in dependency order so "Blocked by" references can cite real issue numbers.
 
 ### Issue body template
 
