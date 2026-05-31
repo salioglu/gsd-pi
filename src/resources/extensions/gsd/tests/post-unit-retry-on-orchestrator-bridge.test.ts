@@ -17,6 +17,7 @@ post_unit_hooks:
   - name: review-arbiter
     after:
       - execute-task
+    prompt: Review {taskId}
     agent: arbiter
     artifact: REVIEW-DEBATE.md
     retry_on: NEEDS-REWORK.md
@@ -46,7 +47,7 @@ test("post-unit retry_on marks trigger unit as retry in orchestrator before redi
     const retryPath = resolveHookArtifactPath(base, "M001/S01/T01", "NEEDS-REWORK.md");
     writeFileSync(retryPath, "rework requested", "utf-8");
 
-    const retryActiveUnit = mock.fn(async () => {});
+    const retryActiveUnit = mock.fn(async (_unit: { unitType: string; unitId: string }) => {});
     const s = new AutoSession();
     s.basePath = base;
     s.active = true;

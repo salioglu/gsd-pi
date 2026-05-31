@@ -592,6 +592,27 @@ test("retryActiveUnit clears in-flight idempotency without marking the unit fina
   assert.equal(prepareCalls, 2, "retry should intentionally redispatch the same unit");
 });
 
+test("retryActiveUnit clears finalized same-unit guard for post-hook retries", async () => {
+  const { deps, calls } = makeDeps();
+  const orchestrator = createAutoOrchestrator(deps);
+
+  const first = await orchestrator.advance();
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+
+  await orchestrator.completeActiveUnit(first.unit);
+  await orchestrator.retryActiveUnit(first.unit);
+  const second = await orchestrator.advance();
+
+  assert.equal(second.kind, "advanced");
+  if (second.kind !== "advanced") throw new Error("expected retry advance");
+  assert.deepEqual(second.unit, first.unit);
+  assert.ok(calls.includes("journal:unit-finalized"));
+  assert.ok(calls.includes("journal:unit-retry"));
+  const prepareCalls = calls.filter((c) => c === "worktree.prepare").length;
+  assert.equal(prepareCalls, 2, "post-hook retry should redispatch the finalized unit");
+});
+
 test("resume() re-enters running phase", async () => {
   const { deps } = makeDeps();
   const orchestrator = createAutoOrchestrator(deps);
