@@ -116,6 +116,15 @@ function isParallelResearchUnit(unitType: string, unitId: string): boolean {
   return unitType === "research-slice" && unitId.endsWith("/parallel-research");
 }
 
+function shouldAttemptPlanRegeneration(unitType: string, unitId: string): boolean {
+  if (unitType === "triage-captures" || unitType === "quick-task") return false;
+  if (isParallelResearchUnit(unitType, unitId)) return false;
+  const { milestone: mid, slice: sid } = parseUnitId(unitId);
+  return !!mid && !!sid;
+}
+
+export const _shouldAttemptPlanRegenerationForTest = shouldAttemptPlanRegeneration;
+
 export function maybeWriteParallelResearchCostSpikeBlocker(
   unitType: string,
   unitId: string,
@@ -1638,7 +1647,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       if (!triggerArtifactVerified) {
         try {
           const { milestone: mid, slice: sid } = parseUnitId(s.currentUnit.id);
-          if (mid && sid && !isParallelResearchUnit(s.currentUnit.type, s.currentUnit.id)) {
+          if (mid && sid && shouldAttemptPlanRegeneration(s.currentUnit.type, s.currentUnit.id)) {
             // Phase C: write to the canonical project root (#5236 scope)
             // so non-symlinked worktrees no longer maintain a separate
             // local .gsd/ projection. copyPlanningArtifacts has been

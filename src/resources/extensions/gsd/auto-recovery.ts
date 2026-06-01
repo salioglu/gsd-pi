@@ -53,6 +53,7 @@ import { getProjectResearchStatus } from "./project-research-policy.js";
 import { isGsdWorktreePath } from "./worktree-root.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
+import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 
 // Re-export so existing consumers of auto-recovery.ts keep working.
 export { resolveExpectedArtifactPath, diagnoseExpectedArtifact };
@@ -305,6 +306,21 @@ export function verifyExpectedArtifact(
     return hasCapturedWorkflowPrefs(base);
   }
 
+  if (unitType === "triage-captures") {
+    const pending = loadPendingCaptures(base);
+    if (pending.length === 0) return true;
+    logWarning("recovery", `verify-fail triage-captures ${unitId}: ${pending.length} pending capture(s) remain in CAPTURES.md`);
+    return false;
+  }
+
+  if (unitType === "quick-task") {
+    const { slice: captureId } = parseUnitId(unitId);
+    const capture = captureId ? loadAllCaptures(base).find((entry) => entry.id === captureId) : undefined;
+    if (capture?.executed === true) return true;
+    logWarning("recovery", `verify-fail quick-task ${unitId}: capture ${captureId ?? "(missing capture id)"} not found or not marked executed`);
+    return false;
+  }
+
   if (unitType === "discuss-project") {
     const projectPath = resolveExpectedArtifactPath(unitType, unitId, base);
     return !!projectPath && existsSync(projectPath) && validateArtifact(projectPath, "project").ok;
@@ -445,10 +461,10 @@ export function verifyExpectedArtifact(
 
   const artifactBase = resolveArtifactVerificationBase(unitId, base);
   const absPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
-  // For unit types with no verifiable artifact (null path), the parent directory
-  // is missing on disk — treat as stale completion state so the key gets evicted (#313).
+  // For unit types with no registered artifact contract (null path), treat the
+  // completion state as stale so the key gets evicted (#313).
   if (!absPath) {
-    logWarning("recovery", `verify-fail ${unitType} ${unitId}: resolveExpectedArtifactPath returned null (parent dir missing)`);
+    logWarning("recovery", `verify-fail ${unitType} ${unitId}: resolveExpectedArtifactPath returned null (no artifact contract registered for this unit type)`);
     return false;
   }
   if (!existsSync(absPath)) {
