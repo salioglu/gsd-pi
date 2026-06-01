@@ -2273,6 +2273,7 @@ export async function runUnitPhase(
       activeTools: typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [],
     },
   );
+  const workflowMcpPrepModel = s.currentUnitModel;
   if (compatibilityError) {
     s.currentUnitRouting = prevUnitRouting;
     s.currentUnitModel = prevUnitModel;
@@ -2291,7 +2292,7 @@ export async function runUnitPhase(
       }
     }
 
-    const workflowMcpPrep = prepareWorkflowMcpForProject(ctx, s.basePath);
+    const workflowMcpPrep = prepareWorkflowMcpForProject(ctx, s.basePath, workflowMcpPrepModel);
     if (workflowMcpPrep && workflowMcpPrep.status !== "unchanged") {
       const pauseMsg =
         "GSD workflow MCP config has been written. Restart Claude Code (or reload MCP servers), then run /gsd auto to continue.";
