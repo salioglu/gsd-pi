@@ -36,6 +36,7 @@ import { resolveSkillManifest } from "../skill-manifest.js";
 import { applyUnitSkillVisibility, unitHasSkillManifest } from "../skill-scope.js";
 import { getGuidedUnitContext } from "../guided-unit-context.js";
 import { registerPlanMilestoneSchemaRecovery } from "./plan-milestone-schema-recovery.js";
+import { AUTO_UNIT_SCOPED_TOOLS, isWorkflowAliasTool } from "../auto-unit-tool-scope.js";
 
 let approvalQuestionAbortInFlight = false;
 
@@ -147,38 +148,6 @@ function withPreservedShimTools(toolNames: readonly string[]): string[] {
   return [...new Set([...toolNames, ...ALWAYS_PRESERVED_SHIM_TOOL_NAMES])];
 }
 
-/**
- * Backwards-compatibility workflow tool aliases (each forwards to a canonical
- * twin). Mirrors WORKFLOW_TOOL_CONTRACTS[].aliases in @opengsd/contracts. These
- * stay registered/callable but are dropped from the model-advertised tool set
- * (~5.6K tokens/turn of duplicate schemas) — the canonical name is always
- * advertised, and prompts/scoped tool sets already use canonical names.
- */
-const WORKFLOW_ALIAS_TOOL_NAMES = new Set<string>([
-  "gsd_save_decision",
-  "gsd_update_requirement",
-  "gsd_save_requirement",
-  "gsd_save_summary",
-  "gsd_generate_milestone_id",
-  "gsd_milestone_plan",
-  "gsd_slice_plan",
-  "gsd_task_plan",
-  "gsd_slice_replan",
-  "gsd_complete_slice",
-  "gsd_milestone_complete",
-  "gsd_milestone_validate",
-  "gsd_roadmap_reassess",
-  "gsd_complete_task",
-  "gsd_reopen_task",
-  "gsd_reopen_slice",
-  "gsd_reopen_milestone",
-]);
-
-/** True when a (possibly mcp-scoped) tool name is a workflow alias. */
-function isWorkflowAliasTool(toolName: string): boolean {
-  return WORKFLOW_ALIAS_TOOL_NAMES.has(canonicalToolName(toolName));
-}
-
 /** True for the browser automation tools (browser_navigate, browser_click, ...). */
 function isBrowserTool(toolName: string): boolean {
   return canonicalToolName(toolName).startsWith("browser_");
@@ -196,60 +165,6 @@ export function requestHasGsdCustomType(
     (message) => typeof message.customType === "string" && message.customType.startsWith("gsd-"),
   );
 }
-
-const RUN_UAT_BROWSER_TOOL_NAMES = [
-  "browser_navigate",
-  "browser_click",
-  "browser_type",
-  "browser_fill_form",
-  "browser_click_ref",
-  "browser_fill_ref",
-  "browser_wait_for",
-  "browser_assert",
-  "browser_verify",
-  "browser_screenshot",
-  "browser_snapshot_refs",
-  "browser_find",
-  "browser_get_console_logs",
-  "browser_get_network_logs",
-  "browser_evaluate",
-  "browser_reload",
-  "browser_batch",
-  "browser_act",
-] as const;
-
-const AUTO_UNIT_SCOPED_TOOLS: Record<string, readonly string[]> = {
-  "research-milestone": ["gsd_summary_save", "gsd_decision_save"],
-  "plan-milestone": ["gsd_plan_milestone", "gsd_decision_save", "gsd_requirement_update"],
-  "discuss-milestone": [
-    "gsd_summary_save",
-    "gsd_decision_save",
-    "gsd_requirement_save",
-    "gsd_requirement_update",
-    "gsd_plan_milestone",
-    "gsd_milestone_generate_id",
-  ],
-  "discuss-slice": ["gsd_summary_save", "gsd_decision_save"],
-  "validate-milestone": ["gsd_validate_milestone", "gsd_reassess_roadmap", "subagent"],
-  "complete-milestone": ["gsd_complete_milestone", "subagent"],
-  "research-slice": ["gsd_summary_save", "gsd_decision_save"],
-  "plan-slice": ["gsd_plan_slice", "gsd_plan_task", "gsd_decision_save"],
-  "refine-slice": ["gsd_plan_slice", "gsd_plan_task", "gsd_decision_save"],
-  "replan-slice": ["gsd_replan_slice", "gsd_plan_task", "gsd_decision_save"],
-  "complete-slice": ["gsd_slice_complete", "gsd_task_reopen", "gsd_replan_slice", "gsd_decision_save", "gsd_requirement_update", "subagent"],
-  "reassess-roadmap": ["gsd_reassess_roadmap"],
-  "execute-task": ["gsd_task_complete", "gsd_decision_save"],
-  "execute-task-simple": ["gsd_task_complete", "gsd_decision_save"],
-  "reactive-execute": ["gsd_task_complete", "gsd_decision_save"],
-  "run-uat": ["gsd_summary_save", ...RUN_UAT_BROWSER_TOOL_NAMES],
-  "gate-evaluate": ["gsd_save_gate_result"],
-  "rewrite-docs": ["gsd_summary_save", "gsd_decision_save"],
-  "workflow-preferences": ["gsd_summary_save"],
-  "discuss-project": ["gsd_summary_save", "gsd_decision_save", "gsd_requirement_save"],
-  "discuss-requirements": ["gsd_requirement_save", "gsd_summary_save"],
-  "research-decision": ["gsd_summary_save"],
-  "research-project": ["gsd_summary_save", "gsd_decision_save"],
-};
 
 const WORKFLOW_GSD_TOOL_NAMES = [
   ...MINIMAL_GSD_TOOL_NAMES,
@@ -1035,29 +950,29 @@ export function registerHooks(
     const activeUnitType = dash.currentUnit?.type ?? guidedUnit?.unitType;
     if (activeUnitType) {
       const manifest = resolveManifest(activeUnitType);
-      if (manifest) {
-        let planningInput = "";
-        let agentClasses: string[] | undefined;
-        if (isToolCallEventType("write", event)) {
-          planningInput = event.input.path;
-        } else if (isToolCallEventType("edit", event)) {
-          planningInput = event.input.path;
-        } else if (isToolCallEventType("bash", event)) {
-          planningInput = event.input.command;
-        } else if (event.toolName === "subagent" || event.toolName === "task") {
-          // Subagent inputs use { agent }, { tasks: [{ agent }] }, or { chain: [{ agent }] }.
-          agentClasses = extractSubagentAgentClasses((event as { input?: unknown }).input);
-        }
-        const planningGuard = shouldBlockPlanningUnit(
-          event.toolName,
-          planningInput,
-          dash.basePath || guidedUnit?.basePath || discussionBasePath,
-          activeUnitType,
-          manifest.tools,
-          agentClasses,
-        );
-        if (planningGuard.block) return planningGuard;
+      let planningInput = "";
+      let agentClasses: string[] | undefined;
+      if (isToolCallEventType("write", event)) {
+        planningInput = event.input.path;
+      } else if (isToolCallEventType("edit", event)) {
+        planningInput = event.input.path;
+      } else if (isToolCallEventType("bash", event)) {
+        planningInput = event.input.command;
+      } else if (event.toolName === "subagent" || event.toolName === "task") {
+        // Subagent inputs use { agent }, { tasks: [{ agent }] }, or { chain: [{ agent }] }.
+        agentClasses = extractSubagentAgentClasses((event as { input?: unknown }).input);
       }
+      const planningGuard = shouldBlockPlanningUnit(
+        event.toolName,
+        planningInput,
+        dash.basePath || guidedUnit?.basePath || discussionBasePath,
+        activeUnitType,
+        manifest?.tools,
+        agentClasses,
+        (event as { input?: unknown }).input,
+        dash.currentUnit?.id,
+      );
+      if (planningGuard.block) return planningGuard;
     }
 
     // ── Worktree-isolation write gate (#5199) ────────────────────────────

@@ -44,6 +44,7 @@ import { logError, logWarning } from "../workflow-logger.js";
 import { invalidateStateCache } from "../state.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { parseProject } from "../schemas/parsers.js";
+import { getAutoRuntimeSnapshot } from "../auto-runtime-state.js";
 
 export const SUPPORTED_SUMMARY_ARTIFACT_TYPES = [
   "SUMMARY",
@@ -74,6 +75,19 @@ export interface ToolExecutionResult {
   content: Array<{ type: "text"; text: string }>;
   details: Record<string, unknown>;
   isError?: boolean;
+}
+
+function blockIfWrongAutoUnit(requiredUnitType: string, operation: string): ToolExecutionResult | null {
+  const snapshot = getAutoRuntimeSnapshot();
+  if (!snapshot.active || !snapshot.currentUnit) return null;
+  if (snapshot.currentUnit.type === requiredUnitType) return null;
+
+  const error = `HARD BLOCK: ${operation} may only run from ${requiredUnitType}; active unit is ${snapshot.currentUnit.type}. The orchestrator owns phase transitions.`;
+  return {
+    content: [{ type: "text", text: error }],
+    details: { operation, error },
+    isError: true,
+  };
 }
 
 export interface SummarySaveParams {
@@ -587,6 +601,9 @@ export async function executeSliceComplete(
   params: SliceCompleteExecutorParams,
   basePath: string = process.cwd(),
 ): Promise<ToolExecutionResult> {
+  const unitGuard = blockIfWrongAutoUnit("complete-slice", "complete_slice");
+  if (unitGuard) return unitGuard;
+
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
     return {
@@ -699,6 +716,9 @@ export async function executeCompleteMilestone(
   params: CompleteMilestoneExecutorParams,
   basePath: string = process.cwd(),
 ): Promise<ToolExecutionResult> {
+  const unitGuard = blockIfWrongAutoUnit("complete-milestone", "complete_milestone");
+  if (unitGuard) return unitGuard;
+
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
     return {
@@ -746,6 +766,9 @@ export async function executeValidateMilestone(
   basePath: string = process.cwd(),
   opts?: ValidateMilestoneOptions,
 ): Promise<ToolExecutionResult> {
+  const unitGuard = blockIfWrongAutoUnit("validate-milestone", "validate_milestone");
+  if (unitGuard) return unitGuard;
+
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
     return {
