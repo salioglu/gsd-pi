@@ -12,6 +12,7 @@ import {
 	makeAbortedMessage,
 	mergePendingToolCalls,
 	buildFinalAssistantContent,
+	handleClaudeCodePartialStreamEvent,
 	resolveClaudePermissionMode,
 	buildPromptFromContext,
 	buildSdkQueryPrompt,
@@ -156,6 +157,40 @@ describe("stream-adapter — result error text (#3776)", () => {
 		});
 
 		assert.equal(message, "claude_code_request_failed");
+	});
+});
+
+describe("stream-adapter — Claude Code internal sub-turns (#337)", () => {
+	test("repeated SDK message_start events keep one growing partial message", () => {
+		let builder: Parameters<typeof handleClaudeCodePartialStreamEvent>[0] = null;
+		const contentLengths: number[] = [];
+
+		for (const event of [
+			{ type: "message_start", message: { model: "claude-opus-4-8" } },
+			{ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+			{ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "First internal turn." } },
+			{ type: "content_block_stop", index: 0 },
+			{ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } },
+			{ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Still same SDK message." } },
+			{ type: "content_block_stop", index: 1 },
+			{ type: "message_start", message: { model: "claude-opus-4-8" } },
+			{ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+			{ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Second internal turn." } },
+			{ type: "content_block_stop", index: 0 },
+		]) {
+			const result = handleClaudeCodePartialStreamEvent(builder, event as any, "claude-opus-4-8");
+			builder = result.builder;
+			if (result.assistantEvent && "partial" in result.assistantEvent) {
+				contentLengths.push(result.assistantEvent.partial.content.length);
+			}
+		}
+
+		assert.ok(builder);
+		assert.deepEqual(
+			builder.message.content.map((block: any) => block.text),
+			["First internal turn.", "Still same SDK message.", "Second internal turn."],
+		);
+		assert.deepEqual(contentLengths, [1, 1, 1, 2, 2, 2, 3, 3, 3]);
 	});
 });
 

@@ -33,6 +33,7 @@ import { loadProjectGSDPreferences } from "../gsd/preferences.js";
 import { discoverBrowserMcpServerName, discoverMcpServerNames, discoverWorkflowMcpServerName, computeMcpDisallowedTools } from "../gsd/mcp-filter.js";
 import { showInterviewRound, type Question, type RoundResult } from "../shared/tui.js";
 import type {
+	BetaRawMessageStreamEvent,
 	SDKAssistantMessage,
 	SDKMessage,
 	SDKPartialAssistantMessage,
@@ -1872,6 +1873,25 @@ export function mergePendingToolCalls(
 	return intermediate;
 }
 
+export function handleClaudeCodePartialStreamEvent(
+	builder: PartialMessageBuilder | null,
+	event: BetaRawMessageStreamEvent,
+	modelId: string,
+): { builder: PartialMessageBuilder | null; assistantEvent: AssistantMessageEvent | null } {
+	if (event.type === "message_start") {
+		// Claude Code can emit repeated SDK message_start events inside one
+		// logical assistant response. Keep appending until a synthetic user
+		// tool-result boundary explicitly clears the builder.
+		return {
+			builder: builder ?? new PartialMessageBuilder((event as any).message?.model ?? modelId),
+			assistantEvent: null,
+		};
+	}
+
+	if (!builder) return { builder, assistantEvent: null };
+	return { builder, assistantEvent: builder.handleEvent(event) };
+}
+
 // ---------------------------------------------------------------------------
 // streamSimple implementation
 // ---------------------------------------------------------------------------
@@ -2008,32 +2028,24 @@ async function pumpSdkMessages(
 
 					const event = partial.event;
 
-					// New assistant turn starts with message_start
-					if (event.type === "message_start") {
-						builder = new PartialMessageBuilder(
-							(event as any).message?.model ?? modelId,
-						);
-						break;
-					}
-
-					if (!builder) break;
-
-						const assistantEvent = builder.handleEvent(event);
-						if (assistantEvent) {
-							stream.push(assistantEvent);
-							if (assistantEvent.type === "toolcall_start") {
-								const toolBlock = assistantEvent.partial.content[assistantEvent.contentIndex];
-								if (toolBlock?.type === "toolCall") {
-									try {
-										await onExternalToolCall?.(toolBlock);
-									} catch (error) {
-										console.warn("[claude-code] onExternalToolCall callback failed:", error);
-									}
+					const result = handleClaudeCodePartialStreamEvent(builder, event, modelId);
+					builder = result.builder;
+					const assistantEvent = result.assistantEvent;
+					if (assistantEvent) {
+						stream.push(assistantEvent);
+						if (assistantEvent.type === "toolcall_start") {
+							const toolBlock = assistantEvent.partial.content[assistantEvent.contentIndex];
+							if (toolBlock?.type === "toolCall") {
+								try {
+									await onExternalToolCall?.(toolBlock);
+								} catch (error) {
+									console.warn("[claude-code] onExternalToolCall callback failed:", error);
 								}
 							}
 						}
-						break;
 					}
+					break;
+				}
 
 				// -- Complete assistant message (non-streaming fallback) --
 				case "assistant": {
