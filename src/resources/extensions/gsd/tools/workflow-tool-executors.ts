@@ -38,7 +38,7 @@ import type { ReopenTaskParams } from "./reopen-task.js";
 import { handleReopenTask } from "./reopen-task.js";
 import type { ReassessRoadmapParams } from "./reassess-roadmap.js";
 import { handleReassessRoadmap } from "./reassess-roadmap.js";
-import type { ValidateMilestoneParams } from "./validate-milestone.js";
+import type { ValidateMilestoneOptions, ValidateMilestoneParams } from "./validate-milestone.js";
 import { handleValidateMilestone } from "./validate-milestone.js";
 import { logError, logWarning } from "../workflow-logger.js";
 import { invalidateStateCache } from "../state.js";
@@ -744,6 +744,7 @@ export async function executeCompleteMilestone(
 export async function executeValidateMilestone(
   params: ValidateMilestoneExecutorParams,
   basePath: string = process.cwd(),
+  opts?: ValidateMilestoneOptions,
 ): Promise<ToolExecutionResult> {
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
@@ -754,7 +755,7 @@ export async function executeValidateMilestone(
       };
   }
   try {
-    const result = await handleValidateMilestone(params, basePath);
+    const result = await handleValidateMilestone(params, basePath, opts);
     if ("error" in result) {
       return {
         content: [{ type: "text", text: `Error validating milestone: ${result.error}` }],
