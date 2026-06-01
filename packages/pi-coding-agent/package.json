@@ -9,8 +9,8 @@
     "name": "pi-coding-agent"
   },
   "piConfig": {
-    "name": "pi",
-    "configDir": ".pi"
+    "name": "gsd",
+    "configDir": ".gsd"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
