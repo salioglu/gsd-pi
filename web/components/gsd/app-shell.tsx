@@ -281,14 +281,14 @@ function WorkspaceChrome() {
       <div className="flex h-dvh flex-col items-center justify-center gap-6 bg-background p-8 text-center">
         <Image
           src="/logo-black.svg"
-          alt="GSD"
+          alt="GSD-Pi Web"
           width={57}
           height={16}
           className="shrink-0 h-4 w-auto dark:hidden"
         />
         <Image
           src="/logo-white.svg"
-          alt="GSD"
+          alt="GSD-Pi Web"
           width={57}
           height={16}
           className="shrink-0 h-4 w-auto hidden dark:block"
@@ -336,14 +336,14 @@ function WorkspaceChrome() {
           <div className="flex items-center gap-2">
             <Image
               src="/logo-black.svg"
-              alt="GSD"
+              alt="GSD-Pi Web"
               width={57}
               height={16}
               className="shrink-0 h-4 w-auto dark:hidden"
             />
             <Image
               src="/logo-white.svg"
-              alt="GSD"
+              alt="GSD-Pi Web"
               width={57}
               height={16}
               className="shrink-0 h-4 w-auto hidden dark:block"

@@ -1117,14 +1117,14 @@ export function ProjectSelectionGate() {
           <div className="flex flex-col items-center text-center mb-10">
             <Image
               src="/logo-black.svg"
-              alt="GSD"
+              alt="GSD-Pi Web"
               width={100}
               height={28}
               className="h-7 w-auto dark:hidden"
             />
             <Image
               src="/logo-white.svg"
-              alt="GSD"
+              alt="GSD-Pi Web"
               width={100}
               height={28}
               className="h-7 w-auto hidden dark:block"
