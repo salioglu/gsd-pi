@@ -1828,8 +1828,6 @@ export function getProjectBridgeServiceForCwd(projectCwd: string): BridgeService
   const deps = getBridgeDeps();
   const service = new BridgeService(config, deps);
   projectBridgeRegistry.set(resolvedPath, service);
-  // Ensure bridges (and their child processes) are reclaimed on shutdown.
-  installBridgeShutdownHooks();
   return service;
 }
 
@@ -1847,37 +1845,28 @@ export async function disposeProjectBridge(projectCwd: string): Promise<void> {
 }
 
 /**
- * Dispose every registered project bridge (and its RPC child process) and clear
- * the registry. Wire this into the web server's shutdown path so per-project
- * bridges and their child processes are reclaimed instead of leaking for the
- * process lifetime. Previously only the test reset path disposed bridges.
+ * Dispose every registered project bridge (and its RPC child process) so they
+ * are reclaimed instead of leaking for the process lifetime. Previously only the
+ * test reset path disposed bridges; the web server's shutdown gate
+ * (`web/lib/shutdown-gate.ts`) now calls this on its exit paths.
+ *
+ * Each entry is removed right before it is disposed (rather than clearing the
+ * whole registry up front) so a concurrent `getProjectBridgeServiceForCwd`
+ * cannot observe a half-cleared registry and create a duplicate bridge for a
+ * path that has not started disposing yet.
  */
 export async function disposeAllProjectBridges(): Promise<void> {
-  const disposePromises: Promise<void>[] = [];
-  for (const service of projectBridgeRegistry.values()) {
-    disposePromises.push(service.dispose().catch(() => { /* swallow */ }));
-  }
-  projectBridgeRegistry.clear();
-  await Promise.all(disposePromises);
-}
-
-let bridgeShutdownHooksInstalled = false;
-
-/**
- * Install one-shot process-shutdown hooks that dispose all project bridges.
- * Idempotent — safe to call from multiple web entrypoints. Hooks are registered
- * with `process.once` so they don't accumulate across calls.
- */
-export function installBridgeShutdownHooks(): void {
-  if (bridgeShutdownHooksInstalled) return;
-  bridgeShutdownHooksInstalled = true;
-
-  const dispose = () => {
-    void disposeAllProjectBridges();
-  };
-  process.once("exit", dispose);
-  process.once("SIGINT", dispose);
-  process.once("SIGTERM", dispose);
+  const entries = [...projectBridgeRegistry.entries()];
+  await Promise.all(
+    entries.map(async ([path, service]) => {
+      // Only remove if this is still the registered instance — guards against a
+      // concurrent restart that replaced it with a fresh bridge.
+      if (projectBridgeRegistry.get(path) === service) {
+        projectBridgeRegistry.delete(path);
+      }
+      await service.dispose().catch(() => { /* swallow */ });
+    }),
+  );
 }
 
 /**
