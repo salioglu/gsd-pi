@@ -53,6 +53,8 @@ When `heavy-code-changed=true`, CI runs the Linux build and test stack in one jo
 2. `build` — compiled unit tests, package tests, integration tests, and e2e smoke
 3. `build` — Docker e2e when `docker-changed=true`
 
+Native package tests are skipped in the main Linux package-test step unless native/portability paths changed; otherwise a full Rust native rebuild can dominate unrelated CI runs.
+
 Local parity: **`npm run verify:merge`** (runs the same npm scripts sequentially, including `verify:extension-coverage`).
 
 `verify:fast` also runs:

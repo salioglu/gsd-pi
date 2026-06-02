@@ -39,7 +39,7 @@ const CI_PR_BLOCKING_MAP = [
       'verify:workspace-coverage',
       'test:compile',
       'test:unit:compiled',
-      'test:packages:compiled',
+      'test:packages:compiled (native skipped unless portability-changed)',
       'playwright install chromium',
       'test:integration',
       'test:e2e (GSD_SMOKE_BINARY=dist/loader.js)',

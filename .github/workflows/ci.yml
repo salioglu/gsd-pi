@@ -172,6 +172,8 @@ jobs:
         run: pnpm run test:unit:compiled
 
       - name: Run package tests
+        env:
+          GSD_SKIP_NATIVE_PACKAGE_TESTS: ${{ needs.fast-gates.outputs.portability-changed == 'true' && '0' || '1' }}
         run: pnpm run test:packages:compiled
 
       - name: Install Playwright Chromium
