@@ -321,6 +321,9 @@ test("headless bootstrap checks stranded work before recovered-complete shortcut
     const messages = notifications.map((entry) => entry.message).join("\n");
     assert.equal(ready, false);
     assert.match(messages, /Stranded work for M002 blocks auto-mode/);
+    assert.match(messages, /\/gsd auto M002/);
+    assert.match(messages, /\/gsd park M002 "reason"/);
+    assert.match(messages, /\/gsd rethink/);
     assert.doesNotMatch(messages, /all milestones complete/);
   } finally {
     if (previousHeadless === undefined) {
@@ -409,6 +412,9 @@ test("bootstrap blocks active stranded recovery when another open milestone also
     assert.equal(ready, false);
     assert.deepEqual(adoptCalls, []);
     assert.match(messages, /Stranded work for M002 blocks auto-mode before M001/);
+    assert.match(messages, /\/gsd auto M002/);
+    assert.match(messages, /\/gsd park M002 "reason"/);
+    assert.match(messages, /explicitly discard M002/);
   } finally {
     try {
       closeDatabase();
