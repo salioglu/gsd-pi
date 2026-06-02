@@ -52,9 +52,7 @@ export async function listenHttpMcpServer(
       if (err instanceof BadRequestError) {
         return sendJson(res, 400, { error: err.message });
       }
-      return sendJson(res, 500, {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      return sendJson(res, 500, { error: 'Internal server error' });
     }
   });
 
@@ -89,8 +87,20 @@ function authorize(req: IncomingMessage, options: HttpMcpServerOptions): boolean
 function extractBearerToken(value: string | string[] | undefined): string | undefined {
   const header = Array.isArray(value) ? value[0] : value;
   if (!header) return undefined;
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  return match?.[1];
+  const trimmed = header.trim();
+  const schemeEnd = findFirstWhitespaceIndex(trimmed);
+  if (schemeEnd <= 0) return undefined;
+  if (trimmed.slice(0, schemeEnd).toLowerCase() !== 'bearer') return undefined;
+  const token = trimmed.slice(schemeEnd).trimStart();
+  return token || undefined;
+}
+
+function findFirstWhitespaceIndex(value: string): number {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code === 9 || code === 10 || code === 12 || code === 13 || code === 32) return i;
+  }
+  return -1;
 }
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
