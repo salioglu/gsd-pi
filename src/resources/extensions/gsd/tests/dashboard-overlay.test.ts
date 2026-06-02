@@ -25,36 +25,43 @@ test("GSDDashboardOverlay renders inside the shared full border", (t) => {
   assert.match(lines.at(-1) ?? "", /^╰─+╯$/);
 });
 
-test("GSDDashboardOverlay reuses metrics aggregations until the unit count changes", (t) => {
+test("GSDDashboardOverlay reuses metrics aggregations only when ledger content is unchanged", (t) => {
   const overlay = new GSDDashboardOverlay({ requestRender() {} }, fakeTheme as any, () => {});
   t.after(() => overlay.dispose());
 
-  const firstUnits = [makeUnit("M001/S001/T001", 0.25)];
+  const firstUnits = [makeUnit("M001/S001/T001", 0.25, 2000)];
   const firstMetrics = (overlay as any).ensureMetricsCache(firstUnits);
 
-  overlay.invalidate();
+  // Same array reference: cache must be reused
+  assert.equal(
+    (overlay as any).ensureMetricsCache(firstUnits),
+    firstMetrics,
+    "identical units array should reuse cached metrics",
+  );
 
-  const sameCountUnits = [makeUnit("M001/S001/T002", 0.5)];
-  const sameCountMetrics = (overlay as any).ensureMetricsCache(sameCountUnits);
-  assert.equal(sameCountMetrics, firstMetrics, "same unit count should reuse cached metrics");
-  assert.equal(sameCountMetrics.totals.cost, 0.25);
+  // Same unit count but finishedAt changed (simulates in-place ledger re-snapshot)
+  const updatedUnits = [makeUnit("M001/S001/T001", 0.50, 3000)];
+  const updatedMetrics = (overlay as any).ensureMetricsCache(updatedUnits);
+  assert.notEqual(updatedMetrics, firstMetrics, "updated finishedAt should invalidate cache");
+  assert.equal(updatedMetrics.totals.cost, 0.50);
 
-  const increasedCountMetrics = (overlay as any).ensureMetricsCache([
-    ...sameCountUnits,
-    makeUnit("M001/S001/T003", 0.75),
+  // Adding a new unit also invalidates
+  const expandedMetrics = (overlay as any).ensureMetricsCache([
+    ...updatedUnits,
+    makeUnit("M001/S001/T002", 0.75, 4000),
   ]);
-  assert.notEqual(increasedCountMetrics, firstMetrics, "changed unit count should recompute metrics");
-  assert.equal(increasedCountMetrics.totals.units, 2);
-  assert.equal(increasedCountMetrics.totals.cost, 1.25);
+  assert.notEqual(expandedMetrics, updatedMetrics, "added unit should invalidate cache");
+  assert.equal(expandedMetrics.totals.units, 2);
+  assert.equal(expandedMetrics.totals.cost, 1.25);
 });
 
-function makeUnit(id: string, cost: number): UnitMetrics {
+function makeUnit(id: string, cost: number, finishedAt = 2000): UnitMetrics {
   return {
     type: "execute-task",
     id,
     model: "claude-sonnet-4.5",
     startedAt: 1000,
-    finishedAt: 2000,
+    finishedAt,
     tokens: {
       input: 100,
       output: 50,

@@ -78,7 +78,7 @@ export class GSDDashboardOverlay {
     slices: ReturnType<typeof aggregateBySlice>;
     models: ReturnType<typeof aggregateByModel>;
   } | null = null;
-  private lastSeenUnitCount = -1;
+  private lastSeenLedgerKey = "";
 
   constructor(
     tui: { requestRender: () => void },
@@ -144,9 +144,7 @@ export class GSDDashboardOverlay {
       this.loading = false;
     }
 
-    if (identityChanged) {
-      this.invalidate();
-    }
+    this.invalidate();
     this.tui.requestRender();
   }
 
@@ -633,7 +631,8 @@ export class GSDDashboardOverlay {
   }
 
   private ensureMetricsCache(units: UnitMetrics[]) {
-    if (!this.cachedMetrics || units.length !== this.lastSeenUnitCount) {
+    const key = `${units.length}:${units.reduce((s, u) => s + u.finishedAt, 0)}`;
+    if (!this.cachedMetrics || key !== this.lastSeenLedgerKey) {
       this.cachedMetrics = {
         totals: getProjectTotals(units),
         promptStats: getPromptSizeStats(units),
@@ -641,7 +640,7 @@ export class GSDDashboardOverlay {
         slices: aggregateBySlice(units),
         models: aggregateByModel(units),
       };
-      this.lastSeenUnitCount = units.length;
+      this.lastSeenLedgerKey = key;
     }
     return this.cachedMetrics!;
   }
