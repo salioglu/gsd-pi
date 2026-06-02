@@ -16,7 +16,7 @@ test("gateway requires an explicit user bearer token", () => {
 });
 
 test("gateway does not expose unexpected error details in HTTP responses", async () => {
-  const { server, auth } = createGatewayServer({ userToken: "user-token" });
+  const { server, auth } = createGatewayServer({ userToken: "u-cred" });
   auth.authenticateUser = () => {
     throw new Error("stack detail: secret-token");
   };
@@ -24,18 +24,18 @@ test("gateway does not expose unexpected error details in HTTP responses", async
   const response = await dispatch(server, {
     method: "POST",
     url: "/pairing-codes",
-    headers: { authorization: "Bearer user-token" },
+    headers: { authorization: "Bearer u-cred" },
   });
   assert.equal(response.status, 500);
   assert.deepEqual(JSON.parse(response.body) as unknown, { error: "Internal server error" });
 });
 
 test("gateway reports invalid JSON as a client error", async () => {
-  const { server } = createGatewayServer({ userToken: "user-token" });
+  const { server } = createGatewayServer({ userToken: "u-cred" });
   const response = await dispatch(server, {
     method: "POST",
     url: "/mcp",
-    headers: { authorization: "Bearer user-token" },
+    headers: { authorization: "Bearer u-cred" },
     chunks: ["{"],
   });
   assert.equal(response.status, 400);
@@ -43,11 +43,11 @@ test("gateway reports invalid JSON as a client error", async () => {
 });
 
 test("gateway rejects oversized JSON request bodies", async () => {
-  const { server } = createGatewayServer({ userToken: "user-token" });
+  const { server } = createGatewayServer({ userToken: "u-cred" });
   const response = await dispatch(server, {
     method: "POST",
     url: "/mcp",
-    headers: { authorization: "Bearer user-token" },
+    headers: { authorization: "Bearer u-cred" },
     chunks: [`{"value":"${"a".repeat(1024 * 1024)}"}`],
   });
   assert.equal(response.status, 400);
@@ -55,7 +55,7 @@ test("gateway rejects oversized JSON request bodies", async () => {
 });
 
 test("gateway serves the management frontend", async () => {
-  const { server } = createGatewayServer({ userToken: "user-token" });
+  const { server } = createGatewayServer({ userToken: "u-cred" });
   const response = await dispatch(server, {
     method: "GET",
     url: "/admin",
@@ -69,7 +69,7 @@ test("gateway serves the management frontend", async () => {
 
 test("gateway serves the Clerk account frontend", async () => {
   const { server } = createGatewayServer({
-    userToken: "user-token",
+    userToken: "u-cred",
     clerkAuth: fakeClerkAuth(),
   });
   const response = await dispatch(server, {
@@ -85,7 +85,7 @@ test("gateway serves the Clerk account frontend", async () => {
 
 test("account API requires Clerk authentication", async () => {
   const { server } = createGatewayServer({
-    userToken: "user-token",
+    userToken: "u-cred",
     clerkAuth: fakeClerkAuth(),
   });
   const response = await dispatch(server, {
@@ -99,7 +99,7 @@ test("account API requires Clerk authentication", async () => {
 
 test("account API syncs Clerk users and manages their tokens", async () => {
   const { server, auth } = createGatewayServer({
-    userToken: "admin-token",
+    userToken: "adm",
     clerkAuth: fakeClerkAuth(),
   });
 
@@ -136,7 +136,7 @@ test("account API syncs Clerk users and manages their tokens", async () => {
 
 test("account API cannot revoke another Clerk user's token", async () => {
   const { server } = createGatewayServer({
-    userToken: "admin-token",
+    userToken: "adm",
     clerkAuth: fakeClerkAuth(),
   });
   const created = await dispatch(server, {
@@ -157,7 +157,7 @@ test("account API cannot revoke another Clerk user's token", async () => {
 
 test("account API creates pairing codes for the Clerk user", async () => {
   const { server, auth } = createGatewayServer({
-    userToken: "admin-token",
+    userToken: "adm",
     clerkAuth: fakeClerkAuth(),
   });
   const response = await dispatch(server, {
@@ -172,30 +172,30 @@ test("account API creates pairing codes for the Clerk user", async () => {
 });
 
 test("admin API requires admin bearer token when configured", async () => {
-  const { server } = createGatewayServer({ userToken: "user-token", adminToken: "admin-token" });
+  const { server } = createGatewayServer({ userToken: "u-cred", adminToken: "adm" });
 
   const rejected = await dispatch(server, {
     method: "GET",
     url: "/admin/api/overview",
-    headers: { authorization: "Bearer user-token" },
+    headers: { authorization: "Bearer u-cred" },
   });
   assert.equal(rejected.status, 401);
 
   const accepted = await dispatch(server, {
     method: "GET",
     url: "/admin/api/overview",
-    headers: { authorization: "Bearer admin-token" },
+    headers: { authorization: "Bearer adm" },
   });
   assert.equal(accepted.status, 200);
   assert.equal((JSON.parse(accepted.body) as { totalUsers: number }).totalUsers, 1);
 });
 
 test("admin API creates users and returns raw user tokens once", async () => {
-  const { server, auth } = createGatewayServer({ userToken: "admin-token" });
+  const { server, auth } = createGatewayServer({ userToken: "adm" });
   const response = await dispatch(server, {
     method: "POST",
     url: "/admin/api/users",
-    headers: { authorization: "Bearer admin-token" },
+    headers: { authorization: "Bearer adm" },
     chunks: [JSON.stringify({ name: "Ada Lovelace", email: "ada@example.com", issueToken: true })],
   });
 
@@ -209,14 +209,14 @@ test("admin API creates users and returns raw user tokens once", async () => {
   const users = await dispatch(server, {
     method: "GET",
     url: "/admin/api/users",
-    headers: { authorization: "Bearer admin-token" },
+    headers: { authorization: "Bearer adm" },
   });
   assert.equal(users.status, 200);
   assert.equal((JSON.parse(users.body) as { users: unknown[] }).users.length, 2);
 });
 
 test("public registration is opt-in", async () => {
-  const disabled = createGatewayServer({ userToken: "admin-token" });
+  const disabled = createGatewayServer({ userToken: "adm" });
   const rejected = await dispatch(disabled.server, {
     method: "POST",
     url: "/register",
@@ -225,7 +225,7 @@ test("public registration is opt-in", async () => {
   });
   assert.equal(rejected.status, 403);
 
-  const enabled = createGatewayServer({ userToken: "admin-token", allowRegistration: true });
+  const enabled = createGatewayServer({ userToken: "adm", allowRegistration: true });
   const accepted = await dispatch(enabled.server, {
     method: "POST",
     url: "/register",
@@ -239,7 +239,7 @@ test("public registration is opt-in", async () => {
 });
 
 test("admin overview includes usage totals", async () => {
-  const { server, usage } = createGatewayServer({ userToken: "admin-token" });
+  const { server, usage } = createGatewayServer({ userToken: "adm" });
   usage.recordToolCall({
     userId: "local-user",
     toolName: "gsd_status",
@@ -258,7 +258,7 @@ test("admin overview includes usage totals", async () => {
   const response = await dispatch(server, {
     method: "GET",
     url: "/admin/api/overview",
-    headers: { authorization: "Bearer admin-token" },
+    headers: { authorization: "Bearer adm" },
   });
   assert.equal(response.status, 200);
   assert.deepEqual(projectOverview(JSON.parse(response.body)), {
@@ -269,7 +269,7 @@ test("admin overview includes usage totals", async () => {
 });
 
 test("runtime websocket rejects device tokens supplied in the URL query", () => {
-  const { server, auth } = createGatewayServer({ userToken: "user-token" });
+  const { server, auth } = createGatewayServer({ userToken: "u-cred" });
   const { code } = auth.createPairingCode("local-user");
   const issued = auth.exchangePairingCode(code, "Laptop");
   const socket = new MockUpgradeSocket();
