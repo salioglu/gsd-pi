@@ -31,6 +31,19 @@ function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
   return true;
 }
 
+function getSlicesReadyForDivergenceCheck(
+  milestoneId: string,
+  dbSlices: ReturnType<typeof getMilestoneSlices>,
+): Set<string> {
+  const ready = new Set<string>();
+  for (const slice of dbSlices) {
+    if (isClosedStatus(slice.status) || getSliceTasks(milestoneId, slice.id).length > 0) {
+      ready.add(slice.id);
+    }
+  }
+  return ready;
+}
+
 function milestoneHasDivergence(
   basePath: string,
   milestoneId: string,
@@ -47,6 +60,10 @@ function milestoneHasDivergence(
 
   const dbSlices = getMilestoneSlices(milestoneId);
   const dbSliceMap = new Map(dbSlices.map((s) => [s.id, s]));
+  const readySliceIds = getSlicesReadyForDivergenceCheck(milestoneId, dbSlices);
+  if (dbSlices.length > 0 && readySliceIds.size === 0) {
+    return false;
+  }
   const roadmapSliceIds = new Set<string>();
 
   for (let i = 0; i < roadmap.slices.length; i++) {
@@ -55,13 +72,13 @@ function milestoneHasDivergence(
     const expectedSequence = i + 1;
     const dbSlice = dbSliceMap.get(roadmapSlice.id);
     if (!dbSlice) return true; // Roadmap has a slice the DB doesn't.
-    const sliceTasks = getSliceTasks(milestoneId, roadmapSlice.id);
-    if (sliceTasks.length === 0) continue; // Skip transient planning state.
+    if (!readySliceIds.has(dbSlice.id)) continue;
     if (dbSlice.sequence !== expectedSequence) return true;
     if (!arraysEqual(dbSlice.depends, roadmapSlice.depends)) return true;
     if (isClosedStatus(dbSlice.status) !== roadmapSlice.done) return true;
   }
   for (const dbSlice of dbSlices) {
+    if (!readySliceIds.has(dbSlice.id)) continue;
     if (!roadmapSliceIds.has(dbSlice.id)) return true;
   }
   return false;
