@@ -2102,6 +2102,28 @@ export function createWiredDispatchAdapter(
     return null;
   }
 
+  function shouldAdoptActiveMilestone(
+    state: GSDState,
+    activeSession: AutoSession | undefined,
+    activeDispatchBasePath: string,
+  ): boolean {
+    const activeMilestoneId = state.activeMilestone?.id;
+    const currentMilestoneId = activeSession?.currentMilestoneId;
+    if (!activeSession || !activeMilestoneId || !currentMilestoneId || activeMilestoneId === currentMilestoneId) {
+      return false;
+    }
+
+    const scopedWorktreeMilestone =
+      (activeSession.basePath ? detectWorktreeName(activeSession.basePath) : null) ??
+      detectWorktreeName(activeDispatchBasePath);
+    if (scopedWorktreeMilestone && scopedWorktreeMilestone !== activeMilestoneId) {
+      return false;
+    }
+
+    const currentMilestone = state.registry.find((milestone) => milestone.id === currentMilestoneId);
+    return !!currentMilestone && isClosedStatus(currentMilestone.status);
+  }
+
   return {
     async decideNextUnit(input) {
       const state = input.stateSnapshot;
@@ -2110,6 +2132,9 @@ export function createWiredDispatchAdapter(
 
       const activeSession = input.session ?? session;
       const activeDispatchBasePath = activeSession?.basePath || dispatchBasePath;
+      if (activeSession && shouldAdoptActiveMilestone(state, activeSession, activeDispatchBasePath)) {
+        activeSession.currentMilestoneId = active.id;
+      }
       const prefs = loadEffectiveGSDPreferences(activeDispatchBasePath)?.preferences;
 
       // Derive session-derived dispatch inputs the same way phases.ts:runDispatch does
