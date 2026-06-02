@@ -1425,6 +1425,72 @@ test("ADR-017 (#414): no-db-tasks summary artifact blocker matches auto.ts filte
   );
 });
 
+test("ADR-017 (#414): task-level on-disk summary blocker matches auto.ts filter phrase", async (t) => {
+  // When gsd_summary_save writes a SUMMARY file to disk for a task that never
+  // called gsd_task_complete, but the artifact DB row was not yet written (or
+  // the process crashed before insertion), reconciliation emits
+  // "has SUMMARY on disk while DB status is". The auto.ts filter must match
+  // this phrase so re-dispatch is not blocked.
+  const base = mkdtempSync(join(tmpdir(), "gsd-task-disk-summary-drift-"));
+  t.after(() => cleanup(base));
+
+  const tasksDir = join(base, ".gsd", "milestones", "M001", "slices", "S04", "tasks");
+  mkdirSync(tasksDir, { recursive: true });
+  writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Failure Summary\n");
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S04", milestoneId: "M001", title: "Slice", status: "pending" });
+  insertTask({ id: "T01", sliceId: "S04", milestoneId: "M001", title: "Task", status: "pending" });
+  // No artifact row inserted — SUMMARY exists only on disk.
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(result.blockers.length > 0, "blocker must be produced for on-disk task SUMMARY drift");
+  const blocker = result.blockers.join("\n");
+  assert.match(
+    blocker,
+    /has SUMMARY on disk while DB status is/,
+    "blocker phrase must match the filter in auto.ts reconcileBeforeDispatch wrapper",
+  );
+});
+
+test("ADR-017 (#414): slice-level on-disk summary blocker matches auto.ts filter phrase", async (t) => {
+  // When a SUMMARY file exists on disk for a slice that is still pending
+  // (no gsd_task_complete for the slice), reconciliation emits
+  // "has SUMMARY on disk while DB status is". The auto.ts filter must match
+  // this phrase so re-dispatch is not blocked.
+  const base = mkdtempSync(join(tmpdir(), "gsd-slice-disk-summary-drift-"));
+  t.after(() => cleanup(base));
+
+  const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S04");
+  mkdirSync(sliceDir, { recursive: true });
+  writeFileSync(join(sliceDir, "S04-SUMMARY.md"), "# S04 Failure Summary\n");
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S04", milestoneId: "M001", title: "Slice", status: "pending" });
+  // No artifact row inserted — SUMMARY exists only on disk.
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Milestone" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(result.blockers.length > 0, "blocker must be produced for on-disk slice SUMMARY drift");
+  const blocker = result.blockers.join("\n");
+  assert.match(
+    blocker,
+    /has SUMMARY on disk while DB status is/,
+    "blocker phrase must match the filter in auto.ts reconcileBeforeDispatch wrapper",
+  );
+});
+
 test("ADR-017: completed milestone dispatch history blocks accidental re-planning", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-completed-reopened-drift-"));
   t.after(() => cleanup(base));

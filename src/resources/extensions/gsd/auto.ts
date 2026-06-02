@@ -2318,6 +2318,7 @@ export function createWiredAutoOrchestrationModule(
         const hardBlockers = result.blockers.filter(
           (b) =>
             !b.includes("has SUMMARY artifact while DB status is") &&
+            !b.includes("has SUMMARY on disk while DB status is") &&
             !b.includes("has task SUMMARY artifacts but no DB tasks"),
         );
         if (hardBlockers.length > 0) {
