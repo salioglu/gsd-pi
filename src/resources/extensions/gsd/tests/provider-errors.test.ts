@@ -17,7 +17,10 @@ import {
   shouldDeferTransientErrorToCoreRetry,
   suppressTerminalDeletedWorktreeMessageEnd,
 } from "../bootstrap/agent-end-recovery.ts";
-import { _buildCancelledUnitStopReason } from "../auto/phases.ts";
+import {
+  _buildCancelledUnitStopReason,
+  _classifyZeroToolProviderMessageForTest,
+} from "../auto/phases.ts";
 import { autoSession } from "../auto-runtime-state.ts";
 import { getNextFallbackModel } from "../preferences.ts";
 // Zero-import module — imported by path rather than through the package
@@ -49,6 +52,20 @@ test("classifyError treats Anthropic quota-window phrasing as transient rate-lim
 
 test("classifyError treats usage-limit phrasing as transient rate-limit (#4373)", () => {
   const result = classifyError("usage limit reached for this workspace");
+  assert.ok(isTransient(result));
+  assert.equal(result.kind, "rate-limit");
+});
+
+test("zero-tool provider classifier treats Claude session-limit wording as transient rate-limit (#371)", () => {
+  const result = _classifyZeroToolProviderMessageForTest("Claude Code session limit reached. Limit resets at 5 PM.");
+  assert.ok(result, "session-limit wording should be recognized");
+  assert.ok(isTransient(result));
+  assert.equal(result.kind, "rate-limit");
+});
+
+test("zero-tool provider classifier treats weekly limit wording as transient rate-limit (#371)", () => {
+  const result = _classifyZeroToolProviderMessageForTest("You've reached your weekly limit. Try again later.");
+  assert.ok(result, "weekly limit wording should be recognized");
   assert.ok(isTransient(result));
   assert.equal(result.kind, "rate-limit");
 });

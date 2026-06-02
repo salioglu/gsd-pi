@@ -13,10 +13,11 @@ import type {
   ExtensionCommandContext,
   ReadonlyFooterDataProvider,
   Theme,
+  ThemeColor,
 } from "@gsd/pi-coding-agent";
 import type { GSDState } from "./types.js";
 import { getActiveHook } from "./post-unit-hooks.js";
-import { getLedger } from "./metrics.js";
+import { getLedger, getProjectTotals } from "./metrics.js";
 import { getErrorMessage } from "./error-utils.js";
 import { nativeIsRepo } from "./native-git-bridge.js";
 import {
@@ -302,6 +303,40 @@ export function shouldRenderRoadmapProgress(
   progress: { total: number; activeSliceTasks?: { total: number } | null } | null,
 ): progress is { total: number; activeSliceTasks?: { total: number } | null } {
   return !!progress && progress.total > 0;
+}
+
+function widgetGridLabel(theme: Theme, text: string, color: ThemeColor = "borderAccent"): string {
+  return theme.fg(color, theme.bold(text.toUpperCase()));
+}
+
+function widgetGridColumn(content: string, width: number): string {
+  return padRightVisible(truncateToWidth(content, width, "…"), width);
+}
+
+function widgetGridColumns(theme: Theme, width: number, parts: string[]): string {
+  if (parts.length === 0) return "";
+  const gap = theme.fg("dim", " │ ");
+  const gapWidth = visibleWidth(gap) * (parts.length - 1);
+  const available = Math.max(parts.length * 8, width - gapWidth);
+  const base = Math.floor(available / parts.length);
+  let remaining = available - base * parts.length;
+  const columns = parts.map((part) => {
+    const columnWidth = base + (remaining > 0 ? 1 : 0);
+    remaining--;
+    return widgetGridColumn(part, columnWidth);
+  });
+  return truncateToWidth(columns.join(gap), width, "…");
+}
+
+function formatSmallWidgetSpend(): string {
+  const ledger = getLedger();
+  if (!ledger || ledger.units.length === 0) return "--";
+
+  const totals = getProjectTotals(ledger.units);
+  const parts: string[] = [];
+  if (totals.tokens.total > 0) parts.push(formatWidgetTokens(totals.tokens.total));
+  if (totals.cost > 0) parts.push(`$${totals.cost.toFixed(2)}`);
+  return parts.length > 0 ? parts.join(" · ") : "--";
 }
 
 // ─── ETA Estimation ──────────────────────────────────────────────────────────
@@ -836,29 +871,62 @@ export function updateProgressWidget(
           return lines;
         }
 
-        // ── Mode: small — header + active work progress ───────────────
+        // ── Mode: small — dense horizontal grid ───────────────────────
         if (widgetMode === "small") {
-          lines.push("");
+          lines.length = 0;
+          lines.push(...ui.bar());
 
-          // Action line
-          const target = task ? `${task.id}: ${task.title}` : unitId;
-          const actionLeft = `${pad}${theme.fg("accent", "▸")} ${theme.fg("accent", verb)}  ${theme.fg("text", target)}`;
-          lines.push(rightAlign(actionLeft, theme.fg("dim", phaseLabel), width));
-
-          // Progress bar
           const roadmapSlices = mid ? getRoadmapSlicesSync() : null;
-          if (shouldRenderRoadmapProgress(roadmapSlices)) {
-            const { done, total, activeSliceTasks } = roadmapSlices;
-            const barWidth = Math.max(6, Math.min(18, Math.floor(width * 0.25)));
-            const bar = renderProgressBar(theme, done, total, barWidth);
-            let meta = `${theme.fg("text", `${done}`)}${theme.fg("dim", `/${total} slices`)}`;
-            if (activeSliceTasks && activeSliceTasks.total > 0) {
-              const tn = Math.min(activeSliceTasks.done + 1, activeSliceTasks.total);
-              meta += `${theme.fg("dim", " · task ")}${theme.fg("accent", `${tn}`)}${theme.fg("dim", `/${activeSliceTasks.total}`)}`;
-            }
-            lines.push(`${pad}${bar} ${meta}`);
+          const unitLabel = unitId || [mid?.id, slice?.id, task?.id].filter(Boolean).join("/");
+          const statusParts = [
+            spinner,
+            theme.fg("success", modeTag),
+            theme.fg(stateColor, activeState),
+          ];
+          if (runtimeSignal?.summary) {
+            statusParts.push(theme.fg(healthColor, healthSummary));
+          } else if (healthLevel !== "green") {
+            statusParts.push(`${theme.fg(healthColor, healthIcon)} ${theme.fg(healthColor, healthSummary)}`);
           }
 
+          const timeValue = [elapsed, etaShort].filter(Boolean).join(" · ") || "--";
+          const rowOne = widgetGridColumns(theme, width, [
+            `${widgetGridLabel(theme, "status", "border")} ${statusParts.join(" ")}`,
+            `${widgetGridLabel(theme, "unit")} ${theme.fg("text", unitLabel || "--")}`,
+            `${widgetGridLabel(theme, "spend", "border")} ${theme.fg("dim", formatSmallWidgetSpend())}`,
+            `${widgetGridLabel(theme, "time")} ${theme.fg("dim", timeValue)}`,
+          ]);
+
+          const target = task
+            ? `${task.id}: ${task.title}`
+            : slice
+              ? `${slice.id}: ${slice.title}`
+              : unitId;
+
+          let taskValue = task?.id ?? "--";
+          let sliceValue = slice?.id ?? "--";
+          if (shouldRenderRoadmapProgress(roadmapSlices)) {
+            const { done, total, activeSliceTasks } = roadmapSlices;
+            const barWidth = Math.max(4, Math.min(14, Math.floor(width * 0.12)));
+            const bar = renderProgressBar(theme, done, total, barWidth);
+            sliceValue = `${bar} ${theme.fg("text", `${done}/${total}`)}`;
+            if (activeSliceTasks && activeSliceTasks.total > 0) {
+              const taskNum = isHook
+                ? Math.max(activeSliceTasks.done, 1)
+                : Math.min(activeSliceTasks.done + 1, activeSliceTasks.total);
+              taskValue = `${theme.fg("accent", `${taskNum}`)}${theme.fg("dim", `/${activeSliceTasks.total}`)}`;
+            }
+          }
+
+          const rowTwo = widgetGridColumns(theme, width, [
+            `${widgetGridLabel(theme, "phase", "border")} ${theme.fg("dim", unitType)}`,
+            `${widgetGridLabel(theme, "work")} ${theme.fg("text", target || "--")}`,
+            `${widgetGridLabel(theme, "task", "border")} ${taskValue}`,
+            `${widgetGridLabel(theme, "slice")} ${sliceValue}`,
+          ]);
+
+          lines.push(rowOne);
+          lines.push(rowTwo);
           lines.push(...ui.bar());
           cachedLines = lines;
           cachedWidth = width;

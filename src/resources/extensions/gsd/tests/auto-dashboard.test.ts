@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
+import { visibleWidth } from "@gsd/pi-tui";
 
 import {
   unitVerb,
@@ -56,6 +57,17 @@ function cleanup(dir: string): void {
     // best-effort
   }
 }
+
+function assertLinesFit(lines: string[], width: number): void {
+  for (const line of lines) {
+    assert.ok(
+      visibleWidth(line) <= width,
+      `line exceeds width ${width}: ${visibleWidth(line)} "${line}"`,
+    );
+  }
+}
+
+type RenderableWidget = { render(width: number): string[]; invalidate(): void; dispose?: () => void };
 
 // ─── unitVerb ─────────────────────────────────────────────────────────────
 
@@ -662,6 +674,95 @@ test("updateProgressWidget full mode keeps footer-owned signals out of auto deck
   assert.doesNotMatch(rendered, /\$/, "footer owns session cost display");
 });
 
+test("updateProgressWidget small mode renders the dense horizontal grid", (t) => {
+  const dir = makeTempDir("small-dense-grid");
+  const homeDir = makeTempDir("small-dense-grid-home");
+  const projectPrefsPath = join(dir, ".gsd", "preferences.md");
+  const globalPrefsPath = join(homeDir, ".gsd", "preferences.md");
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  mkdirSync(join(homeDir, ".gsd"), { recursive: true });
+  writeFileSync(projectPrefsPath, "---\nversion: 1\nwidget_mode: full\n---\n", "utf-8");
+  writeFileSync(globalPrefsPath, "---\nversion: 1\nwidget_mode: full\n---\n", "utf-8");
+
+  const holder: { widget?: RenderableWidget } = {};
+
+  t.after(() => {
+    holder.widget?.dispose?.();
+    closeDatabase();
+    clearSliceProgressCache();
+    _resetWidgetModeForTests();
+    cleanup(dir);
+    cleanup(homeDir);
+  });
+
+  openDatabase(join(dir, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M004", title: "Budget Tracking", status: "active" });
+  insertSlice({ milestoneId: "M004", id: "S01", title: "Schema migration", status: "complete", sequence: 1 });
+  insertSlice({ milestoneId: "M004", id: "S02", title: "Expense add", status: "pending", sequence: 2 });
+  insertTask({ milestoneId: "M004", sliceId: "S01", id: "T01", title: "Add repeat column via idempotent ALTER TABLE", status: "complete" });
+  insertTask({ milestoneId: "M004", sliceId: "S01", id: "T02", title: "Backfill repeat metadata", status: "pending" });
+
+  _resetWidgetModeForTests();
+  setWidgetMode("small", projectPrefsPath, globalPrefsPath);
+
+  updateProgressWidget(
+    {
+      hasUI: true,
+      ui: {
+        setHeader() {},
+        setStatus() {},
+        setWidget(_key: string, factory: any) {
+          if (_key === "gsd-progress") {
+            holder.widget = factory(
+              { requestRender() {} },
+              { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+            );
+          }
+        },
+      },
+    } as any,
+    "execute-task",
+    "M004/S01/T02",
+    {
+      phase: "executing",
+      activeMilestone: { id: "M004", title: "Budget Tracking" },
+      activeSlice: { id: "S01", title: "Schema migration" },
+      activeTask: { id: "T02", title: "Backfill repeat metadata" },
+    } as any,
+    {
+      getAutoStartTime: () => Date.now() - 18_000,
+      isStepMode: () => false,
+      getCmdCtx: () => null,
+      getBasePath: () => dir,
+      isVerbose: () => false,
+      isSessionSwitching: () => false,
+      getCurrentDispatchedModelId: () => null,
+    },
+  );
+
+  assert.ok(holder.widget, "progress widget should be installed");
+  const widget = holder.widget;
+  const lines = widget.render(120);
+  const rendered = lines.join("\n");
+
+  assert.equal(lines.length, 4, `small widget should render as rule + two dense rows + rule:\n${rendered}`);
+  assert.match(rendered, /STATUS\s+.*AUTO\s+running/);
+  assert.match(rendered, /UNIT\s+M004\/S01\/T02/);
+  assert.match(rendered, /SPEND/);
+  assert.match(rendered, /TIME/);
+  assert.match(rendered, /PHASE\s+execute-task/);
+  assert.match(rendered, /WORK\s+T02: Backfill repeat m/);
+  assert.match(rendered, /TASK\s+2\/2/);
+  assert.match(rendered, /SLICE.*1\/2/);
+  assert.doesNotMatch(rendered, /\/gsd next|\/gsd status/);
+  assert.doesNotMatch(rendered, /dashboard|esc pause/);
+
+  for (const width of [40, 80, 120]) {
+    widget.invalidate();
+    assertLinesFit(widget.render(width), width);
+  }
+});
+
 test("updateProgressWidget shows provider-waiting state consistently for auto and next modes", (t) => {
   const dir = makeTempDir("auto-next-dashboard");
   mkdirSync(join(dir, ".gsd"), { recursive: true });
@@ -720,14 +821,14 @@ test("updateProgressWidget shows provider-waiting state consistently for auto an
   const autoRendered = renderDashboard(false);
   const nextRendered = renderDashboard(true);
 
-  assert.match(autoRendered, /GSD\s+·\s+AUTO\s+·\s+running/);
-  assert.match(nextRendered, /GSD\s+·\s+NEXT\s+·\s+running/);
+  assert.match(autoRendered, /STATUS\s+.*AUTO\s+running/);
+  assert.match(nextRendered, /STATUS\s+.*NEXT\s+running/);
   assert.doesNotMatch(autoRendered.split("\n")[1] ?? "", /completing M003\/S01/);
   assert.doesNotMatch(nextRendered.split("\n")[1] ?? "", /completing M003\/S01/);
   assert.doesNotMatch(autoRendered, /waiting on provider.*Waiting on provider/i);
   assert.doesNotMatch(nextRendered, /waiting on provider.*Waiting on provider/i);
-  assert.match(autoRendered, /completing\s+M003\/S01/);
-  assert.match(nextRendered, /completing\s+M003\/S01/);
+  assert.match(autoRendered, /PHASE\s+complete-slice/);
+  assert.match(nextRendered, /PHASE\s+complete-slice/);
   assert.doesNotMatch(autoRendered, /Working/);
   assert.doesNotMatch(nextRendered, /Working/);
 });

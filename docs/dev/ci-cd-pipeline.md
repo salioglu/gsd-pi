@@ -74,7 +74,7 @@ docker run --rm -v $(pwd):/workspace ghcr.io/open-gsd/gsd-pi:latest --version
 
 **CI optimization (v2.38):** GitHub Actions minutes were reduced ~60-70% (~10k → ~3-4k/month) through workflow consolidation and caching improvements.
 
-**CI refactor (2026-05):** Single `fast-gates` job, build-once artifact fan-out, parallel test jobs, PR coverage moved to main push only. Local parity: `verify:fast`, `verify:pr` (fast loop), **`verify:merge`** (PR blocking). See [Test confidence stack](./test-confidence-stack.md).
+**CI refactor (2026-05):** Single `fast-gates` job, Linux build/test consolidation, path-gated Windows/Docker checks, and coverage moved out of the core CI path. Local parity: `verify:fast`, `verify:pr` (fast loop), **`verify:merge`** (PR blocking). See [Test confidence stack](./test-confidence-stack.md).
 
 **Pipeline optimization (v2.41):**
 - **Shallow clones** — downstream jobs use shallow checkout + shared build artifacts
@@ -89,21 +89,20 @@ See [Test confidence stack](./test-confidence-stack.md) for the code-area → ru
 | Tier | Job(s) | When | Blocks merge? |
 |------|--------|------|---------------|
 | Fast gates | `fast-gates` | Every PR/push (secrets, docs injection, skill refs, PR policy, tier-map drift) | Yes |
-| Build | `build` | `heavy-code-changed=true` — compile once, upload `ci-build-artifacts` | Yes |
-| Tests (parallel) | `test-unit`, `test-packages`, `integration-tests`, `e2e` | After `build`; restore artifacts, no `build:core` repeat | Yes |
-| Coverage | `test-coverage` | Push to `main`/`dev`/`test` only (not PRs); or `workflow_dispatch` with `run_coverage` | Yes on main pipeline |
-| Platform | `docker-e2e`, `windows-portability` | Path-gated; use artifacts instead of rebuilding | Yes when triggered |
+| Build + Linux tests | `build` | `heavy-code-changed=true` — compile, package validation, unit/package/integration/e2e tests with one install | Yes |
+| Coverage | `Coverage report` workflow | Manual, weekly schedule, or PR labeled `coverage` | Separate workflow |
+| Platform | Docker e2e step in `build`, `windows-portability` | Path-gated; Docker runs only when `docker-changed=true`, Windows runs only when portability paths change | Yes when triggered |
 | Platform (warn) | Windows e2e smoke step inside `windows-portability` | `windows-e2e-changed=true` | **No** (`continue-on-error: true`) |
 
 **Local before review:** `npm run verify:merge` — sequential parity with PR blocking jobs above (except path-gated platform jobs).
 
-**Branch protection:** Required checks should include `fast-gates`, `build`, `test-unit`, `test-packages`, `integration-tests`, and `e2e` when you want full merge confidence.
+**Branch protection:** Required checks should include `fast-gates` and `build` for full Linux merge confidence. Keep `windows-portability` required only if GitHub branch protection is configured to handle skipped path-gated checks correctly.
 
 ### Build-Relevant Change Detection
 
 `scripts/ci-classify-changes.sh` (run inside `fast-gates`) classifies the diff before expensive jobs run.
 
-- **Skipped when doc/metadata only:** `build`, `test-*`, `integration-tests`, `e2e`, `docker-e2e`, `windows-portability`
+- **Skipped when doc/metadata only:** `build`, Linux test steps, Docker e2e, `windows-portability`
 - **Still runs:** `fast-gates` (all security and policy scans)
 - **`web-changed`:** reserved for future path gating (web host always builds in `build` because `validate-pack` requires `dist/web/standalone/server.js`)
 

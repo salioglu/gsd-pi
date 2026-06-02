@@ -7,16 +7,16 @@ This document maps **what protects what** across local scripts and CI. Use it wh
 | When | Run locally | CI equivalent | Blocks merge? |
 |------|-------------|---------------|---------------|
 | Every push | `npm run verify:fast` | `fast-gates` | Yes |
-| Fast iteration while editing | `npm run verify:pr` | Partial (`build:core` + `test-unit` only) | No — not sufficient alone |
-| **Before requesting PR review** | **`npm run verify:merge`** | `build`, `test-unit`, `test-packages`, `integration-tests`, `e2e` | Yes (when `heavy-code-changed`) |
+| Fast iteration while editing | `npm run verify:pr` | Partial `build` job (`build:core` + unit tests) | No — not sufficient alone |
+| **Before requesting PR review** | **`npm run verify:merge`** | `build` | Yes (when `heavy-code-changed`) |
 | Full evaluation baseline | `npm run test:evaluation` | Partial (blocking tiers + auxiliary) | No |
-| Repo-wide coverage report | `npm run test:coverage:full` | `coverage-report` job on PRs | Report-only on PRs |
-
-**Node 26+:** `c8` depends on `yargs` v17, which breaks under Node 26’s module resolution. The repo pins `yargs@^18` via `package.json` `overrides` (CI uses Node 24).
-| After merge to main/dev/test | — | `test-coverage` | Yes on main pipeline |
-| Docker paths changed | `npm run test:e2e:docker` | `docker-e2e` | Yes when triggered |
+| Repo-wide coverage report | `npm run test:coverage:full` | `Coverage report` workflow | Separate workflow |
+| Coverage thresholds | `npm run test:coverage` | `Coverage report` workflow | Separate workflow |
+| Docker paths changed | `npm run test:e2e:docker` | `build` Docker e2e step | Yes when triggered |
 | Portability paths changed | Windows job + package tests | `windows-portability` | Yes when triggered |
 | Windows smoke (experimental) | `npm run test:e2e:windows-smoke` | `windows-smoke-e2e` | **Warn only** (`continue-on-error`) |
+
+**Node 26+:** `c8` depends on `yargs` v17, which breaks under Node 26’s module resolution. The repo pins `yargs@^18` via `package.json` `overrides` (CI uses Node 24).
 
 Run the inventory anytime:
 
@@ -41,20 +41,20 @@ npm run audit:test-matrix -- --write-report # regenerate docs/dev/test-evaluatio
 | `scripts/__tests__` | `node --test` | `verify:fast` | CI contract/policy regressions |
 | `tests/e2e/` | `node --test` against built binary | `test:e2e` | Requires `GSD_SMOKE_BINARY=dist/loader.js` |
 | Coverage (merged) | c8 across unit/integration/packages | `test:coverage:full` | Writes `coverage/lcov.info` + `coverage/file-index.json` |
-| Coverage thresholds | c8 on GSD slice | `test:coverage` | **main/dev/test push** only |
+| Coverage thresholds | c8 on GSD slice | `test:coverage` | Manual/scheduled coverage workflow |
 
 ## Enforcement philosophy
 
 ### Block merge (PR)
 
-When `heavy-code-changed=true`, CI runs the full stack in parallel after a single build artifact:
+When `heavy-code-changed=true`, CI runs the Linux build and test stack in one job to avoid repeated checkout/setup/install/artifact restore overhead:
 
 1. `build` — compile, web host, `validate-pack`, workspace coverage gate
-2. `test-unit` — compiled unit tests
-3. `test-packages` — workspace package tests
-4. `integration-tests` — integration globs (includes ollama + new extension tests)
-5. `e2e` — smoke binary tests
-6. `coverage-report` — merged coverage artifacts (report-only, does not block)
+2. `build` — compiled unit tests, package tests, integration tests, and e2e smoke
+3. `build` — Docker e2e when `docker-changed=true`
+
+Native package tests are skipped in the main Linux package-test step unless native/portability paths changed; otherwise a full Rust native rebuild can dominate unrelated CI runs.
+Compiled package tests use Node's `--test-force-exit` so leaked handles in one package do not idle until the CI watchdog fires after all assertions pass.
 
 Local parity: **`npm run verify:merge`** (runs the same npm scripts sequentially, including `verify:extension-coverage`).
 
@@ -64,10 +64,11 @@ Local parity: **`npm run verify:merge`** (runs the same npm scripts sequentially
 - `audit:test-gaps --strict-unwired`
 - `audit:test-matrix --strict`
 
-### Block main (post-merge)
+### Coverage workflow
 
 - `test:coverage` — c8 thresholds (40/40/20/20) on the GSD slice
-- Release pipeline smoke / live regression — see [CI/CD Pipeline Guide](./ci-cd-pipeline.md)
+- `test:coverage:full` — merged coverage artifacts
+- Runs manually, weekly, or on PRs labeled `coverage`
 
 ### Warn or path-gate
 

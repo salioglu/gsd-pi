@@ -17,11 +17,6 @@ on:
       - '.github/workflows/cleanup-dev-versions.yml'
       - 'LICENSE'
   workflow_dispatch:
-    inputs:
-      run_coverage:
-        description: Run coverage thresholds (default on main push only)
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -140,6 +135,11 @@ jobs:
       - uses: ./.github/actions/setup-linux-native-build-deps
 
       - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          GSD_SKIP_RTK_INSTALL: '1'
+          GSD_SKIP_DEP_REPAIR: '1'
         run: pnpm install --frozen-lockfile
 
       - name: Build core
@@ -170,253 +170,16 @@ jobs:
       - name: Verify workspace coverage (every linkable package has tests)
         run: pnpm run verify:workspace-coverage
 
-  test-unit:
-    name: test-unit
-    timeout-minutes: 20
-    needs: [fast-gates, build]
-    if: needs.fast-gates.outputs.heavy-code-changed == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-
-    steps:
-      - name: Checkout repository without GITHUB_TOKEN
-        shell: bash
-        env:
-          FETCH_DEPTH: '1'
-        run: |
-          set -euo pipefail
-          git init "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-          git -c protocol.version=2 fetch --no-tags --prune --depth="$FETCH_DEPTH" origin \
-            "+${GITHUB_REF}:refs/checkout-ref"
-          git checkout --force --detach "$GITHUB_SHA"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.12.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-
-      - uses: ./.github/actions/setup-linux-native-build-deps
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - uses: ./.github/actions/restore-ci-build-artifacts
+      - name: Compile test artifacts
+        run: pnpm run test:compile
 
       - name: Run unit tests
-        run: |
-          pnpm run test:compile
-          pnpm run test:unit:compiled
-
-  test-packages:
-    name: test-packages
-    timeout-minutes: 25
-    needs: [fast-gates, build]
-    if: needs.fast-gates.outputs.heavy-code-changed == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-
-    steps:
-      - name: Checkout repository without GITHUB_TOKEN
-        shell: bash
-        env:
-          FETCH_DEPTH: '1'
-        run: |
-          set -euo pipefail
-          git init "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-          git -c protocol.version=2 fetch --no-tags --prune --depth="$FETCH_DEPTH" origin \
-            "+${GITHUB_REF}:refs/checkout-ref"
-          git checkout --force --detach "$GITHUB_SHA"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.12.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-
-      - uses: ./.github/actions/setup-linux-native-build-deps
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - uses: ./.github/actions/restore-ci-build-artifacts
+        run: pnpm run test:unit:compiled
 
       - name: Run package tests
-        run: pnpm run test:packages
-
-  test-coverage:
-    name: test-coverage
-    timeout-minutes: 45
-    needs: [fast-gates, build]
-    if: >-
-      needs.fast-gates.outputs.heavy-code-changed == 'true' &&
-      (
-        (github.event_name == 'push' &&
-          (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/test')) ||
-        (github.event_name == 'workflow_dispatch' && inputs.run_coverage)
-      )
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-
-    steps:
-      - name: Checkout repository without GITHUB_TOKEN
-        shell: bash
         env:
-          FETCH_DEPTH: '1'
-        run: |
-          set -euo pipefail
-          git init "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-          git -c protocol.version=2 fetch --no-tags --prune --depth="$FETCH_DEPTH" origin \
-            "+${GITHUB_REF}:refs/checkout-ref"
-          git checkout --force --detach "$GITHUB_SHA"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.12.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-
-      - uses: ./.github/actions/setup-linux-native-build-deps
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - uses: ./.github/actions/restore-ci-build-artifacts
-
-      - name: Check test coverage thresholds
-        run: pnpm run test:coverage
-
-  coverage-report:
-    name: coverage-report
-    timeout-minutes: 90
-    continue-on-error: true
-    needs: [fast-gates, build]
-    if: >-
-      github.event_name == 'pull_request' &&
-      needs.fast-gates.outputs.heavy-code-changed == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-
-    steps:
-      - name: Checkout repository without GITHUB_TOKEN
-        shell: bash
-        env:
-          FETCH_DEPTH: '0'
-        run: |
-          set -euo pipefail
-          git init "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-          git -c protocol.version=2 fetch --no-tags --prune origin \
-            '+refs/heads/*:refs/remotes/origin/*' \
-            '+refs/tags/*:refs/tags/*' \
-            "+${GITHUB_REF}:refs/checkout-ref"
-          git checkout --force --detach "$GITHUB_SHA"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.12.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-
-      - uses: ./.github/actions/setup-linux-native-build-deps
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - uses: ./.github/actions/restore-ci-build-artifacts
-
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install chromium
-
-      - name: Generate merged coverage report (report-only)
-        run: pnpm run test:coverage:full
-
-      - name: Upload coverage artifacts
-        uses: actions/upload-artifact@v5
-        with:
-          name: coverage-report
-          path: |
-            coverage/lcov.info
-            coverage/file-index.json
-          if-no-files-found: error
-          retention-days: 14
-
-  integration-tests:
-    name: integration-tests
-    timeout-minutes: 40
-    needs: [fast-gates, build]
-    if: needs.fast-gates.outputs.heavy-code-changed == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-
-    steps:
-      - name: Checkout repository without GITHUB_TOKEN
-        shell: bash
-        env:
-          FETCH_DEPTH: '1'
-        run: |
-          set -euo pipefail
-          git init "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-          git -c protocol.version=2 fetch --no-tags --prune --depth="$FETCH_DEPTH" origin \
-            "+${GITHUB_REF}:refs/checkout-ref"
-          git checkout --force --detach "$GITHUB_SHA"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.12.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-
-      - uses: ./.github/actions/setup-linux-native-build-deps
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install chromium
-
-      - uses: ./.github/actions/restore-ci-build-artifacts
-
-      - uses: ./.github/actions/cache-nextjs
+          GSD_SKIP_NATIVE_PACKAGE_TESTS: ${{ needs.fast-gates.outputs.portability-changed == 'true' && '0' || '1' }}
+        run: pnpm run test:packages:compiled
 
       - name: Install Playwright Chromium
         run: pnpm exec playwright install chromium
@@ -424,62 +187,15 @@ jobs:
       - name: Run integration tests
         run: pnpm run test:integration
 
-  e2e:
-    name: e2e
-    timeout-minutes: 15
-    needs: [fast-gates, build]
-    if: needs.fast-gates.outputs.heavy-code-changed == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-
-    steps:
-      - name: Checkout repository without GITHUB_TOKEN
-        shell: bash
-        env:
-          FETCH_DEPTH: '1'
-        run: |
-          set -euo pipefail
-          git init "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-          git -c protocol.version=2 fetch --no-tags --prune --depth="$FETCH_DEPTH" origin \
-            "+${GITHUB_REF}:refs/checkout-ref"
-          git checkout --force --detach "$GITHUB_SHA"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.12.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-
-      - uses: ./.github/actions/setup-linux-native-build-deps
-
-      - name: Install dependencies
-        shell: bash
-        run: |
-          for attempt in 1 2 3; do
-            if pnpm install --frozen-lockfile; then
-              exit 0
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              exit 1
-            fi
-            sleep $((attempt * 10))
-          done
-
-      - uses: ./.github/actions/restore-ci-build-artifacts
-
       - name: Run e2e suite (against built binary)
         run: |
           chmod +x dist/loader.js
           export GSD_SMOKE_BINARY="$(pwd)/dist/loader.js"
           pnpm run test:e2e
+
+      - name: Run docker e2e suite
+        if: needs.fast-gates.outputs.docker-changed == 'true'
+        run: pnpm run test:e2e:docker
 
       - name: Upload e2e artifacts on failure
         if: failure()
@@ -489,52 +205,6 @@ jobs:
           path: test-results/e2e
           if-no-files-found: ignore
           retention-days: 7
-
-  docker-e2e:
-    name: docker-e2e
-    timeout-minutes: 30
-    needs: [fast-gates, build]
-    if: >-
-      needs.fast-gates.outputs.heavy-code-changed == 'true' &&
-      needs.fast-gates.outputs.docker-changed == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-
-    steps:
-      - name: Checkout repository without GITHUB_TOKEN
-        shell: bash
-        env:
-          FETCH_DEPTH: '1'
-        run: |
-          set -euo pipefail
-          git init "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-          git -c protocol.version=2 fetch --no-tags --prune --depth="$FETCH_DEPTH" origin \
-            "+${GITHUB_REF}:refs/checkout-ref"
-          git checkout --force --detach "$GITHUB_SHA"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.12.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-
-      - uses: ./.github/actions/setup-linux-native-build-deps
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - uses: ./.github/actions/restore-ci-build-artifacts
-
-      - name: Run docker e2e suite
-        run: pnpm run test:e2e:docker
 
   windows-portability:
     name: windows-portability
