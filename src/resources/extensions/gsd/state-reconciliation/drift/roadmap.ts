@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import {
   getMilestone,
   getMilestoneSlices,
+  getSliceTasks,
   isDbAvailable,
 } from "../../gsd-db.js";
 import { renderRoadmapFromDb } from "../../markdown-renderer.js";
@@ -54,6 +55,8 @@ function milestoneHasDivergence(
     const expectedSequence = i + 1;
     const dbSlice = dbSliceMap.get(roadmapSlice.id);
     if (!dbSlice) return true; // Roadmap has a slice the DB doesn't.
+    const sliceTasks = getSliceTasks(milestoneId, roadmapSlice.id);
+    if (sliceTasks.length === 0) continue; // Skip transient planning state.
     if (dbSlice.sequence !== expectedSequence) return true;
     if (!arraysEqual(dbSlice.depends, roadmapSlice.depends)) return true;
     if (isClosedStatus(dbSlice.status) !== roadmapSlice.done) return true;
