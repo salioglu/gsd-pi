@@ -16,6 +16,35 @@ test("local tool executor rejects unsupported user-controlled tool names", async
   );
 });
 
+test("local tool executor forwards runtime-advertised external MCP tools", async () => {
+  let forwarded: { toolName: string; args: Record<string, unknown> } | undefined;
+  const executor = new LocalToolExecutor({} as SessionManager, async () => [], {
+    advertisedTools: async () => [{
+      name: "browser_navigate",
+      inputSchema: { type: "object", properties: { url: { type: "string" } } },
+    }],
+    executeIfAvailable: async (toolName, args) => {
+      forwarded = { toolName, args };
+      return {
+        handled: true,
+        result: { content: [{ type: "text", text: "navigated" }] },
+      };
+    },
+  });
+
+  assert.deepEqual(await executor.advertisedTools(), [{
+    name: "browser_navigate",
+    inputSchema: { type: "object", properties: { url: { type: "string" } } },
+  }]);
+  assert.deepEqual(await executor.execute("browser_navigate", { url: "https://example.com" }), {
+    content: [{ type: "text", text: "navigated" }],
+  });
+  assert.deepEqual(forwarded, {
+    toolName: "browser_navigate",
+    args: { url: "https://example.com" },
+  });
+});
+
 test("local tool executor rejects unadvertised project paths", async () => {
   const executor = new LocalToolExecutor({} as SessionManager, async () => []);
 

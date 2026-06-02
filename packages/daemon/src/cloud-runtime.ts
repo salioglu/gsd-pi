@@ -12,6 +12,13 @@ interface GatewayMessage {
   projectAlias?: string;
 }
 
+interface CloudRuntimeExecutor {
+  execute(toolName: string, rawArgs: Record<string, unknown>, projectAlias?: string): Promise<unknown>;
+  advertisedProjects(): Promise<unknown[]>;
+  advertisedTools?(): Promise<unknown[]>;
+  close?(): Promise<void>;
+}
+
 export class CloudRuntime {
   private socket: WebSocket | undefined;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -21,7 +28,7 @@ export class CloudRuntime {
 
   constructor(
     private readonly cloud: NonNullable<DaemonConfig["cloud"]>,
-    private readonly executor: LocalToolExecutor,
+    private readonly executor: LocalToolExecutor | CloudRuntimeExecutor,
     private readonly logger: Logger,
   ) {}
 
@@ -40,6 +47,7 @@ export class CloudRuntime {
     const socket = this.socket;
     this.socket = undefined;
     socket?.close();
+    void this.executor.close?.();
   }
 
   private connect(): void {
@@ -93,7 +101,7 @@ export class CloudRuntime {
   private handleSocketOpen(socket: WebSocket): void {
     if (socket !== this.socket) return;
     this.logger.info("cloud runtime connected", { gateway_url: this.cloud.gateway_url, runtime_id: this.cloud.runtime_id });
-    void this.advertiseProjects();
+    void this.advertiseState();
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = setInterval(() => this.send({ type: "heartbeat", at: Date.now() }), 30_000);
   }
@@ -120,13 +128,22 @@ export class CloudRuntime {
     this.logger.warn("cloud runtime socket error", { error: err.message });
   }
 
-  private async advertiseProjects(): Promise<void> {
-    const projects = await this.executor.advertisedProjects();
+  private async advertiseState(): Promise<void> {
+    const [projects, tools] = await Promise.all([
+      this.executor.advertisedProjects(),
+      this.executor.advertisedTools?.().catch((err: unknown) => {
+        this.logger.warn("cloud runtime external MCP tool advertisement failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return [];
+      }) ?? Promise.resolve([]),
+    ]);
     this.send({
       type: "hello",
       runtimeId: this.cloud.runtime_id,
       runtimeName: this.cloud.runtime_name,
       projects,
+      tools,
     });
   }
 

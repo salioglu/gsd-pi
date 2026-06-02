@@ -19,6 +19,39 @@ test("auth rejects missing, invalid, and revoked device tokens", () => {
   assert.equal(auth.authenticateDevice(issued.deviceToken), null);
 });
 
+test("auth creates managed users and revokable user tokens", () => {
+  const auth = new InMemoryAuthStore({ token: "admin-token", userId: "admin" });
+  const user = auth.createUser({ name: "Ada Lovelace", email: "ada@example.com" });
+  const issued = auth.issueUserToken(user.userId, { label: "cli" });
+
+  assert.equal(auth.getUser("admin")?.plan, "unlimited");
+  assert.equal(user.plan, "free");
+  assert.match(issued.userToken, /^gsd_usr_/);
+  assert.equal(auth.authenticateUser(issued.userToken), user.userId);
+  assert.deepEqual(auth.listUserTokens(user.userId).map((token) => ({
+    tokenId: token.tokenId,
+    userId: token.userId,
+    label: token.label,
+    revoked: token.revoked,
+  })), [{
+    tokenId: issued.tokenId,
+    userId: user.userId,
+    label: "cli",
+    revoked: undefined,
+  }]);
+
+  assert.equal(auth.revokeUserTokenById(issued.tokenId), true);
+  assert.equal(auth.authenticateUser(issued.userToken), null);
+});
+
+test("disabled users cannot authenticate or pair runtimes", () => {
+  const auth = new InMemoryAuthStore({ token: "user-token", userId: "u1" });
+  auth.updateUser("u1", { disabled: true });
+
+  assert.equal(auth.authenticateUser("user-token"), null);
+  assert.throws(() => auth.createPairingCode("u1"), /disabled user/);
+});
+
 test("pairing code is one-time use", () => {
   const auth = new InMemoryAuthStore({ token: "user-token", userId: "u1" });
   const { code } = auth.createPairingCode("u1");

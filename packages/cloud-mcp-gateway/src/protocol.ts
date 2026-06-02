@@ -6,17 +6,47 @@ export interface RuntimeProject {
   markers?: string[];
 }
 
+export interface RuntimeToolInputSchema {
+  type: "object";
+  properties?: Record<string, object>;
+  required?: string[];
+  [key: string]: unknown;
+}
+
+export interface RuntimeToolDefinition {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema: RuntimeToolInputSchema;
+  outputSchema?: RuntimeToolInputSchema;
+  annotations?: {
+    title?: string;
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
+  _meta?: Record<string, unknown>;
+}
+
 export interface RuntimeHelloMessage {
   type: "hello";
   runtimeId: string;
   runtimeName?: string;
   projects: RuntimeProject[];
+  tools?: RuntimeToolDefinition[];
 }
 
 export interface RuntimeProjectsMessage {
   type: "projects";
   runtimeId?: string;
   projects: RuntimeProject[];
+}
+
+export interface RuntimeToolsMessage {
+  type: "tools";
+  runtimeId?: string;
+  tools: RuntimeToolDefinition[];
 }
 
 export interface RuntimeHeartbeatMessage {
@@ -50,6 +80,7 @@ export type GatewayToRuntimeMessage = RuntimeToolCallMessage | RuntimeCancelMess
 export type RuntimeToGatewayMessage =
   | RuntimeHelloMessage
   | RuntimeProjectsMessage
+  | RuntimeToolsMessage
   | RuntimeHeartbeatMessage
   | RuntimeToolResultMessage;
 

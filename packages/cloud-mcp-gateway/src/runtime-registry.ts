@@ -4,6 +4,8 @@ import type {
   CloudProjectRecord,
   GatewayToRuntimeMessage,
   RuntimeProject,
+  RuntimeToolDefinition,
+  RuntimeToolInputSchema,
   RuntimeToGatewayMessage,
 } from "./protocol.js";
 import { isRecord } from "./protocol.js";
@@ -14,6 +16,19 @@ interface RuntimeConnection {
   runtimeName?: string;
   socket: WebSocket;
   projects: RuntimeProject[];
+  tools: RuntimeToolDefinition[];
+  lastSeenAt: number;
+}
+
+export interface RuntimeSummary {
+  runtimeId: string;
+  userId: string;
+  runtimeName?: string;
+  online: boolean;
+  projectCount: number;
+  toolCount: number;
+  projects: RuntimeProject[];
+  tools: string[];
   lastSeenAt: number;
 }
 
@@ -57,6 +72,7 @@ export class RuntimeRegistry {
       runtimeName: params.runtimeName,
       socket: params.socket,
       projects: [],
+      tools: [],
       lastSeenAt: Date.now(),
     };
     this.runtimes.set(params.runtimeId, runtime);
@@ -87,6 +103,37 @@ export class RuntimeRegistry {
       }
     }
     return rows.sort((a, b) => a.alias.localeCompare(b.alias));
+  }
+
+  listTools(userId: string): RuntimeToolDefinition[] {
+    const tools: RuntimeToolDefinition[] = [];
+    const seen = new Set<string>();
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.userId !== userId) continue;
+      for (const tool of runtime.tools) {
+        if (seen.has(tool.name)) continue;
+        seen.add(tool.name);
+        tools.push(tool);
+      }
+    }
+    return tools.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  listRuntimeSummaries(userId?: string): RuntimeSummary[] {
+    return Array.from(this.runtimes.values())
+      .filter((runtime) => !userId || runtime.userId === userId)
+      .map((runtime) => ({
+        runtimeId: runtime.runtimeId,
+        userId: runtime.userId,
+        ...(runtime.runtimeName ? { runtimeName: runtime.runtimeName } : {}),
+        online: true,
+        projectCount: runtime.projects.length,
+        toolCount: runtime.tools.length,
+        projects: runtime.projects.map((project) => ({ ...project })),
+        tools: runtime.tools.map((tool) => tool.name).sort((a, b) => a.localeCompare(b)),
+        lastSeenAt: runtime.lastSeenAt,
+      }))
+      .sort((a, b) => b.lastSeenAt - a.lastSeenAt);
   }
 
   async callTool(call: GatewayToolCall): Promise<unknown> {
@@ -211,10 +258,15 @@ export class RuntimeRegistry {
     if (message.type === "hello" && runtime) {
       runtime.runtimeName = message.runtimeName ?? runtime.runtimeName;
       runtime.projects = message.projects;
+      runtime.tools = normalizeRuntimeTools(message.tools);
       return;
     }
     if (message.type === "projects" && runtime) {
       runtime.projects = message.projects;
+      return;
+    }
+    if (message.type === "tools" && runtime) {
+      runtime.tools = normalizeRuntimeTools(message.tools);
       return;
     }
     if (message.type === "tool_result") {
@@ -244,4 +296,60 @@ export class RuntimeRegistry {
       pending.reject(new Error(`${message} while waiting for ${pending.toolName}`));
     }
   }
+}
+
+function normalizeRuntimeTools(value: unknown): RuntimeToolDefinition[] {
+  if (!Array.isArray(value)) return [];
+  const tools: RuntimeToolDefinition[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!isRecord(item) || typeof item.name !== "string" || !item.name.trim()) continue;
+    const name = item.name.trim();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    tools.push({
+      name,
+      ...(typeof item.title === "string" ? { title: item.title } : {}),
+      ...(typeof item.description === "string" ? { description: item.description } : {}),
+      inputSchema: normalizeInputSchema(item.inputSchema),
+      ...(isInputSchema(item.outputSchema) ? { outputSchema: normalizeInputSchema(item.outputSchema) } : {}),
+      ...(isRecord(item.annotations) ? { annotations: normalizeAnnotations(item.annotations) } : {}),
+      ...(isRecord(item._meta) ? { _meta: item._meta } : {}),
+    });
+  }
+  return tools;
+}
+
+function normalizeInputSchema(value: unknown): RuntimeToolInputSchema {
+  if (isInputSchema(value)) {
+    return {
+      ...value,
+      type: "object",
+      ...(value.properties ? { properties: normalizeProperties(value.properties) } : {}),
+      ...(Array.isArray(value.required)
+        ? { required: value.required.filter((item): item is string => typeof item === "string") }
+        : {}),
+    };
+  }
+  return { type: "object", properties: {} };
+}
+
+function isInputSchema(value: unknown): value is RuntimeToolInputSchema {
+  return isRecord(value) && value.type === "object";
+}
+
+function normalizeProperties(value: Record<string, object>): Record<string, object> {
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, object] => isRecord(entry[1])),
+  );
+}
+
+function normalizeAnnotations(value: Record<string, unknown>): NonNullable<RuntimeToolDefinition["annotations"]> {
+  return {
+    ...(typeof value.title === "string" ? { title: value.title } : {}),
+    ...(typeof value.readOnlyHint === "boolean" ? { readOnlyHint: value.readOnlyHint } : {}),
+    ...(typeof value.destructiveHint === "boolean" ? { destructiveHint: value.destructiveHint } : {}),
+    ...(typeof value.idempotentHint === "boolean" ? { idempotentHint: value.idempotentHint } : {}),
+    ...(typeof value.openWorldHint === "boolean" ? { openWorldHint: value.openWorldHint } : {}),
+  };
 }

@@ -23,14 +23,28 @@ test("runtime registry tracks project advertisements and disconnects", () => {
     type: "hello",
     runtimeId: "rt1",
     projects: [{ alias: "app", repoIdentity: "abc123" }],
+    tools: [{
+      name: "browser_navigate",
+      description: "Navigate the browser",
+      inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+    }],
   }));
   assert.deepEqual(registry.listProjects("u1").map((p) => ({
     alias: p.alias,
     runtimeId: p.runtimeId,
     online: p.online,
   })), [{ alias: "app", runtimeId: "rt1", online: true }]);
+  assert.deepEqual(registry.listTools("u1").map((tool) => tool.name), ["browser_navigate"]);
+  assert.deepEqual(registry.listRuntimeSummaries("u1").map((runtime) => ({
+    runtimeId: runtime.runtimeId,
+    projectCount: runtime.projectCount,
+    toolCount: runtime.toolCount,
+    online: runtime.online,
+  })), [{ runtimeId: "rt1", projectCount: 1, toolCount: 1, online: true }]);
   socket.close();
   assert.deepEqual(registry.listProjects("u1"), []);
+  assert.deepEqual(registry.listTools("u1"), []);
+  assert.deepEqual(registry.listRuntimeSummaries("u1"), []);
 });
 
 test("runtime registry fails fast when no runtime is online", async () => {
@@ -79,4 +93,28 @@ test("runtime registry rejects in-flight calls when runtime disconnects", async 
   const rejection = assert.rejects(call, /Local GSD Runtime disconnected: rt1 while waiting for gsd_status/);
   socket.close();
   await rejection;
+});
+
+test("runtime registry accepts later tool advertisements", () => {
+  const registry = new RuntimeRegistry();
+  const socket = new FakeSocket();
+  registry.attachRuntime({ userId: "u1", runtimeId: "rt1", socket: socket as never });
+
+  socket.emit("message", JSON.stringify({
+    type: "tools",
+    runtimeId: "rt1",
+    tools: [
+      { name: "browser_snapshot", inputSchema: { type: "object" } },
+      { name: "", inputSchema: { type: "object" } },
+      { name: "broken_schema", inputSchema: { type: "string" } },
+    ],
+  }));
+
+  assert.deepEqual(registry.listTools("u1").map((tool) => ({
+    name: tool.name,
+    inputSchema: tool.inputSchema,
+  })), [
+    { name: "broken_schema", inputSchema: { type: "object", properties: {} } },
+    { name: "browser_snapshot", inputSchema: { type: "object" } },
+  ]);
 });

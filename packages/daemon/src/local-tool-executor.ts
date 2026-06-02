@@ -19,10 +19,16 @@ import {
   writeSnapshot,
   WORKFLOW_TOOL_NAMES,
 } from "@opengsd/mcp-server";
+import { ExternalMcpToolBridge, type ExternalMcpToolExecution } from "./external-mcp-tools.js";
 import type { SessionManager } from "./session-manager.js";
 import type { ProjectInfo } from "./types.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
+interface ExternalMcpTools {
+  advertisedTools(): Promise<unknown[]>;
+  executeIfAvailable(toolName: string, args: Record<string, unknown>): Promise<ExternalMcpToolExecution>;
+  close?(): Promise<void>;
+}
 const WORKFLOW_TOOL_NAME_SET = new Set<string>(WORKFLOW_TOOL_NAMES);
 const QUERY_FIELDS = {
   all: ["state", "project", "requirements", "milestones"],
@@ -42,6 +48,7 @@ export class LocalToolExecutor {
   constructor(
     private readonly sessionManager: SessionManager,
     private readonly scanProjects: () => Promise<ProjectInfo[]>,
+    private readonly externalMcpTools: ExternalMcpTools = ExternalMcpToolBridge.fromEnvironment(),
   ) {
     registerWorkflowTools({
       tool: (name: string, _description: string, _params: Record<string, unknown>, handler: ToolHandler) => {
@@ -128,8 +135,20 @@ export class LocalToolExecutor {
       case "gsd_graph":
         return { content: [{ type: "text", text: JSON.stringify(await this.executeGraph(args), null, 2) }] };
       default:
+        {
+          const external = await this.externalMcpTools.executeIfAvailable(toolName, args);
+          if (external.handled) return external.result;
+        }
         throw new Error(`Unsupported forwarded GSD MCP tool: ${toolName}`);
     }
+  }
+
+  async advertisedTools(): Promise<unknown[]> {
+    return this.externalMcpTools.advertisedTools();
+  }
+
+  async close(): Promise<void> {
+    await this.externalMcpTools.close?.();
   }
 
   async advertisedProjects(): Promise<Array<{

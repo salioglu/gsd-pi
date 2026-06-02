@@ -25,6 +25,38 @@ npx gsd-mcp-server
 
 ## Configuration
 
+### Local Stdio
+
+For local MCP clients that spawn the server process, use the default stdio transport:
+
+```bash
+gsd-mcp-server
+```
+
+### Cloud / Remote HTTP
+
+For remote MCP clients, run the same server as an authenticated Streamable HTTP endpoint:
+
+```bash
+export GSD_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"
+gsd-mcp-server --http --host 0.0.0.0 --port 8787
+```
+
+Expose `/mcp` over HTTPS with your proxy or platform, then configure the remote client with:
+
+```text
+https://your-domain.example/mcp
+Authorization: Bearer <GSD_MCP_AUTH_TOKEN>
+```
+
+Loopback HTTP for local development can run without auth:
+
+```bash
+gsd-mcp-server --http --host 127.0.0.1 --port 8787
+```
+
+Non-loopback hosts refuse unauthenticated startup by default. To override intentionally, pass `--no-auth`.
+
 ### Claude Code
 
 Add to your project's `.mcp.json`:
