@@ -211,7 +211,8 @@ function readLimit(value: string | undefined, fallback: number): number | undefi
   if (value === undefined || value.trim() === "") return fallback;
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-  return Math.floor(parsed) || undefined;
+  if (parsed === 0) return undefined;
+  return Math.max(1, Math.floor(parsed));
 }
 
 function isLimited(limit: number | undefined): limit is number {

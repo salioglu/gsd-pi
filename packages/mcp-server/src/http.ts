@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpServer } from './server.js';
@@ -81,7 +82,11 @@ export function isLoopbackHost(host: string): boolean {
 
 function authorize(req: IncomingMessage, options: HttpMcpServerOptions): boolean {
   if (options.allowNoAuth || !options.authToken) return true;
-  return extractBearerToken(req.headers.authorization) === options.authToken;
+  const provided = extractBearerToken(req.headers.authorization);
+  if (!provided) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(options.authToken);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 function extractBearerToken(value: string | string[] | undefined): string | undefined {

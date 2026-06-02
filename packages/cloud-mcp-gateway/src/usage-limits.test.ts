@@ -66,6 +66,17 @@ test("unlimited plan bypasses configured free limits", () => {
   assert.equal(limiter.check(user, usage).allowed, true);
 });
 
+test("readLimit treats fractional values as limit of 1, not unlimited", () => {
+  const config = parseUsageLimitConfig({
+    GSD_CLOUD_FREE_CALLS_PER_MINUTE: "0.5",
+    GSD_CLOUD_FREE_CALLS_PER_DAY: "0.9",
+    GSD_CLOUD_FREE_CALLS_PER_MONTH: "0",
+  });
+  assert.equal(config.free.callsPerMinute, 1, "0.5 should floor to 1, not unlimited");
+  assert.equal(config.free.callsPerDay, 1, "0.9 should floor to 1, not unlimited");
+  assert.equal(config.free.callsPerMonth, undefined, "explicit 0 should remain unlimited");
+});
+
 test("usage limit config parses environment values", () => {
   const config = parseUsageLimitConfig({
     GSD_CLOUD_FREE_CALLS_PER_MINUTE: "3",
