@@ -394,6 +394,50 @@ function stripKnownIdPrefix(value: string | undefined | null, id: string): strin
   return raw;
 }
 
+function parseReactiveBatchTaskIds(unitId: string): string[] {
+  const { task: batchPart } = parseUnitId(unitId);
+  if (!batchPart?.startsWith("reactive+")) return [];
+
+  const rawIds = batchPart
+    .slice("reactive+".length)
+    .split(",")
+    .map((taskId) => taskId.trim().toUpperCase())
+    .filter(Boolean);
+
+  const unique = new Set<string>();
+  for (const taskId of rawIds) {
+    unique.add(taskId);
+  }
+  return [...unique];
+}
+
+function dedupePaths(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (!seen.has(value)) {
+      seen.add(value);
+      result.push(value);
+    }
+  }
+  return result;
+}
+
+function getPlannedKeyFiles(tasks: Array<
+  { expected_output?: string[]; files?: string[]; key_files?: string[] }
+>): string[] {
+  return dedupePaths(
+    tasks.flatMap((taskRow) => [
+      ...(taskRow.expected_output ?? []),
+      ...(taskRow.files ?? []),
+      ...(taskRow.key_files ?? []),
+    ]),
+  );
+}
+
+export const _parseReactiveBatchTaskIdsForTest = parseReactiveBatchTaskIds;
+export const _getPlannedKeyFilesForTest = getPlannedKeyFiles;
+
 function resolveVerificationFailureMarkerPath(
   unitType: string,
   unitId: string,
@@ -478,6 +522,40 @@ async function buildTaskCommitContextForUnit(
       task?.key_files ??
       undefined,
     issueNumber: ghIssueNumber,
+  };
+}
+
+async function buildReactiveTaskCommitContext(
+  _basePath: string,
+  unitId: string,
+): Promise<TaskCommitContext | undefined> {
+  const { milestone: mid, slice: sid } = parseUnitId(unitId);
+  if (!mid || !sid || !isDbAvailable()) return undefined;
+
+  const batchTaskIds = parseReactiveBatchTaskIds(unitId);
+  if (batchTaskIds.length === 0) return undefined;
+
+  const milestone = getMilestone(mid);
+  const slice = getSlice(mid, sid);
+  const taskRows = batchTaskIds
+    .map((tid) => getTask(mid, sid, tid))
+    .filter((taskRow): taskRow is NonNullable<ReturnType<typeof getTask>> => taskRow !== null);
+
+  const keyFiles = getPlannedKeyFiles(taskRows);
+  if (taskRows.length === 0 || keyFiles.length === 0) return undefined;
+
+  const taskLabel = taskRows.map((row) => row.id).join(",");
+
+  return {
+    taskId: `${sid}/${taskLabel}`,
+    taskDisplayId: "reactive-batch",
+    taskTitle: `Reactive batch: ${taskLabel}`,
+    milestoneId: mid,
+    milestoneTitle: stripKnownIdPrefix(milestone?.title, mid),
+    sliceId: sid,
+    sliceTitle: stripKnownIdPrefix(slice?.title, sid),
+    oneLiner: `Reactive execute for ${taskLabel}`,
+    keyFiles,
   };
 }
 
@@ -943,6 +1021,8 @@ export async function autoCommitUnit(
 
     if (unitType === "execute-task") {
       taskContext = await buildTaskCommitContextForUnit(basePath, unitId);
+    } else if (unitType === "reactive-execute") {
+      taskContext = await buildReactiveTaskCommitContext(basePath, unitId);
     }
 
     _resetHasChangesCache();
@@ -1004,6 +1084,21 @@ async function runCloseoutGitAction(
       const { milestone: mid, slice: sid, task: tid } = parseUnitId(unit.id);
       if (mid && sid && tid && isDbAvailable()) {
         targetRepositories = getTask(mid, sid, tid)?.target_repositories;
+      }
+    } else if (turnAction === "commit" && unit.type === "reactive-execute") {
+      taskContext = await buildReactiveTaskCommitContext(s.basePath, unit.id);
+      const { milestone: mid, slice: sid } = parseUnitId(unit.id);
+      if (mid && sid && isDbAvailable()) {
+        const repositories = new Set<string>();
+        for (const tid of parseReactiveBatchTaskIds(unit.id)) {
+          const taskRow = getTask(mid, sid, tid);
+          for (const repoId of taskRow?.target_repositories ?? []) {
+            repositories.add(repoId);
+          }
+        }
+        if (repositories.size > 0) {
+          targetRepositories = [...repositories];
+        }
       }
     }
 
@@ -1436,12 +1531,24 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         const { milestone: sMid, slice: sSid, task: sTid } = parseUnitId(s.currentUnit.id);
 
         // File change validation (execute-task only, after unit execution)
-        if (safetyConfig.file_change_validation && s.currentUnit.type === "execute-task" && sMid && sSid && sTid && isDbAvailable()) {
+        if (safetyConfig.file_change_validation && s.currentUnit.type === "execute-task" && sMid && sSid && sTid) {
           try {
-            const taskRow = getTask(sMid, sSid, sTid);
-            if (taskRow) {
-              const expectedOutput = taskRow.expected_output ?? [];
-              const plannedFiles = taskRow.files ?? [];
+            const sliceTaskRows = isDbAvailable()
+              ? getSliceTasks(sMid, sSid).filter((t) => isClosedStatus(t.status) || t.id === sTid)
+              : [];
+
+            if (sliceTaskRows.length > 0) {
+              const expectedOutput = getPlannedKeyFiles(
+                sliceTaskRows.map((taskRow) => ({
+                  expected_output: taskRow.expected_output,
+                  files: taskRow.files,
+                })),
+              );
+              const plannedFiles = getPlannedKeyFiles(
+                sliceTaskRows.map((taskRow) => ({
+                  files: taskRow.files,
+                })),
+              );
               const audit = validateFileChanges(s.basePath, expectedOutput, plannedFiles, safetyConfig.file_change_allowlist);
               if (audit && audit.violations.length > 0) {
                 const warnings = audit.violations.filter(v => v.severity === "warning");
@@ -1453,6 +1560,30 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                     `Safety: ${warnings.length} unexpected file change(s) outside task plan`,
                     "warning",
                   );
+                }
+              }
+            } else {
+              const taskRow = getTask(sMid, sSid, sTid);
+              if (taskRow) {
+                const expectedOutput = taskRow.expected_output ?? [];
+                const plannedFiles = taskRow.files ?? [];
+                const audit = validateFileChanges(
+                  s.basePath,
+                  expectedOutput,
+                  plannedFiles,
+                  safetyConfig.file_change_allowlist,
+                );
+                if (audit && audit.violations.length > 0) {
+                  const warnings = audit.violations.filter(v => v.severity === "warning");
+                  for (const v of warnings) {
+                    logWarning("safety", `file-change: ${v.file} — ${v.reason}`);
+                  }
+                  if (warnings.length > 0) {
+                    ctx.ui.notify(
+                      `Safety: ${warnings.length} unexpected file change(s) outside task plan`,
+                      "warning",
+                    );
+                  }
                 }
               }
             }
