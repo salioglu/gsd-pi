@@ -1429,7 +1429,7 @@ export async function checkNeedsRunUat(
           // If the UAT file already contains a verdict, UAT has been run — skip
           if (hasVerdict(uatContent)) continue;
           // Also check the ASSESSMENT file — the run-uat prompt writes the verdict
-          // there (via gsd_summary_save artifact_type:"ASSESSMENT"), not into the
+          // there (via gsd_uat_result_save), not into the
           // UAT spec file. Without this check the unit re-dispatches indefinitely.
           const assessmentFile = resolveSliceFile(base, mid, sid, "ASSESSMENT");
           if (assessmentFile) {

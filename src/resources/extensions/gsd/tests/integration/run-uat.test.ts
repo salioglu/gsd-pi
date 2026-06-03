@@ -72,6 +72,38 @@ function makeBrowserObservableUatContent(mode = 'artifact-driven'): string {
   ].join('\n');
 }
 
+function makeDeferredBrowserUatContent(): string {
+  return [
+    '# UAT File',
+    '',
+    '## UAT Type',
+    '',
+    '- UAT mode: artifact-driven',
+    '- Why this mode is sufficient: Node interaction tests exercise the real app.js render/event/localStorage loop through a DOM harness. Live browser, keyboard, responsive, and visual-polish UAT remain intentionally deferred to S02.',
+    '',
+    '## Smoke Test',
+    '',
+    'Run `node --test tests/s01-static-interactions.test.js` and confirm all tests pass.',
+    '',
+    '## Test Cases',
+    '',
+    '1. Click the todo row edit control in the DOM harness.',
+    '2. Save changed text and reload/recreate the app from persisted localStorage.',
+    '3. Expected: the stored record shape remains unchanged.',
+    '',
+    '## Not Proven By This UAT',
+    '',
+    '- Final visual polish of edit controls.',
+    '- Keyboard usability through a real browser.',
+    '- Browser console and local network cleanliness.',
+    '',
+    '## Notes for Tester',
+    '',
+    'S02 should capture browser evidence for the full loop rather than changing this persisted model.',
+    '',
+  ].join('\n');
+}
+
 describe('run-uat', () => {
 test('(a) artifact-driven', () => {
   assert.deepStrictEqual(

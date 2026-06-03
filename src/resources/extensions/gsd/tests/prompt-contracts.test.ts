@@ -34,6 +34,7 @@ test("run-uat prompt branches on dynamic UAT mode and supports runtime evidence"
   assert.match(prompt, /browser\/runtime\/network/i);
   assert.match(prompt, /NEEDS-HUMAN/);
   assert.doesNotMatch(prompt, /uatType:\s*artifact-driven/);
+  assert.doesNotMatch(prompt, /Call `gsd_summary_save`/);
 });
 
 test("run-uat prompt lists canonical gsd_uat_exec intent values", () => {
