@@ -122,6 +122,61 @@ describe("end-to-end — getCompactionSettings + shouldCompact (#5475)", () => {
 		assert.equal(shouldCompact(150_000, 200_000, settings), true);
 	});
 
+	it("guards against stale pre-compaction usage when compactionTimestamp is provided", () => {
+		const compactionTime = Date.now();
+		const preCompactionAssistant: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "text", text: "old response" }],
+			api: "faux",
+			provider: "faux",
+			model: "faux-context",
+			usage: {
+				input: 180_000,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 180_000,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: compactionTime - 1000,
+		};
+		const postCompactionAssistant: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "text", text: "first response after compaction" }],
+			api: "faux",
+			provider: "faux",
+			model: "faux-context",
+			usage: {
+				input: 50_000,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 50_000,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: compactionTime + 1000,
+		};
+		// messages contains the pre-compaction kept assistant but not the current one yet
+		// (simulates the state when checkCompaction is called before the message is appended)
+		const messages: AgentMessage[] = [
+			{ role: "user", content: [{ type: "text", text: "request" }], timestamp: compactionTime - 2000 },
+			preCompactionAssistant,
+		];
+
+		// Without guard: estimateContextTokens finds preCompactionAssistant → max(50K, 180K) = 180K
+		assert.equal(resolveThresholdContextTokens(postCompactionAssistant, messages), 180_000);
+
+		// With guard: pre-compaction source detected → returns only the current assistant's accurate usage
+		assert.equal(resolveThresholdContextTokens(postCompactionAssistant, messages, compactionTime), 50_000);
+
+		// Threshold would not fire at 50K on a 60% threshold of 200K (120K), preventing false compaction
+		assert.equal(shouldCompact(50_000, 200_000, { ...REGISTRY_DEFAULTS, thresholdPercent: 0.6 }), false);
+		// Without guard the stale 180K would have triggered it
+		assert.equal(shouldCompact(180_000, 200_000, { ...REGISTRY_DEFAULTS, thresholdPercent: 0.6 }), true);
+	});
+
 	it("uses the footer-style context estimate when trailing messages exceed the threshold", () => {
 		const assistant: AssistantMessage = {
 			role: "assistant",

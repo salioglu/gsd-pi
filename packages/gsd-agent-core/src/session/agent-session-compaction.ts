@@ -15,9 +15,24 @@ import {
 } from "../compaction/index.js";
 import type { AgentSessionHost } from "./agent-session-host.js";
 
-export function resolveThresholdContextTokens(assistantMessage: AssistantMessage, messages: AgentMessage[]): number {
+export function resolveThresholdContextTokens(
+	assistantMessage: AssistantMessage,
+	messages: AgentMessage[],
+	compactionTimestamp?: number,
+): number {
 	const estimate = estimateContextTokens(messages);
-	return Math.max(calculateContextTokens(assistantMessage.usage), estimate.tokens);
+	const baseTokens = calculateContextTokens(assistantMessage.usage);
+	// Mirror the error-branch guard: if the estimate's usage source is a pre-compaction
+	// assistant, it carries stale context size and must not inflate the threshold decision.
+	if (
+		compactionTimestamp !== undefined &&
+		estimate.lastUsageIndex !== null &&
+		messages[estimate.lastUsageIndex].role === "assistant" &&
+		(messages[estimate.lastUsageIndex] as AssistantMessage).timestamp <= compactionTimestamp
+	) {
+		return baseTokens;
+	}
+	return Math.max(baseTokens, estimate.tokens);
 }
 
 export class AgentSessionCompactionModule {
@@ -237,7 +252,8 @@ export class AgentSessionCompactionModule {
 			}
 			contextTokens = estimate.tokens;
 		} else {
-			contextTokens = resolveThresholdContextTokens(assistantMessage, this.host.agent.state.messages);
+			const compactionTimestamp = compactionEntry ? new Date(compactionEntry.timestamp).getTime() : undefined;
+			contextTokens = resolveThresholdContextTokens(assistantMessage, this.host.agent.state.messages, compactionTimestamp);
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
 			return await this.runAutoCompaction("threshold", false);
