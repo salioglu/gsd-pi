@@ -49,6 +49,7 @@ interface ManagedBrowserToolSpec {
 
 const connections = new Map<string, ManagedConnection>();
 const pendingConnections = new Map<string, Promise<ManagedConnection>>();
+let closeGeneration = 0;
 const DEFAULT_MAX_LINES = 2_000;
 const DEFAULT_MAX_BYTES = 50 * 1024;
 
@@ -365,10 +366,16 @@ async function getOrConnectManagedGsdBrowser(
   const pending = pendingConnections.get(key);
   if (pending) return pending;
 
+  const genAtStart = closeGeneration;
   const connectionPromise = connectManagedGsdBrowser(launch, signal);
   pendingConnections.set(key, connectionPromise);
   try {
     const connection = await connectionPromise;
+    if (closeGeneration !== genAtStart) {
+      connection.client.close().catch(() => {});
+      connection.transport.close().catch(() => {});
+      throw new Error("gsd-browser connection aborted: session was closed during connect");
+    }
     connections.set(key, connection);
     return connection;
   } finally {
@@ -383,7 +390,10 @@ function isUnknownMcpToolError(error: unknown): boolean {
 
 function normalizeManagedArgs(piToolName: string, args: Record<string, unknown>): Record<string, unknown> {
   if (piToolName === "browser_snapshot_refs") {
-    const { interactiveOnly: _interactiveOnly, ...snapshotArgs } = args;
+    const { interactiveOnly, ...snapshotArgs } = args;
+    if (interactiveOnly === true && snapshotArgs.mode === undefined) {
+      snapshotArgs.mode = "interactive";
+    }
     return snapshotArgs;
   }
   return args;
@@ -557,6 +567,7 @@ export function registerManagedGsdBrowserTools(pi: ExtensionAPI): void {
 }
 
 export async function closeManagedGsdBrowser(): Promise<void> {
+  closeGeneration++;
   const closing = Array.from(connections.entries()).map(async ([key, connection]) => {
     try {
       await connection.client.close();
@@ -576,4 +587,12 @@ export async function closeManagedGsdBrowser(): Promise<void> {
 
 export async function _resetManagedGsdBrowserForTest(): Promise<void> {
   await closeManagedGsdBrowser();
+}
+
+export function _normalizeManagedArgsForTest(piToolName: string, args: Record<string, unknown>): Record<string, unknown> {
+  return normalizeManagedArgs(piToolName, args);
+}
+
+export function _getCloseGenerationForTest(): number {
+  return closeGeneration;
 }
