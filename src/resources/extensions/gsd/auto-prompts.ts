@@ -45,6 +45,7 @@ import { classifyProject, type ProjectClassification } from "./detection.js";
 import { hasBrowserRequiredText } from "./browser-evidence.js";
 import { debugLog } from "./debug-logger.js";
 import { buildSkillActivationBlock, buildSkillDiscoveryVars } from "./skill-activation.js";
+import { findMilestoneIds } from "./milestone-ids.js";
 
 export { buildSkillActivationBlock, buildSkillDiscoveryVars };
 
@@ -1482,21 +1483,84 @@ export async function checkNeedsRunUat(
  * as a seed when present. The discussion agent interviews the user, writes
  * a full CONTEXT.md, and the phase transitions to pre-planning automatically.
  */
+export interface DiscussMilestonePromptOptions {
+  headless?: boolean;
+  commitInstruction?: string;
+  fastPathInstruction?: string;
+  includeDraftSeed?: boolean;
+  includeContextMode?: boolean;
+}
+
+export async function buildDiscussMilestoneInlinedContext(mid: string, base: string): Promise<string> {
+  const inlined: string[] = [];
+
+  const roadmapInline = await inlineFileOptional(
+    resolveMilestoneFile(base, mid, "ROADMAP"),
+    relMilestoneFile(base, mid, "ROADMAP"),
+    "Milestone Roadmap",
+  );
+  if (roadmapInline) inlined.push(roadmapInline);
+
+  const contextInline = await inlineFileOptional(
+    resolveMilestoneFile(base, mid, "CONTEXT"),
+    relMilestoneFile(base, mid, "CONTEXT"),
+    "Milestone Context",
+  );
+  if (contextInline) inlined.push(contextInline);
+
+  const researchInline = await inlineFileOptional(
+    resolveMilestoneFile(base, mid, "RESEARCH"),
+    relMilestoneFile(base, mid, "RESEARCH"),
+    "Milestone Research",
+  );
+  if (researchInline) inlined.push(researchInline);
+
+  const decisionsPath = resolveGsdRootFile(base, "DECISIONS");
+  if (existsSync(decisionsPath)) {
+    const decisionsContent = await loadFile(decisionsPath);
+    if (decisionsContent) {
+      inlined.push(`### Decisions Register\nSource: \`${relGsdRootFile("DECISIONS")}\`\n\n${decisionsContent.trim()}`);
+    }
+  }
+
+  const milestoneIds = findMilestoneIds(base);
+  const currentIndex = milestoneIds.indexOf(mid);
+  const priorMilestoneIds = currentIndex >= 0 ? milestoneIds.slice(0, currentIndex) : milestoneIds;
+  for (const priorMid of priorMilestoneIds) {
+    const summaryInline = await inlineFileOptional(
+      resolveMilestoneFile(base, priorMid, "SUMMARY"),
+      relMilestoneFile(base, priorMid, "SUMMARY"),
+      `${priorMid} Prior Milestone Summary`,
+    );
+    if (summaryInline) inlined.push(summaryInline);
+  }
+
+  return inlined.length > 0
+    ? `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`
+    : "## Inlined Context\n\n_(no milestone context files found yet — go in blind and ask broad questions)_";
+}
+
 export async function buildDiscussMilestonePrompt(
   mid: string,
   midTitle: string,
   base: string,
   structuredQuestionsAvailable = "false",
-  { headless = false }: { headless?: boolean } = {},
+  {
+    headless = false,
+    commitInstruction = "Do not commit planning artifacts — .gsd/ is managed externally.",
+    fastPathInstruction = "",
+    includeDraftSeed = true,
+    includeContextMode = true,
+  }: DiscussMilestonePromptOptions = {},
 ): Promise<string> {
-  const discussTemplates = inlineTemplate("context", "Context");
+  const contextTemplate = inlineTemplate("context", "Context");
 
   if (headless) {
     const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
     const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
     return loadPrompt("discuss-headless", {
       seedContext: roadmapContent ?? "",
-      inlinedTemplates: discussTemplates,
+      inlinedTemplates: contextTemplate,
       workingDirectory: base,
       milestoneId: mid,
       contextPath: relMilestoneFile(base, mid, "CONTEXT"),
@@ -1505,7 +1569,9 @@ export async function buildDiscussMilestonePrompt(
     });
   }
 
-  const contextModeInstructions = renderContextModeForPrompt("discuss-milestone", base);
+  const rawInlinedContext = await buildDiscussMilestoneInlinedContext(mid, base);
+  const cappedInlinedContext = capPreamble(rawInlinedContext);
+  const discussTemplates = [cappedInlinedContext, contextTemplate].join("\n\n---\n\n");
 
   const basePrompt = loadPrompt("guided-discuss-milestone", {
     workingDirectory: base,
@@ -1513,20 +1579,22 @@ export async function buildDiscussMilestonePrompt(
     milestoneTitle: midTitle,
     inlinedTemplates: discussTemplates,
     structuredQuestionsAvailable,
-    commitInstruction: "Do not commit planning artifacts — .gsd/ is managed externally.",
-    fastPathInstruction: "",
+    commitInstruction,
+    fastPathInstruction,
   });
-  const promptWithContextMode = prependContextModeToBlock("discuss-milestone", base, basePrompt);
+  const promptWithContextMode = includeContextMode
+    ? prependContextModeToBlock("discuss-milestone", base, basePrompt)
+    : basePrompt;
 
   // If a CONTEXT-DRAFT.md exists, append it as seed material
   const draftPath = resolveMilestoneFile(base, mid, "CONTEXT-DRAFT");
   const draftContent = draftPath ? await loadFile(draftPath) : null;
 
-  if (draftContent) {
+  if (includeDraftSeed && draftContent) {
     return `${promptWithContextMode}\n\n## Prior Discussion (Draft Seed)\n\nThe following draft was captured from a prior multi-milestone discussion. Use it as seed material — the user has already provided this context. Start with a brief reflection on what the draft covers, then probe for any gaps or open questions before writing the full CONTEXT.md.\n\n${draftContent}`;
   }
 
-  return contextModeInstructions ? promptWithContextMode : basePrompt;
+  return promptWithContextMode;
 }
 
 /**
