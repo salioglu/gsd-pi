@@ -17,10 +17,19 @@ export function compactTextParts(parts: Array<string | string[] | null | undefin
 
 export function hasBrowserRequiredText(text: string): boolean {
   let inNonRequirementSection = false;
+  let nonRequirementDepth = 0;
   for (const line of text.split(/\r?\n/)) {
-    const headingMatch = line.match(/^#{1,6}\s+(.+?)\s*$/);
+    const headingMatch = line.match(/^(#{1,6})\s+(.+?)\s*$/);
     if (headingMatch) {
-      inNonRequirementSection = NON_REQUIREMENT_BROWSER_HEADING_RE.test(headingMatch[1] ?? "");
+      const depth = headingMatch[1]!.length;
+      const title = headingMatch[2] ?? "";
+      // Only update section context when at the same or higher level than the
+      // heading that opened the non-requirement zone. A sub-heading deeper than
+      // the opening heading must not escape or re-enter the zone on its own.
+      if (!inNonRequirementSection || depth <= nonRequirementDepth) {
+        inNonRequirementSection = NON_REQUIREMENT_BROWSER_HEADING_RE.test(title);
+        nonRequirementDepth = inNonRequirementSection ? depth : 0;
+      }
       continue;
     }
     if (inNonRequirementSection || NON_REQUIREMENT_BROWSER_LINE_RE.test(line)) continue;
