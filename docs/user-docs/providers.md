@@ -88,7 +88,7 @@ If you already have a Claude Pro or Max subscription and want to use GSD's plann
 
 **Automatic setup (recommended):**
 
-When GSD detects a Claude Code model during startup, it automatically writes a `.mcp.json` file in your project root with the GSD workflow MCP server configured. No manual steps needed — just start GSD once with Claude Code as the provider and the config is created for you.
+When GSD detects a Claude Code model during startup, it automatically writes a `.mcp.json` file in your project root with the GSD workflow and `gsd-browser` MCP servers configured. No manual steps needed — just start GSD once with Claude Code as the provider and the config is created for you.
 
 You can also trigger this manually from inside a GSD session:
 
@@ -96,7 +96,9 @@ You can also trigger this manually from inside a GSD session:
 /gsd mcp init
 ```
 
-This writes (or updates) the `gsd-workflow` entry in your project's `.mcp.json`. Claude Code discovers this file automatically on its next session start.
+This writes (or updates) the `gsd-workflow` and `gsd-browser` entries in your project's `.mcp.json`. Claude Code discovers this file automatically on its next session start.
+
+GSD's own Pi Providers, including Codex and non-Claude harnesses, do not need `.mcp.json` to use browser automation. They receive canonical `browser_*` tools from GSD, and GSD routes those tools through the managed bundled `gsd-browser` engine by default.
 
 **Manual setup:**
 

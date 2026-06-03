@@ -126,27 +126,26 @@ If both files exist, server names are merged and the first definition found wins
 
 Use `gsd-browser` when GSD or an external MCP client needs deterministic browser automation, versioned element refs, assertions, screenshots, visual diffs, recordings, or a live human takeover viewer.
 
-Install the companion CLI first:
+For GSD Pi Providers such as Codex and non-Claude harnesses, `@opengsd/gsd-browser` is bundled with GSD and used as the default managed browser engine. External MCP clients use a project MCP entry instead. The easiest way to write that entry is:
 
 ```bash
-npm install -g @opengsd/gsd-browser
+/gsd mcp init
 ```
 
-Then add a local MCP server entry:
+If you prefer to maintain the MCP entry manually, add:
 
 ```json
 {
   "mcpServers": {
     "gsd-browser": {
-      "type": "stdio",
       "command": "gsd-browser",
-      "args": ["mcp"]
+      "args": ["mcp", "--session", "gsd-my-project", "--identity-scope", "project", "--identity-project", "/path/to/project"]
     }
   }
 }
 ```
 
-Keep this in `.gsd/mcp.json` when browser paths, vault settings, or session state are machine-local. Use `.mcp.json` only when the team should share the same server entry.
+Keep this in `.gsd/mcp.json` when browser paths, vault settings, or session state are machine-local. Use `.mcp.json` only when the team should share the same server entry. Set `GSD_BROWSER_MCP_ENABLED=0` only to skip writing the external MCP entry; it does not disable GSD's managed browser engine. Use `GSD_BROWSER_ENGINE=legacy` for the Playwright compatibility engine or `GSD_BROWSER_ENGINE=off` to disable GSD-managed Pi browser tools.
 
 ### Example: HTTP server
 

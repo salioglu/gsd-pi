@@ -1,11 +1,16 @@
-/** browser-tools — pi extension: full browser interaction via Playwright. */
+/** browser-tools — Pi Browser Automation Contract adapter. */
 import { importExtensionModule, type ExtensionAPI } from "@gsd/pi-coding-agent";
 
-let registrationPromise: Promise<void> | null = null;
+import { closeManagedGsdBrowser, registerManagedGsdBrowserTools } from "./engine/managed-gsd-browser.js";
+import { resolveBrowserEngineMode, type BrowserEngineMode } from "./engine/selection.js";
 
-async function registerBrowserTools(pi: ExtensionAPI): Promise<void> {
-  if (!registrationPromise) {
-    registrationPromise = (async () => {
+let legacyRegistrationPromise: Promise<void> | null = null;
+let managedRegistrationPromise: Promise<void> | null = null;
+let registeredEngine: Exclude<BrowserEngineMode, "off"> | null = null;
+
+async function registerLegacyBrowserTools(pi: ExtensionAPI): Promise<void> {
+  if (!legacyRegistrationPromise) {
+    legacyRegistrationPromise = (async () => {
       const [
         lifecycle,
         capture,
@@ -136,12 +141,55 @@ async function registerBrowserTools(pi: ExtensionAPI): Promise<void> {
       injectionDetection.registerInjectionDetectionTools(pi, deps);
       verify.registerVerifyTools(pi, deps);
     })().catch((error) => {
-      registrationPromise = null;
+      legacyRegistrationPromise = null;
       throw error;
     });
   }
 
-  return registrationPromise;
+  return legacyRegistrationPromise;
+}
+
+async function registerBrowserTools(pi: ExtensionAPI): Promise<void> {
+  const engine = resolveBrowserEngineMode();
+  if (engine === "off") return;
+  if (registeredEngine && registeredEngine !== engine) {
+    throw new Error(
+      `Browser tools already registered with GSD_BROWSER_ENGINE=${registeredEngine}. Restart GSD before switching to ${engine}.`,
+    );
+  }
+
+  let registration: Promise<void>;
+  if (engine === "legacy") {
+    registration = registerLegacyBrowserTools(pi);
+  } else if (!managedRegistrationPromise) {
+    managedRegistrationPromise = Promise.resolve()
+      .then(() => {
+        registerManagedGsdBrowserTools(pi);
+      })
+      .catch((error) => {
+        managedRegistrationPromise = null;
+        throw error;
+      });
+    registration = managedRegistrationPromise;
+  } else {
+    registration = managedRegistrationPromise;
+  }
+
+  registeredEngine = engine;
+  try {
+    await registration;
+  } catch (error) {
+    if (registeredEngine === engine) registeredEngine = null;
+    throw error;
+  }
+}
+
+async function closeActiveBrowserEngines(): Promise<void> {
+  await closeManagedGsdBrowser();
+  if (legacyRegistrationPromise) {
+    const { closeBrowser } = await importExtensionModule<typeof import("./lifecycle.js")>(import.meta.url, "./lifecycle.js");
+    await closeBrowser();
+  }
 }
 
 export default function (pi: ExtensionAPI) {
@@ -157,7 +205,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
-    const { closeBrowser } = await importExtensionModule<typeof import("./lifecycle.js")>(import.meta.url, "./lifecycle.js");
-    await closeBrowser();
+    await closeActiveBrowserEngines();
+  });
+
+  pi.on("session_switch", async () => {
+    await closeActiveBrowserEngines();
   });
 }

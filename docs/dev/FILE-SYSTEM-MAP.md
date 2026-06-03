@@ -15,7 +15,7 @@
 | **Auth / OAuth** | Authentication, OAuth flows, token storage |
 | **Auto Engine** | GSD autonomous execution loop, dispatch, supervision |
 | **Bg Shell** | Background process / interactive shell management |
-| **Browser Tools** | Playwright-based browser automation extension |
+| **Browser Tools** | Browser Automation Contract adapter and managed gsd-browser engine integration |
 | **Build System** | Scripts for build, packaging, version management, CI |
 | **CLI** | Command-line entry points and argument parsing |
 | **CMux** | Tmux/multiplexer session integration |
@@ -575,7 +575,7 @@
 | bg-shell/interaction.ts | Bg Shell | Interactive process communication |
 | bg-shell/output-formatter.ts | Bg Shell | Process output formatting |
 | bg-shell/overlay.ts | Bg Shell, TUI Components | Terminal overlay for process monitoring |
-| browser-tools/index.ts | Browser Tools | Playwright-based browser automation extension |
+| browser-tools/index.ts | Browser Tools | Browser Automation Contract adapter registration |
 | browser-tools/core.ts | Browser Tools | Core Playwright instance management |
 | browser-tools/lifecycle.ts | Browser Tools | Browser session lifecycle |
 | browser-tools/capture.ts | Browser Tools | Screenshot and media capture |

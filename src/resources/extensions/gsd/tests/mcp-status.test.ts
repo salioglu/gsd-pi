@@ -341,6 +341,8 @@ describe("formatMcpInitResult", () => {
     assert.match(result, /created project mcp config/i);
     assert.match(result, /\/tmp\/project\/\.mcp\.json/);
     assert.match(result, /mcp-capable clients/i);
+    assert.match(result, /workflow and gsd-browser MCP servers/i);
+    assert.match(result, /Pi Providers use the managed gsd-browser engine/i);
     assert.doesNotMatch(result, /claude code/i);
   });
 
