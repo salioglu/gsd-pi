@@ -261,6 +261,85 @@ test('Blocking hook needs-rework verdict requests trigger unit retry', () => {
   }
 });
 
+test('Blocking hook needs-rework with default max_cycles allows unit retry', () => {
+  resetHookState();
+  const base = createFixtureBase();
+  try {
+    // No explicit max_cycles — default was 1 which blocked any retry (bug fix)
+    writeHookPreferences(base, `  - name: review-gate
+    after:
+      - execute-task
+    prompt: Review
+    artifact: REVIEW.md
+    criticality: blocking
+    on_block:
+      action: retry-unit
+`);
+    const dispatch = checkPostUnitHooks("execute-task", "M001/S01/T01", base);
+    assert.ok(dispatch, "gate dispatches first cycle");
+    writeFileSync(
+      resolveHookArtifactPath(base, "M001/S01/T01", "REVIEW.md"),
+      "---\nverdict: needs-rework\n---\n\nFix required.\n",
+      "utf-8",
+    );
+
+    const afterHook = checkPostUnitHooks("hook/review-gate", "M001/S01/T01", base);
+    assert.deepStrictEqual(afterHook, null, "needs-rework routes via retry signal");
+    assert.ok(isRetryPending(), "retry is pending with default max_cycles");
+    assert.deepStrictEqual(consumeRetryTrigger(), {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+    });
+    assert.deepStrictEqual(consumeGateBlock(), null, "no gate block — retry was scheduled");
+  } finally {
+    resetHookState();
+    invalidateAllCaches();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('State persistence: gate block is persisted and restored', () => {
+  resetHookState();
+  const base = createFixtureBase();
+  try {
+    writeHookPreferences(base, `  - name: security-gate
+    after:
+      - execute-task
+    prompt: Review security
+    artifact: SECURITY.md
+    criticality: blocking
+    max_cycles: 1
+`);
+    // Dispatch and complete the hook with a blocking verdict
+    const dispatch = checkPostUnitHooks("execute-task", "M001/S01/T01", base);
+    assert.ok(dispatch, "gate dispatches");
+    writeFileSync(
+      resolveHookArtifactPath(base, "M001/S01/T01", "SECURITY.md"),
+      "---\nverdict: needs-remediation\n---\n\nSecurity issue found.\n",
+      "utf-8",
+    );
+    const afterHook = checkPostUnitHooks("hook/security-gate", "M001/S01/T01", base);
+    assert.deepStrictEqual(afterHook, null, "gate pauses");
+
+    // Persist state (simulates what auto-post-unit does before consumeGateBlock)
+    persistHookState(base);
+
+    // Simulate crash+restart
+    resetHookState();
+    restoreHookState(base);
+
+    // Gate block should be recoverable after restore
+    const block = consumeGateBlock();
+    assert.ok(block, "gate block survives persist/restore");
+    assert.equal(block.hookName, "security-gate");
+    assert.equal(block.verdict, "needs-remediation");
+  } finally {
+    resetHookState();
+    invalidateAllCaches();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 // ─── Variable substitution in prompts ──────────────────────────────────────
 test('Variable substitution', () => {
   const base = "/project";

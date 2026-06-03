@@ -513,6 +513,8 @@ export interface PersistedHookState {
     triggerUnitId: string;
     forceRun?: boolean;
   }>;
+  /** Pending gate block, persisted so a pause survives a crash before consumeGateBlock runs. */
+  gateBlock?: PostUnitGateBlock | null;
   /** Timestamp of last state save. */
   savedAt: string;
 }

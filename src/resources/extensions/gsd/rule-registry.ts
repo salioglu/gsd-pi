@@ -351,7 +351,10 @@ export class RuleRegistry {
   ): HookDispatchResult | null {
     const cycleKey = `${config.name}/${triggerUnitType}/${triggerUnitId}`;
     const currentCycle = (this.cycleCounts.get(cycleKey) ?? 0) + 1;
-    const maxCycles = config.max_cycles ?? 1;
+    // Default 3 so a needs-rework verdict on cycle 1 can schedule a unit retry
+    // and the hook can run again. _rerunGateOrBlock still uses hookMaxCycles (default 1)
+    // to cap hook-only reruns for bad artifacts.
+    const maxCycles = config.max_cycles ?? 3;
     if (currentCycle > maxCycles) return null;
 
     this.cycleCounts.set(cycleKey, currentCycle);
@@ -579,7 +582,9 @@ export class RuleRegistry {
   ): boolean {
     const cycleKey = hookCycleKey(config, hook);
     const currentCycle = this.cycleCounts.get(cycleKey) ?? 1;
-    const maxCycles = hookMaxCycles(config);
+    // Use the same default as _startHook (3) so a retry is allowed when
+    // _startHook would permit another hook run after the unit retries.
+    const maxCycles = config.max_cycles ?? 3;
     if (currentCycle >= maxCycles) return false;
 
     this.activeHook = null;
@@ -862,6 +867,7 @@ export class RuleRegistry {
         triggerUnitId: entry.triggerUnitId,
         forceRun: entry.forceRun,
       })),
+      gateBlock: this.gateBlockPending ? { ...this.gateBlockPending } : null,
       savedAt: new Date().toISOString(),
     };
     try {
@@ -906,6 +912,9 @@ export class RuleRegistry {
           }
         }
       }
+      this.gateBlockPending = state.gateBlock && typeof state.gateBlock === "object"
+        ? { ...state.gateBlock }
+        : null;
     } catch (e) {
       logWarning("registry", `failed to restore hook state: ${(e as Error).message}`);
     }
