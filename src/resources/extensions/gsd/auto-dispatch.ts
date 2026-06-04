@@ -674,7 +674,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       const transportError = getWorkflowTransportSupportError(
         sessionProvider,
         getRequiredWorkflowToolsForAutoUnit("run-uat"),
-        { projectRoot: basePath, surface: "auto-mode", unitType: "run-uat", authMode: sessionAuthMode, baseUrl: sessionBaseUrl, activeTools },
+        { projectRoot: basePath, surface: "auto-mode", unitType: "run-uat", authMode: sessionAuthMode, baseUrl: sessionBaseUrl, activeTools, requireMcpToolsConnected: true },
       );
       if (transportError) {
         return { action: "stop" as const, reason: transportError, level: "warning" as const };

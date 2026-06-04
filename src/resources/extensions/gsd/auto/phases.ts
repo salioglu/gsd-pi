@@ -2288,6 +2288,7 @@ export async function runUnitPhase(
           : undefined,
       baseUrl: (s.currentUnitModel as any)?.baseUrl ?? ctx.model?.baseUrl,
       activeTools: typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [],
+      requireMcpToolsConnected: true,
     },
   );
   const workflowMcpPrepModel = s.currentUnitModel;

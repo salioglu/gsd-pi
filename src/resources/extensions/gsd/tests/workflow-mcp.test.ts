@@ -807,6 +807,7 @@ test("transport compatibility rejects MCP tools not connected in active tool sur
       authMode: "externalCli",
       baseUrl: "local://claude-code",
       activeTools: ["ScheduleWakeup", "ToolSearch", "bash", "read", "write"],
+      requireMcpToolsConnected: true,
     },
   );
 
@@ -825,6 +826,7 @@ test("transport compatibility checks all required tools against active tool surf
       authMode: "externalCli",
       baseUrl: "local://claude-code",
       activeTools: ["ScheduleWakeup", "ToolSearch", "bash", "read", "write"],
+      requireMcpToolsConnected: true,
     },
   );
 

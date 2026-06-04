@@ -22,6 +22,14 @@ export interface WorkflowCapabilityOptions {
   authMode?: "apiKey" | "oauth" | "externalCli" | "none";
   baseUrl?: string;
   activeTools?: string[];
+  /**
+   * When true, require all MCP surface tools to appear in activeTools
+   * (i.e., the MCP server must already be connected). Used for auto-mode
+   * dispatch preflights. When false/absent (default), MCP surface tools are
+   * assumed available if the server is configured — this is correct for guided
+   * flow dispatch, which starts the MCP server as part of the launch sequence.
+   */
+  requireMcpToolsConnected?: boolean;
 }
 
 /** Session cwd may be a milestone worktree; MCP config and server discovery use the project root. */
@@ -487,9 +495,19 @@ export function getWorkflowTransportSupportError(
   }
 
   const uniqueRequired = [...new Set(requiredTools)];
+  // In strict mode (requireMcpToolsConnected), every required tool must appear
+  // in activeTools — used by auto-mode dispatch to confirm the MCP server is
+  // already connected before consuming a retry attempt. In the default (lax)
+  // mode, MCP surface tools are assumed reachable through the configured server
+  // and only non-surface tools are checked against activeTools — this is correct
+  // for guided flow dispatch, which starts the MCP server during launch.
+  const surfaceExempt = !options.requireMcpToolsConnected;
+  const toolsToCheck = surfaceExempt
+    ? uniqueRequired.filter((tool) => !MCP_WORKFLOW_TOOL_SURFACE.has(tool))
+    : uniqueRequired;
   const missing = (options.activeTools && options.activeTools.length > 0)
-    ? uniqueRequired.filter((tool) => !hasRequiredTool(tool, options.activeTools!))
-    : uniqueRequired.filter((tool) => !MCP_WORKFLOW_TOOL_SURFACE.has(tool));
+    ? toolsToCheck.filter((tool) => !hasRequiredTool(tool, options.activeTools!))
+    : toolsToCheck;
   if (missing.length === 0) return null;
 
   if (options.activeTools && options.activeTools.length > 0) {
