@@ -1158,7 +1158,10 @@ async function dispatchWorkflow(
             ? ctx.modelRegistry.getProviderAuthMode(ctx.model.provider)
             : undefined,
         baseUrl: result.appliedModel?.baseUrl ?? ctx.model?.baseUrl,
-        activeTools: typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [],
+        // Guided flow starts the MCP workflow server as part of dispatch, so the
+        // parent session's activeTools doesn't include MCP tools yet. The MCP
+        // launch config check (detectWorkflowMcpLaunchConfig) is the right gate
+        // here — not whether MCP tools are pre-registered in the parent session.
       },
     );
     if (compatibilityError) {

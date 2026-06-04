@@ -259,7 +259,19 @@ export function buildRunUatGsdToolSet(
       ...RUN_UAT_BROWSER_TOOL_NAMES,
     ],
   );
-  return [...new Set(scoped)];
+  const resolved = [...new Set(scoped)];
+
+  const unresolved = RUN_UAT_WORKFLOW_TOOL_NAMES.filter(
+    (tool) => !resolved.some((name) => name === tool || (name.startsWith("mcp__") && name.endsWith(`__${tool}`))),
+  );
+  if (unresolved.length > 0) {
+    safetyLogWarning(
+      "bootstrap",
+      `buildRunUatGsdToolSet: required run-uat workflow tool(s) not found in active/registered surface: ${unresolved.join(", ")}. Session may lack gsd-workflow MCP connection.`,
+    );
+  }
+
+  return resolved;
 }
 
 export function buildMinimalGsdWorkflowToolSet(

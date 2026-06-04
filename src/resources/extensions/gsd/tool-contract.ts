@@ -45,7 +45,7 @@ export function compileUnitToolContract(unitType: string): ToolContractResult {
   const forbiddenWorkflowTools = Object.entries(surfaceContract?.forbiddenGsdTools ?? {})
     .map(([name, reason]) => ({ name, reason }));
   const closeoutTools = requiredWorkflowTools.filter((tool) =>
-    /^gsd_(?:task|slice|milestone|complete|validate|save|summary)/.test(tool),
+    /^gsd_(?:task|slice|milestone|complete|validate|save|summary|uat)/.test(tool),
   );
 
   if (requiresCloseoutTool(unitType) && closeoutTools.length === 0) {

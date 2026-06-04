@@ -77,6 +77,10 @@ import { markDepthVerified } from "./bootstrap/write-gate.js";
 import { ensureWorkflowPreferencesCaptured } from "./planning-depth.js";
 import { MILESTONE_ID_RE } from "./milestone-ids.js";
 import {
+  getWorkflowTransportSupportError,
+  getRequiredWorkflowToolsForAutoUnit,
+} from "./workflow-mcp.js";
+import {
   PROJECT_RESEARCH_INFLIGHT_MARKER,
 } from "./project-research-policy.js";
 import {
@@ -136,6 +140,12 @@ export interface DispatchContext {
   modelRegistry?: MinimalModelRegistry;
   /** Session model provider, used for provider-specific effective context windows. */
   sessionProvider?: string;
+  /** Active tools in the current session, used for transport preflight checks. */
+  activeTools?: string[];
+  /** Session model base URL, used for transport preflight checks. */
+  sessionBaseUrl?: string;
+  /** Session model auth mode, used for transport preflight checks. */
+  sessionAuthMode?: "apiKey" | "oauth" | "externalCli" | "none";
 }
 
 function resolveExistingExpectedArtifact(
@@ -653,10 +663,22 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "run-uat (post-completion)",
-    match: async ({ state, mid, basePath, prefs }) => {
+    match: async ({ state, mid, basePath, prefs, sessionProvider, sessionAuthMode, activeTools, sessionBaseUrl }) => {
       const needsRunUat = await checkNeedsRunUat(basePath, mid, state, prefs);
       if (!needsRunUat) return null;
       const { sliceId, uatType } = needsRunUat;
+
+      // Transport preflight: verify required MCP tools are actually connected
+      // before consuming a retry attempt. Fixes tool-starved sessions burning
+      // all MAX_UAT_ATTEMPTS before stopping (#477).
+      const transportError = getWorkflowTransportSupportError(
+        sessionProvider,
+        getRequiredWorkflowToolsForAutoUnit("run-uat"),
+        { projectRoot: basePath, surface: "auto-mode", unitType: "run-uat", authMode: sessionAuthMode, baseUrl: sessionBaseUrl, activeTools },
+      );
+      if (transportError) {
+        return { action: "stop" as const, reason: transportError, level: "warning" as const };
+      }
 
       // Cap run-uat dispatch attempts to prevent infinite replay (#3624).
       // Check before incrementing so an exhausted counter cannot create a

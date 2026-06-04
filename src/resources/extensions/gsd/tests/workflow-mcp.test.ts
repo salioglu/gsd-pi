@@ -795,7 +795,7 @@ test("transport compatibility now allows replan-slice over workflow MCP surface"
   assert.equal(error, null);
 });
 
-test("transport compatibility accepts workflow MCP tools absent from parent active tool surface", () => {
+test("transport compatibility rejects MCP tools not connected in active tool surface", () => {
   const error = getWorkflowTransportSupportError(
     "claude-code",
     ["gsd_summary_save"],
@@ -810,10 +810,10 @@ test("transport compatibility accepts workflow MCP tools absent from parent acti
     },
   );
 
-  assert.equal(error, null);
+  assert.match(error ?? "", /requires gsd_summary_save/);
 });
 
-test("transport compatibility still checks non-MCP tools against parent active tool surface", () => {
+test("transport compatibility checks all required tools against active tool surface", () => {
   const error = getWorkflowTransportSupportError(
     "claude-code",
     ["gsd_summary_save", "secure_env_collect"],
@@ -828,8 +828,9 @@ test("transport compatibility still checks non-MCP tools against parent active t
     },
   );
 
-  assert.match(error ?? "", /requires secure_env_collect/);
-  assert.doesNotMatch(error ?? "", /gsd_summary_save/);
+  assert.match(error ?? "", /requires.*(?:gsd_summary_save|secure_env_collect)/);
+  assert.match(error ?? "", /gsd_summary_save/);
+  assert.match(error ?? "", /secure_env_collect/);
 });
 
 test("transport compatibility still blocks units whose MCP tools are not exposed", () => {

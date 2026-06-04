@@ -91,6 +91,32 @@ export function clearToolBaseline(pi: ExtensionAPI | object): void {
 }
 
 /**
+ * Return the union of the pre-dispatch baseline tool set and the current live
+ * active tools, or just the live tools when no baseline has been recorded yet.
+ *
+ * Use this instead of `pi.getActiveTools()` anywhere you need the full tool
+ * surface for a preflight/routing check that runs BEFORE `selectAndApplyModel`
+ * restores the baseline — e.g. in `runDispatch` and `decideNextUnit`.
+ *
+ * The union is intentional:
+ *   - Baseline covers tools that a prior unit's per-provider narrowing (hook
+ *     overrides, Groq 128-tool cap, etc.) has removed from the live set.
+ *     Those tools will be restored by `selectAndApplyModel` before dispatch, so
+ *     dropping them from the preflight check would be a false negative.
+ *   - Live set covers tools connected after the baseline was first captured
+ *     (e.g. MCP servers attached mid-session or after a paused resume).
+ *     Without the live merge, a stale baseline permanently hides newly
+ *     connected MCP tools and prevents transport-preflight from clearing on
+ *     resume (#477 follow-up).
+ */
+export function getToolBaselineSnapshot(pi: ExtensionAPI): string[] {
+  const live = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [];
+  const baseline = TOOL_BASELINE.get(pi as unknown as object);
+  if (baseline === undefined) return live;
+  return [...new Set([...baseline, ...live])];
+}
+
+/**
  * Models eligible for the pre-dispatch policy gate. Prefer registry-available
  * models; when that list is empty (common after worktree resume before registry
  * refresh), fall back to the live session / auto-start / pinned models that are
