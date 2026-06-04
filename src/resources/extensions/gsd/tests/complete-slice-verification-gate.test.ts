@@ -212,6 +212,29 @@ describe('complete-slice verification gate (#3580)', () => {
     }
   });
 
+  test('allows an artifact-driven UAT whose "navigate" step targets a file, not a browser', async () => {
+    // Bugbot regression: a bare "navigate to <file/API>" must not trip the gate
+    // just because it contains the word "navigate".
+    const body = [
+      '## UAT Type',
+      '- UAT mode: artifact-driven',
+      '',
+      '## Test Cases',
+      '1. Navigate to the generated report file and confirm the schema section exists.',
+    ].join('\n');
+    const result = await handleCompleteSlice(
+      makeParams({ uatContent: body }),
+      basePath,
+    );
+    if ('error' in result) {
+      assert.doesNotMatch(
+        result.error,
+        /browser-capable mode/i,
+        `non-web "navigate" must not trip the browser gate, got: ${result.error}`,
+      );
+    }
+  });
+
   test('allows a browser UAT when it is declared browser-executable', async () => {
     const body = BROWSER_UAT_BODY.replace('artifact-driven', 'browser-executable');
     const result = await handleCompleteSlice(
