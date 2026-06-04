@@ -33,6 +33,7 @@ import {
   selectAndApplyModel,
   ModelPolicyDispatchBlockedError,
   clearToolBaseline,
+  getToolBaselineSnapshot,
 } from "../auto-model-selection.js";
 import { applyModelPolicyFilter } from "../uok/model-policy.js";
 import {
@@ -705,6 +706,67 @@ test("cross-mode (#4965): auto → guided → auto preserves the original auto-e
     assert.ok(
       restoreCall,
       "auto run 2 must restore the auto-era baseline [A, B, C] — proves guided-flow didn't corrupt it",
+    );
+  } finally {
+    env.restoreEnv();
+    env.cleanup();
+  }
+});
+
+// ─── 8. Baseline union: MCP tools connected after baseline capture (#477) ─────
+//
+// `getToolBaselineSnapshot` must return the UNION of the frozen WeakMap baseline
+// and the current live tool set.  This ensures:
+//   (a) Provider-narrowed tools (in baseline, dropped from live) are still seen
+//       by transport preflight — the bug-5 fix from #477.
+//   (b) Tools connected after the baseline was captured (e.g. MCP server attached
+//       mid-session) are also visible — so a paused run that resumes after MCP
+//       reconnects clears the transport warning on the first iteration instead of
+//       repeating it indefinitely.
+
+test("baseline union (#477): getToolBaselineSnapshot includes live tools not present in frozen baseline", async () => {
+  const env = makeTempProject();
+  try {
+    const availableModels = [
+      { id: "claude-sonnet-4-6", provider: "anthropic", api: "anthropic-messages" },
+    ];
+
+    const initialTools = ["bash", "read", "write"];
+    const pi = makeRecordingPi(initialTools);
+    clearToolBaseline(pi as unknown as object);
+
+    // Capture baseline with only native tools (no MCP connected yet).
+    await selectAndApplyModel(
+      makeCtx(availableModels),
+      pi as any,
+      "execute-task",
+      "u1",
+      env.dir,
+      undefined,
+      false,
+      { provider: "anthropic", id: "claude-sonnet-4-6" },
+      undefined,
+      /* isAutoMode */ true,
+    );
+
+    // Simulate: provider narrows tools (Groq cap, hook override, etc.).
+    // The baseline in the WeakMap still has the full initial set.
+    pi.setActiveTools(["bash"]);
+
+    // Simulate: user connects MCP mid-session (after the baseline was captured).
+    const liveTools = pi.getActiveTools().concat(["mcp__gsd-workflow__gsd_uat_exec"]);
+    pi.setActiveTools(liveTools);
+
+    const snapshot = getToolBaselineSnapshot(pi as any);
+
+    // All baseline tools must be present (even the provider-narrowed ones).
+    for (const t of initialTools) {
+      assert.ok(snapshot.includes(t), `snapshot must include baseline tool: ${t}`);
+    }
+    // Newly connected MCP tool must also be present.
+    assert.ok(
+      snapshot.includes("mcp__gsd-workflow__gsd_uat_exec"),
+      "snapshot must include MCP tool connected after baseline capture",
     );
   } finally {
     env.restoreEnv();
