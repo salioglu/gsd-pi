@@ -46,7 +46,7 @@ import { hasBrowserRequiredText } from "./browser-evidence.js";
 import { debugLog } from "./debug-logger.js";
 import { buildSkillActivationBlock, buildSkillDiscoveryVars } from "./skill-activation.js";
 import { findMilestoneIds } from "./milestone-ids.js";
-import { buildRunUatResultPresentation, RUN_UAT_TOOL_PRESENTATION_PLAN_ID } from "./tool-presentation-plan.js";
+import { buildRunUatPresentationForType, RUN_UAT_TOOL_PRESENTATION_PLAN_ID } from "./tool-presentation-plan.js";
 
 export { buildSkillActivationBlock, buildSkillDiscoveryVars };
 
@@ -3385,7 +3385,7 @@ export async function buildRunUatPrompt(
 
   const uatResultPath = join(base, relSliceFile(base, mid, sliceId, "ASSESSMENT"));
   const uatType = resolveEffectiveUatType(uatContent);
-  const canonicalPresentation = JSON.stringify(buildRunUatResultPresentation(), null, 2);
+  const canonicalPresentation = JSON.stringify(buildRunUatPresentationForType(uatType), null, 2);
 
   return loadPrompt("run-uat", {
     workingDirectory: base,

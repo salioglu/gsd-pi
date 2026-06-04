@@ -2,12 +2,14 @@
 // File Purpose: Resolve phase-aware tool surfaces for GSD model presentations.
 
 import {
+  RUN_UAT_BROWSER_TOOL_NAMES,
   RUN_UAT_READ_ONLY_TOOL_NAMES,
   RUN_UAT_TOOL_PRESENTATION_PLAN_ID,
   RUN_UAT_WORKFLOW_TOOL_NAMES,
 } from "./unit-tool-contracts.js";
 
 export {
+  RUN_UAT_BROWSER_TOOL_NAMES,
   RUN_UAT_READ_ONLY_TOOL_NAMES,
   RUN_UAT_TOOL_PRESENTATION_PLAN_ID,
   RUN_UAT_WORKFLOW_TOOL_NAMES,
@@ -30,6 +32,13 @@ export interface ToolPresentationPlan {
   blockedToolNames: Array<{ name: string; reason: string }>;
   aliases: Array<{ requested: string; canonical: string }>;
   diagnostics: string[];
+}
+
+export interface RunUatResultPresentation {
+  surface: ToolPresentationSurface;
+  presentedTools: string[];
+  blockedTools: Array<{ name: string; reason: string }>;
+  toolPresentationPlanId: string;
 }
 
 export const RUN_UAT_FORBIDDEN_TOOL_NAMES = [
@@ -114,16 +123,33 @@ export function buildRunUatCanonicalToolNames(options: { includeBrowserTools?: r
   ]);
 }
 
+export function runUatBrowserToolsForType(uatType: string | undefined): readonly string[] {
+  return uatType === "browser-executable" ? RUN_UAT_BROWSER_TOOL_NAMES : [];
+}
+
+export function runUatPresentationSurfaceForType(uatType: string | undefined): ToolPresentationSurface {
+  return uatType === "browser-executable" ? "hybrid" : "mcp";
+}
+
+export function buildRunUatPresentationForType(
+  uatType: string | undefined,
+  options: {
+    surface?: ToolPresentationSurface;
+    presentedTools?: readonly string[];
+  } = {},
+): RunUatResultPresentation {
+  return buildRunUatResultPresentation({
+    ...options,
+    surface: options.surface ?? runUatPresentationSurfaceForType(uatType),
+    includeBrowserTools: runUatBrowserToolsForType(uatType),
+  });
+}
+
 export function buildRunUatResultPresentation(options: {
   surface?: ToolPresentationSurface;
   includeBrowserTools?: readonly string[];
   presentedTools?: readonly string[];
-} = {}): {
-  surface: ToolPresentationSurface;
-  presentedTools: string[];
-  blockedTools: Array<{ name: string; reason: string }>;
-  toolPresentationPlanId: string;
-} {
+} = {}): RunUatResultPresentation {
   const presentedTools = options.presentedTools
     ? dedupe(options.presentedTools)
     : buildRunUatCanonicalToolNames({ includeBrowserTools: options.includeBrowserTools });

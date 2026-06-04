@@ -48,7 +48,7 @@ import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { parseProject } from "../schemas/parsers.js";
 import { getAutoRuntimeSnapshot } from "../auto-runtime-state.js";
 import {
-  buildRunUatResultPresentation,
+  buildRunUatPresentationForType,
   canonicalWorkflowToolName,
   parseMcpToolName,
   RUN_UAT_FORBIDDEN_TOOL_NAMES,
@@ -1047,13 +1047,13 @@ function normalizeUatVerdict(params: UatResultSaveParams): UatResultSaveParams {
 function supplyDefaultPresentation(params: UatResultSaveParams): UatResultSaveParams {
   const raw = params as Partial<UatResultSaveParams> & Record<string, unknown>;
   if (!raw.presentation) {
-    return { ...params, presentation: buildRunUatResultPresentation() };
+    return { ...params, presentation: buildRunUatPresentationForType(params.uatType) };
   }
   return params;
 }
 
 function mergeCanonicalPresentation(params: UatResultSaveParams): UatResultSaveParams {
-  const canonicalPresentation = buildRunUatResultPresentation();
+  const canonicalPresentation = buildRunUatPresentationForType(params.uatType);
   const providedPresentation = params.presentation as Partial<UatPresentationInput>;
   return {
     ...params,

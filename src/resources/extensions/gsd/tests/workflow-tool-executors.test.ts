@@ -705,6 +705,65 @@ test("executeUatResultSave supplies canonical presentation and normalizes verdic
   }
 });
 
+test("executeUatResultSave supplies direct browser tools for browser-executable UAT", async () => {
+  const base = makeTmpBase();
+  const worktree = join(base, ".gsd", "worktrees", "M001");
+  const worktreeExecDir = join(worktree, ".gsd", "exec");
+  const evidenceId = "uat-direct-browser-evidence";
+  try {
+    openTestDb(base);
+    seedMilestone("M001", "Milestone One");
+    seedSlice("M001", "S06", "complete");
+    mkdirSync(worktreeExecDir, { recursive: true });
+    writeFileSync(
+      join(worktreeExecDir, `${evidenceId}.meta.json`),
+      JSON.stringify({
+        id: evidenceId,
+        metadata: {
+          kind: "uat_exec",
+          milestoneId: "M001",
+          sliceId: "S06",
+          checkId: "UAT-01",
+          intent: "uat-browser-check",
+        },
+      }),
+      "utf-8",
+    );
+
+    const result = await inProjectDir(worktree, () => executeUatResultSave({
+      milestoneId: "M001",
+      sliceId: "S06",
+      uatType: "browser-executable",
+      verdict: "PASS",
+      checks: [{
+        id: "UAT-01",
+        description: "Browser flow used managed gsd-browser tools",
+        mode: "browser",
+        result: "PASS",
+        evidence: [{ kind: "gsd_uat_exec", ref: evidenceId }],
+        notes: "Browser check passed.",
+      }],
+      notes: "UAT passed with managed browser evidence.",
+    } as unknown as Parameters<typeof executeUatResultSave>[0], worktree));
+
+    assert.equal(result.isError, undefined);
+    const attempt = JSON.parse(readFileSync(
+      join(base, ".gsd", "uat", "M001", "S06", "attempt-1.json"),
+      "utf-8",
+    )) as { presentation?: { presentedTools?: string[] } };
+
+    assert.ok(attempt.presentation?.presentedTools?.includes("browser_navigate"));
+    assert.ok(attempt.presentation?.presentedTools?.includes("browser_assert"));
+    assert.equal(
+      attempt.presentation?.presentedTools?.some((toolName) => toolName.startsWith("mcp__gsd-browser__")),
+      false,
+    );
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
 test("executeUatResultSave merges canonical plan ID and read-only tools when presentation lacks plan ID", async () => {
   const base = makeTmpBase();
   const worktree = join(base, ".gsd", "worktrees", "M001");

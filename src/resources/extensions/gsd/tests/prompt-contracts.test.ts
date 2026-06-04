@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  RUN_UAT_BROWSER_TOOL_NAMES,
   buildRunUatResultPresentation,
+  buildRunUatPresentationForType,
   RUN_UAT_READ_ONLY_TOOL_NAMES,
   RUN_UAT_TOOL_PRESENTATION_PLAN_ID,
   RUN_UAT_WORKFLOW_TOOL_NAMES,
@@ -79,6 +81,16 @@ test("run-uat prompt gives the complete UAT result-save presentation contract", 
     presentation.blockedTools.every((entry) => entry.reason === "forbidden during run-uat"),
     "presentation should explain blocked run-uat tools",
   );
+});
+
+test("browser-executable UAT presentation uses direct managed browser tools", () => {
+  const presentation = buildRunUatPresentationForType("browser-executable");
+
+  assert.equal(presentation.surface, "hybrid");
+  for (const toolName of RUN_UAT_BROWSER_TOOL_NAMES) {
+    assert.ok(presentation.presentedTools.includes(toolName), `presentation should include browser tool ${toolName}`);
+  }
+  assert.ok(!presentation.presentedTools.some((toolName) => toolName.startsWith("mcp__gsd-browser__")));
 });
 
 test("workflow-start prompt defaults to autonomy instead of per-phase confirmation", () => {

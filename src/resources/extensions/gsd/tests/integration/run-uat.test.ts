@@ -724,6 +724,8 @@ test('(u) run-uat prompt promotes artifact-driven browser specs to browser-execu
       assert.match(prompt, /\*\*Detected UAT mode:\*\*\s*`browser-executable`/);
       assert.match(prompt, /uatType: "browser-executable"/);
       assert.match(prompt, /use gsd-browser tools/i);
+      assert.match(prompt, /"browser_navigate"/);
+      assert.match(prompt, /"browser_assert"/);
     } finally {
       cleanup(base);
     }
@@ -741,6 +743,7 @@ test('(v) run-uat prompt keeps deferred browser work artifact-driven', async () 
       assert.match(prompt, /\*\*Detected UAT mode:\*\*\s*`artifact-driven`/);
       assert.match(prompt, /uatType: "artifact-driven"/);
       assert.doesNotMatch(prompt, /uatType: "browser-executable"/);
+      assert.doesNotMatch(prompt, /"browser_navigate"/);
     } finally {
       cleanup(base);
     }
