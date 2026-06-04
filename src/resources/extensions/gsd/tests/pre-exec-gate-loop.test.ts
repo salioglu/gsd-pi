@@ -32,6 +32,7 @@ import {
 import { deriveStateFromDb } from "../state.ts";
 import { _clearGsdRootCache } from "../paths.ts";
 import { invalidateAllCaches } from "../cache.ts";
+import { markPlannerHandoffOffered } from "../planner-handoff.ts";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -172,6 +173,7 @@ test("#4551: dispatch rule injects failure context and clears session field", as
 
   const state = await deriveStateFromDb(base);
   assert.equal(state.phase, "planning", "state must be in planning phase");
+  markPlannerHandoffOffered(base, "M001", "command");
 
   const session = new AutoSession();
   session.basePath = base;
@@ -232,6 +234,7 @@ test("#4551: dispatch rule does NOT inject stale failure for a different slice",
   invalidateAllCaches();
 
   const state = await deriveStateFromDb(base);
+  markPlannerHandoffOffered(base, "M001", "command");
 
   const session = new AutoSession();
   session.basePath = base;

@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 
 import { DISPATCH_RULES } from "../auto-dispatch.ts";
 import type { DispatchContext, DispatchAction } from "../auto-dispatch.ts";
+import { PLANNER_HANDOFF_RULE_NAME } from "../planner-handoff.ts";
 import type { GSDState } from "../types.ts";
 
 // ─── State helpers ────────────────────────────────────────────────────────
@@ -216,6 +217,29 @@ test("dispatch-rule-coverage: planning with active slice and skip_research → p
   );
 });
 
+test("dispatch-rule-coverage: planning boundary → planner handoff", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-disp-cov-planner-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  writeMilestoneFile(tmp, "M001", "CONTEXT", "# Context\n");
+  writeMilestoneFile(tmp, "M001", "ROADMAP", "# Roadmap\n");
+
+  const state = makeState({
+    phase: "planning",
+    activeSlice: { id: "S01", title: "First Slice" },
+    nextAction: "Plan slice S01 (First Slice).",
+  });
+  const match = await findFirstMatch(makeCtx(tmp, state));
+  assertMatch(
+    match,
+    { ruleName: PLANNER_HANDOFF_RULE_NAME, action: "stop" },
+    "planning boundary → planner handoff",
+  );
+  if (match?.result.action === "stop") {
+    assert.match(match.result.reason, /\/gsd planner/);
+  }
+});
+
 test("dispatch-rule-coverage: executing with task plan present → execute-task", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-disp-cov-exec-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -350,7 +374,7 @@ test("dispatch-rule-coverage: rule registry has the expected size", () => {
   // intentionally.
   assert.equal(
     DISPATCH_RULES.length,
-    29,
+    30,
     `DISPATCH_RULES length changed (got ${DISPATCH_RULES.length}). ` +
       "If you added a rule, add a state stub to dispatch-rule-coverage.test.ts " +
       "and update this expected count.",
