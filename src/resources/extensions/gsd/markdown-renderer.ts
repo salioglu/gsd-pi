@@ -12,7 +12,7 @@
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus } from "./status-guards.js";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { createRequire } from "node:module";
 import {
   getAllMilestones,
@@ -380,6 +380,7 @@ export async function renderPlanFromDb(
   basePath: string,
   milestoneId: string,
   sliceId: string,
+  outputPath?: string,
 ): Promise<{ planPath: string; taskPlanPaths: string[]; content: string }> {
   const slice = getSlice(milestoneId, sliceId);
   if (!slice) {
@@ -391,9 +392,16 @@ export async function renderPlanFromDb(
     throw new Error(`no tasks found for ${milestoneId}/${sliceId}`);
   }
 
-  const slicePath = join(gsdProjectionRoot(basePath), "milestones", milestoneId, "slices", sliceId);
-  mkdirSync(slicePath, { recursive: true });
-  const absPath = join(slicePath, `${sliceId}-PLAN.md`);
+  const defaultPlanPath = join(
+    gsdProjectionRoot(basePath),
+    "milestones",
+    milestoneId,
+    "slices",
+    sliceId,
+    `${sliceId}-PLAN.md`,
+  );
+  const absPath = outputPath ?? defaultPlanPath;
+  mkdirSync(dirname(absPath), { recursive: true });
   const artifactPath = toArtifactPath(absPath, basePath);
   const sliceGates = getGateResults(milestoneId, sliceId, "slice");
   const content = renderSlicePlanMarkdown(slice, tasks, sliceGates);
@@ -508,6 +516,7 @@ export async function renderPlanCheckboxes(
   basePath: string,
   milestoneId: string,
   sliceId: string,
+  outputPath?: string,
 ): Promise<boolean> {
   const tasks = getSliceTasks(milestoneId, sliceId);
   if (tasks.length === 0) {
@@ -517,7 +526,7 @@ export async function renderPlanCheckboxes(
     return false;
   }
 
-  await renderPlanFromDb(basePath, milestoneId, sliceId);
+  await renderPlanFromDb(basePath, milestoneId, sliceId, outputPath);
   return true;
 }
 
