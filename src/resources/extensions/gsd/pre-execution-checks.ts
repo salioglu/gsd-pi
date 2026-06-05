@@ -483,7 +483,8 @@ function shouldValidateInputAsPath(raw: string): boolean {
   if (URL_SCHEME_PATTERN.test(candidate)) return false;
   if (SCP_PATTERN.test(candidate)) return false;
 
-  if (/^`+[^`]+`+/.test(trimmed)) {
+  const explicitlyWrappedPath = /^`+[^`]+`+/.test(trimmed) || /^(["'])([^"']+)\1$/.test(trimmed);
+  if (explicitlyWrappedPath && looksLikePathOrUrl(candidate)) {
     return true;
   }
 
@@ -496,7 +497,6 @@ function shouldValidateInputAsPath(raw: string): boolean {
     candidate.startsWith("./") ||
     candidate.startsWith("../") ||
     candidate.startsWith("~/") ||
-    /[\\/]/.test(candidate) ||
     /[*?[\]{}]/.test(candidate)
   );
 }

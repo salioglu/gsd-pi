@@ -45,6 +45,7 @@
 - **Worktree State Projection module**: module that owns the direction-and-rules of state file flow between project root and auto-worktree. Encodes the bug-hardened invariants (additive milestone copy, ASSESSMENT verdict overwrite, completed-units forward-sync, WAL/SHM cleanup) that `syncProjectRootToWorktree` and `syncStateToProjectRoot` carry today.
 - **Recovery Classification module**: module that maps provider, tool, policy, git, worktree, runtime, and reconciliation-drift failures to a Recovery decision.
 - **Tool Contract module**: module that keeps Unit prompts, tool schemas, tool policy, and pre-dispatch validation aligned.
+- **Task Output Contract**: the concrete files a planned Task promises to create or overwrite. Distinct from task inputs, verification commands, and human-readable success outcomes.
 - **Provider**: a model execution path inside the Pi/GSD agent loop, selected for a session or Unit and subject to GSD's tool and capability contracts.
 - **External MCP Client**: an AI client outside the Pi/GSD agent loop that connects to project MCP servers and owns discovery, startup, and presentation of those servers.
 - **Browser Automation Contract**: the GSD capability contract for real browser inspection, interaction, assertions, screenshots, and runtime evidence. The contract is distinct from the transport that exposes it.
