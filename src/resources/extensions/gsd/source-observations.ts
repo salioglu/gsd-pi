@@ -157,7 +157,7 @@ export class SourceObservationStore {
     const observation = observeSourcePath(this.active.unit.basePath, rawPath, source);
     const key = observation.absolutePath ?? `${observation.status}:${observation.path}`;
     const existing = this.active.observations.get(key);
-    if (options.replaceExisting || !existing || observation.status === "whole" || existing.status !== "whole") {
+    if (options.replaceExisting || !existing || observation.status === "whole" || existing.status === "whole") {
       this.active.observations.set(key, observation);
     }
   }
@@ -168,7 +168,7 @@ export function planDeclaredSourceEntries(
 ): Array<{ path: string; field: "files" | "inputs" }> {
   const entries: Array<{ path: string; field: "files" | "inputs" }> = [];
   for (const file of task.files) {
-    const path = extractPlanningPathReference(file) ?? file.trim();
+    const path = extractPlanningPathReference(file);
     if (path) entries.push({ path, field: "files" });
   }
   for (const input of task.inputs) {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -247,6 +247,50 @@ test("AutoSession current-unit clear removes active source observations", () => 
   session.clearCurrentUnit();
 
   assert.equal(session.sourceObservations.renderActiveBlock(), null);
+});
+
+test("prose entries in task.files are not added as source observations", () => {
+  const task = makeTask({
+    files: ["src/app.ts", "the main application logic", "Current enum shape"],
+    inputs: ["Current enum shape"],
+  });
+
+  const entries = planDeclaredSourceEntries(task);
+  assert.deepEqual(entries, [{ path: "src/app.ts", field: "files" }]);
+});
+
+test("whole-file observation downgrades to missing when file is deleted", () => {
+  const basePath = tempProject();
+  const filePath = join(basePath, "app.ts");
+  writeFileSync(filePath, "export const value = 1;\n");
+
+  const store = beginStore(basePath);
+  store.observeRead({ path: "app.ts" });
+  assert.match(store.renderActiveBlock() ?? "", /export const value = 1/);
+
+  unlinkSync(filePath);
+  store.observeRead({ path: "app.ts" });
+
+  const block = store.renderActiveBlock() ?? "";
+  assert.match(block, /app\.ts: missing/);
+  assert.doesNotMatch(block, /export const value = 1/);
+});
+
+test("whole-file observation downgrades to over-threshold when file grows past limit", () => {
+  const basePath = tempProject();
+  const filePath = join(basePath, "app.ts");
+  writeFileSync(filePath, "small content\n");
+
+  const store = beginStore(basePath);
+  store.observeRead({ path: "app.ts" });
+  assert.match(store.renderActiveBlock() ?? "", /small content/);
+
+  writeFileSync(filePath, "x".repeat(51 * 1024));
+  store.observeRead({ path: "app.ts" });
+
+  const block = store.renderActiveBlock() ?? "";
+  assert.match(block, /app\.ts: over-threshold/);
+  assert.doesNotMatch(block, /small content/);
 });
 
 test("AutoSession clears source observations when switching to non-execute units", () => {
