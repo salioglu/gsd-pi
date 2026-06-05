@@ -60,11 +60,31 @@ export function parseRoadmap(content: string): Roadmap {
   return cachedParse(content, 'roadmap', _parseRoadmapImpl);
 }
 
+/**
+ * ADR-011: the roadmap renderer writes a `[sketch]` badge for sketch slices,
+ * but the native parser does not surface it. Re-scan the markdown and set
+ * isSketch on the matching slice so the flag survives a markdown → DB re-import
+ * (e.g. /gsd recover) instead of being silently dropped.
+ */
+function applySketchFlags(roadmap: Roadmap, content: string): void {
+  const sketchIds = new Set<string>();
+  for (const line of content.split("\n")) {
+    if (!/\[sketch\]/i.test(line)) continue;
+    const m = line.match(/\*\*([\w.]+):/);
+    if (m) sketchIds.add(m[1]!);
+  }
+  if (sketchIds.size === 0) return;
+  for (const slice of roadmap.slices) {
+    if (sketchIds.has(slice.id)) slice.isSketch = true;
+  }
+}
+
 function _parseRoadmapImpl(content: string): Roadmap {
   const stopTimer = debugTime("parse-roadmap");
   // Try native parser first for better performance
   const nativeResult = nativeParseRoadmap(content);
   if (nativeResult) {
+    applySketchFlags(nativeResult, content);
     stopTimer({ native: true, slices: nativeResult.slices.length, boundaryEntries: nativeResult.boundaryMap.length });
     debugCount("parseRoadmapCalls");
     return nativeResult;

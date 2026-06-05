@@ -21,7 +21,6 @@ import {
   getSliceTasks,
   getTask,
   getSlice,
-  getArtifact,
   insertArtifact,
   getGateResults,
 } from "./gsd-db.js";
@@ -107,22 +106,6 @@ function sanitizeInlineRoadmapText(value: string | null | undefined): string {
     .replace(/[|`]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-/**
- * Load artifact content from the DB. Markdown projections are not authoritative
- * during runtime; when the artifact row is missing, callers regenerate from DB
- * rows instead of patching disk fallback content and storing it back.
- */
-function loadArtifactContent(
-  artifactPath: string,
-): string | null {
-  const artifact = getArtifact(artifactPath);
-  if (artifact && artifact.full_content) {
-    return artifact.full_content;
-  }
-
-  return null;
 }
 
 function resolveRoadmapProjectionPath(basePath: string, milestoneId: string): string {
@@ -510,8 +493,14 @@ export async function renderRoadmapCheckboxes(
 /**
  * Render plan checkbox states from DB.
  *
- * For each task in the slice, sets [x] if status === 'done',
- * [ ] otherwise. Bidirectional.
+ * Compatibility wrapper for legacy callers that used to patch plan checkboxes
+ * in-place. Plans are now fully regenerated from DB rows (mirroring
+ * renderRoadmapCheckboxes) so the projection always reflects the complete
+ * current task set and statuses. The previous regex-patch approach reused the
+ * cached PLAN artifact as the render input, which silently dropped tasks added
+ * to the DB after the artifact was first written — producing a lossy
+ * projection (the 4S/0T-vs-5S/13T drift class). The artifacts table is an
+ * output sink, never a render input.
  *
  * @returns true if the plan was written, false on skip/error
  */
@@ -528,48 +517,7 @@ export async function renderPlanCheckboxes(
     return false;
   }
 
-  const absPath = resolveSliceFile(basePath, milestoneId, sliceId, "PLAN");
-  const artifactPath = absPath ? toArtifactPath(absPath, basePath) : null;
-
-  let content: string | null = null;
-  if (artifactPath) {
-    content = loadArtifactContent(artifactPath);
-  }
-
-  if (!content) {
-    await renderPlanFromDb(basePath, milestoneId, sliceId);
-    return true;
-  }
-
-  // Apply checkbox patches for each task
-  let updated = content;
-  for (const task of tasks) {
-    const isDone = isClosedStatus(task.status);
-    const tid = task.id;
-
-    if (isDone) {
-      // Set [x]
-      updated = updated.replace(
-        new RegExp(`^(\\s*-\\s+)\\[ \\]\\s+\\*\\*${tid}:`, "m"),
-        `$1[x] **${tid}:`,
-      );
-    } else {
-      // Set [ ]
-      updated = updated.replace(
-        new RegExp(`^(\\s*-\\s+)\\[x\\]\\s+\\*\\*${tid}:`, "mi"),
-        `$1[ ] **${tid}:`,
-      );
-    }
-  }
-
-  if (!absPath) return false;
-
-  await writeAndStore(absPath, artifactPath!, updated, {
-    artifact_type: "PLAN",
-    milestone_id: milestoneId,
-    slice_id: sliceId,
-  });
-
+  await renderPlanFromDb(basePath, milestoneId, sliceId);
   return true;
 }
 
@@ -747,6 +695,18 @@ export async function renderAllFromDb(basePath: string): Promise<RenderAllResult
     }
   }
 
+  // Re-project root DECISIONS.md from the authoritative decision records so a
+  // full DB → markdown re-projection (recover, rebuild) also heals decisions
+  // drift — e.g. a worktree merge that accepted one branch's DECISIONS.md while
+  // the DB holds the union of both branches' decisions.
+  try {
+    const { regenerateDecisionsMarkdown } = await import("./db-writer.js");
+    await regenerateDecisionsMarkdown(basePath);
+    result.rendered++;
+  } catch (err) {
+    result.errors.push(`decisions: ${(err as Error).message}`);
+  }
+
   return result;
 }
 
@@ -832,7 +792,16 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
           for (const task of tasks) {
             const isDoneInDb = isClosedStatus(task.status);
             const planTask = parsed.tasks.find((t: { id: string }) => t.id === task.id);
-            if (!planTask) continue;
+            if (!planTask) {
+              // DB has a task the plan markdown lacks: the projection is
+              // lossy (e.g. tasks added after the PLAN artifact was first
+              // written). Flag it so the plan is re-rendered from DB rows.
+              stale.push({
+                path: planPath,
+                reason: `${task.id} exists in DB but is missing in plan`,
+              });
+              continue;
+            }
 
             if (isDoneInDb && !planTask.done) {
               stale.push({

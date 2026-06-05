@@ -151,6 +151,57 @@ test("migration auto-check leaves matching DB hierarchy alone", async () => {
   }
 });
 
+test("migration auto-check flags a populated DB with missing markdown and points at rebuild (not recover)", async () => {
+  const base = makeBase();
+  try {
+    // A project with no milestone markdown: simulate lost/empty projections
+    // over a populated DB. The previous early return treated all-zero markdown
+    // as 'no project' and never even opened the DB, silently hiding the rows.
+    await writeGSDDirectory({ projectContent: "# P\n", decisionsContent: "", requirements: [], milestones: [] }, base);
+    assert.equal(await ensureDbOpen(base), true);
+    assert.deepEqual(countMarkdownHierarchy(base), { milestones: 0, slices: 0, tasks: 0 });
+    insertMilestone({ id: "M001", title: "Legacy Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Legacy Slice", status: "pending", risk: "medium", depends: [], demo: "Legacy slice demo", sequence: 1 });
+    insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Legacy Task", status: "pending" });
+
+    const result = await checkMarkdownHierarchyAgainstDb(base);
+    assert.equal(result.action, "recovery-required");
+    assert.equal(result.reason, "markdown-missing");
+    // The DB is the richer side, so recover (md → DB) would DELETE rows. The
+    // safe repair is to re-project from the DB.
+    assert.equal(result.recoveryCommand, "/gsd rebuild markdown");
+    assert.match(result.message ?? "", /rebuild markdown/);
+    assert.match(result.message ?? "", /Do NOT run/);
+    // The check must not mutate the DB.
+    assert.equal(getAllMilestones().length, 1);
+    assert.equal(getSliceTasks("M001", "S01").length, 1);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("migration auto-check detects identity drift even when counts match", async () => {
+  const base = makeBase();
+  try {
+    await writeGSDDirectory(projectFixture(), base); // markdown: M001 / S01 / T01
+    assert.equal(await ensureDbOpen(base), true);
+    // Same cardinalities (1M/1S/1T) but a DIFFERENT slice identity (S99 vs S01).
+    insertMilestone({ id: "M001", title: "Legacy Milestone", status: "active" });
+    insertSlice({ id: "S99", milestoneId: "M001", title: "Other Slice", status: "pending", risk: "medium", depends: [], demo: "d", sequence: 1 });
+    insertTask({ id: "T01", sliceId: "S99", milestoneId: "M001", title: "Legacy Task", status: "pending" });
+
+    const result = await checkMarkdownHierarchyAgainstDb(base);
+    // Counts are equal on both sides, so the old count-only comparison reported
+    // 'in-sync'. Identity comparison must catch the divergence instead.
+    assert.equal(result.action, "recovery-required");
+    assert.notEqual(result.reason, "in-sync");
+    assert.deepEqual(result.markdown, { milestones: 1, slices: 1, tasks: 1 });
+    assert.deepEqual(result.beforeDb, { milestones: 1, slices: 1, tasks: 1 });
+  } finally {
+    cleanup(base);
+  }
+});
+
 test("migration auto-check refreshes a stale open DB handle before comparing", async () => {
   const base = makeBase();
   try {

@@ -152,35 +152,50 @@ test("ADR-017 (#5700): repair failure throws ReconciliationFailedError with shap
   );
 });
 
-test("ADR-017 (#5700): detector failure throws ReconciliationFailedError with shape", async () => {
-  const handler: DriftHandler = {
-    kind: "stale-sketch-flag",
+test("ADR-017 (#5700): a detector failure degrades to a blocker without aborting other handlers", async () => {
+  // A single detector throwing (e.g. a transient file read error) must NOT
+  // abort the whole cycle and hide every later handler's drift. It is collected
+  // as a blocker (so dispatch is still gated) while the remaining detectors run
+  // and their drift is repaired — graceful degradation, not fail-fast.
+  const throwingHandler: DriftHandler = {
+    kind: "stale-render",
     detect: () => {
       throw new Error("simulated detect failure");
     },
     repair: () => {
-      /* detect fails before repair */
+      /* never reached: detect throws */
     },
   };
 
-  await assert.rejects(
-    () =>
-      reconcileBeforeDispatch("/project", {
-        invalidateStateCache: () => {},
-        deriveState: async () => makeState(),
-        registry: [handler],
-      }),
-    (err: unknown) => {
-      assert.ok(err instanceof ReconciliationFailedError, "must be ReconciliationFailedError");
-      assert.equal(err.failures.length, 1);
-      assert.equal(err.failures[0]?.drift.kind, "stale-sketch-flag");
-      assert.ok(err.failures[0]?.cause instanceof Error);
-      assert.equal((err.failures[0]?.cause as Error).message, "simulated detect failure");
-      assert.equal(err.pass, 0);
-      assert.equal(err.detectionFailures.length, 0);
-      assert.equal(err.persistentDrift.length, 0);
-      return true;
+  let repairCount = 0;
+  const workingHandler: DriftHandler = {
+    kind: "stale-sketch-flag",
+    detect: () =>
+      repairCount === 0
+        ? [{ kind: "stale-sketch-flag", mid: "M001", sid: "S02" }]
+        : [],
+    repair: () => {
+      repairCount++;
     },
+  };
+
+  const result = await reconcileBeforeDispatch("/project", {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+    registry: [throwingHandler, workingHandler],
+  });
+
+  assert.equal(result.ok, true, "cycle must not abort on a single detector failure");
+  // The working handler (registered AFTER the thrower) still detected + repaired.
+  assert.equal(repairCount, 1, "later handler must still run despite earlier detect failure");
+  assert.equal(result.repaired.length, 1);
+  assert.equal(result.repaired[0]?.kind, "stale-sketch-flag");
+  // The detector failure surfaces as a blocker so dispatch is still gated.
+  assert.ok(
+    result.blockers.some(
+      (b) => b.includes("stale-render") && b.includes("simulated detect failure"),
+    ),
+    "detect failure must surface as a blocker",
   );
 });
 

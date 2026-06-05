@@ -106,7 +106,13 @@ async function repairStaleRenderFromBasePath(
         `stale-render drift: plan path missing milestone/slice segments: ${record.renderPath}`,
       );
     }
-    await renderPlanCheckboxes(basePath, pathMatch[1], pathMatch[2]);
+    const wrote = await renderPlanCheckboxes(basePath, pathMatch[1], pathMatch[2]);
+    if (!wrote) {
+      throw new Error(
+        `stale-render drift: plan re-render wrote nothing for ${pathMatch[1]}/${pathMatch[2]} ` +
+          `(${record.renderPath}); slice has no tasks or its path is unresolvable`,
+      );
+    }
     return;
   }
 
@@ -120,7 +126,14 @@ async function repairStaleRenderFromBasePath(
         `stale-render drift: task summary path/reason malformed: ${record.renderPath} reason=${reason}`,
       );
     }
-    await renderTaskSummary(basePath, pathMatch[1], pathMatch[2], taskMatch[1]);
+    const wrote = await renderTaskSummary(basePath, pathMatch[1], pathMatch[2], taskMatch[1]);
+    if (!wrote) {
+      throw new Error(
+        `stale-render drift: task summary re-render wrote nothing for ` +
+          `${pathMatch[1]}/${pathMatch[2]}/${taskMatch[1]} (${record.renderPath}); ` +
+          `task has no summary in DB or its slice path is unresolvable`,
+      );
+    }
     return;
   }
 
@@ -139,7 +152,14 @@ async function repairStaleRenderFromBasePath(
     if (slice?.full_uat_md && !existsSync(uatPath)) {
       setSliceSummaryMd(milestoneId, sliceId, slice.full_summary_md ?? "", "");
     }
-    await renderSliceSummary(basePath, milestoneId, sliceId);
+    const wrote = await renderSliceSummary(basePath, milestoneId, sliceId);
+    if (!wrote) {
+      throw new Error(
+        `stale-render drift: slice summary re-render wrote nothing for ` +
+          `${milestoneId}/${sliceId} (${record.renderPath}); slice has no summary/UAT ` +
+          `in DB or its path is unresolvable`,
+      );
+    }
     return;
   }
 

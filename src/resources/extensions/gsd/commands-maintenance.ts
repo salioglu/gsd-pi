@@ -481,6 +481,8 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
   ctx.ui.notify(lines.join("\n"), "info");
 }
 
+type HierarchyCounts = { milestones: number; slices: number; tasks: number };
+
 function recoverConfirmed(args: string): boolean {
   return args
     .split(/\s+/)
@@ -488,19 +490,66 @@ function recoverConfirmed(args: string): boolean {
     .some((part) => part === "--confirm" || part === "--yes" || part === "confirm");
 }
 
-async function confirmRecover(ctx: ExtensionCommandContext, args: string): Promise<boolean> {
-  if (recoverConfirmed(args)) return true;
+function recoverAllowsDataLoss(args: string): boolean {
+  return args
+    .split(/\s+/)
+    .map((part) => part.trim().toLowerCase())
+    .some((part) => part === "--allow-data-loss" || part === "--force");
+}
 
+/** True when the DB holds more rows than markdown — recover would delete them. */
+function recoverWouldLoseData(markdown: HierarchyCounts, beforeDb: HierarchyCounts): boolean {
+  return (
+    beforeDb.milestones > markdown.milestones ||
+    beforeDb.slices > markdown.slices ||
+    beforeDb.tasks > markdown.tasks
+  );
+}
+
+async function confirmRecover(
+  ctx: ExtensionCommandContext,
+  args: string,
+  markdown: HierarchyCounts,
+  beforeDb: HierarchyCounts,
+  dataLoss: boolean,
+): Promise<boolean> {
   const warning = [
     "gsd recover imports markdown into the database.",
     "It clears and reconstructs milestone, slice, and task hierarchy rows from rendered markdown.",
     "Use /gsd rebuild markdown for normal DB-to-markdown realignment.",
-  ].join("\n");
+    "",
+    `  Markdown on disk: ${markdown.milestones}M/${markdown.slices}S/${markdown.tasks}T`,
+    `  Current DB:       ${beforeDb.milestones}M/${beforeDb.slices}S/${beforeDb.tasks}T`,
+  ];
+  if (dataLoss) {
+    warning.push(
+      "",
+      "⚠ The DB holds more rows than the markdown. Recover will permanently DELETE the",
+      "  rows that markdown lacks. A snapshot is written to .gsd/backups/ first, but if",
+      "  the DB is the source of truth you almost certainly want /gsd rebuild markdown.",
+    );
+  }
+  const warningText = warning.join("\n");
+
+  if (recoverConfirmed(args)) {
+    // Non-interactive --confirm still refuses a data-loss recover unless the
+    // caller explicitly opts in with --allow-data-loss / --force.
+    if (dataLoss && !recoverAllowsDataLoss(args)) {
+      ctx.ui.notify(
+        `${warningText}\n\nRefusing: this would delete authoritative DB rows. Re-run with ` +
+          `/gsd recover --confirm --allow-data-loss to proceed, or use /gsd rebuild markdown ` +
+          `to re-project markdown from the DB instead.`,
+        "error",
+      );
+      return false;
+    }
+    return true;
+  }
 
   if (typeof ctx.ui.confirm === "function") {
     const confirmed = await ctx.ui.confirm(
       "Import markdown into the DB?",
-      `${warning}\n\nContinue only if the DB is lost or corrupt and markdown is the source you intend to import.`,
+      `${warningText}\n\nContinue only if the DB is lost or corrupt and markdown is the source you intend to import.`,
     );
     if (confirmed) return true;
     ctx.ui.notify("gsd recover cancelled. No database changes made.", "info");
@@ -508,7 +557,7 @@ async function confirmRecover(ctx: ExtensionCommandContext, args: string): Promi
   }
 
   ctx.ui.notify(
-    `${warning}\n\nNo database changes made. Re-run /gsd recover --confirm to proceed.`,
+    `${warningText}\n\nNo database changes made. Re-run /gsd recover --confirm to proceed.`,
     "warning",
   );
   return false;
@@ -524,18 +573,29 @@ async function confirmRecover(ctx: ExtensionCommandContext, args: string): Promi
  * Prints counts of recovered items and the resulting project phase.
  */
 export async function handleRecover(ctx: ExtensionCommandContext, basePath: string, args = ""): Promise<void> {
-  const { isDbAvailable: dbAvailable, clearEngineHierarchy, transaction: dbTransaction } = await import("./gsd-db.js");
+  const { isDbAvailable: dbAvailable, clearEngineHierarchy, transaction: dbTransaction, backupDatabaseSnapshot } = await import("./gsd-db.js");
   const { migrateHierarchyToDb } = await import("./md-importer.js");
   const { invalidateStateCache } = await import("./state.js");
+  const { countDbHierarchy, countMarkdownHierarchy } = await import("./migration-auto-check.js");
+  const { renderAllFromDb } = await import("./markdown-renderer.js");
 
   if (!dbAvailable()) {
     ctx.ui.notify("gsd recover: No database open. Run a GSD command first to initialize the DB.", "error");
     return;
   }
 
-  if (!(await confirmRecover(ctx, args))) return;
+  // Compare markdown-on-disk against the live DB so the confirmation prompt can
+  // surface exactly what recover will overwrite (and refuse silent data loss).
+  const markdown = countMarkdownHierarchy(basePath);
+  const beforeDb = countDbHierarchy();
+  const dataLoss = recoverWouldLoseData(markdown, beforeDb);
+
+  if (!(await confirmRecover(ctx, args, markdown, beforeDb, dataLoss))) return;
 
   try {
+    // 0. Snapshot the DB before the destructive clear so recover is reversible.
+    const backupPath = backupDatabaseSnapshot("pre-recover");
+
     // 1. Delete + re-populate inside a single transaction for atomicity.
     //    clearEngineHierarchy() uses transaction() internally but transaction()
     //    is re-entrant, so wrapping in dbTransaction() keeps the whole
@@ -545,8 +605,13 @@ export async function handleRecover(ctx: ExtensionCommandContext, basePath: stri
       return migrateHierarchyToDb(basePath);
     });
 
-    // 3. Invalidate state cache so deriveState() picks up fresh DB data
+    // 2. Invalidate state cache so deriveState() picks up fresh DB data
     invalidateStateCache();
+
+    // 3. Re-project markdown from the freshly imported DB so disk and DB agree
+    //    immediately (otherwise the markdown still reflects the pre-import state
+    //    and the next startup check would flag fresh drift).
+    await renderAllFromDb(basePath);
 
     // 4. Derive state to verify sanity
     const state = await deriveState(basePath);
@@ -560,6 +625,23 @@ export async function handleRecover(ctx: ExtensionCommandContext, basePath: stri
       ``,
       `  Phase:      ${state.phase}`,
     ];
+    // Post-import verification: markdown that failed to parse imports as fewer
+    // rows than countMarkdownHierarchy saw on disk. Surface the shortfall.
+    if (
+      counts.milestones < markdown.milestones ||
+      counts.slices < markdown.slices ||
+      counts.tasks < markdown.tasks
+    ) {
+      lines.push(
+        ``,
+        `  ⚠ Imported fewer rows than markdown contained ` +
+          `(${markdown.milestones}M/${markdown.slices}S/${markdown.tasks}T on disk). ` +
+          `Some markdown may have failed to parse — review before continuing.`,
+      );
+    }
+    if (backupPath) {
+      lines.push(``, `  Backup:     ${backupPath}`);
+    }
     if (state.activeMilestone) {
       lines.push(`  Active:     ${state.activeMilestone.id}: ${state.activeMilestone.title}`);
     }

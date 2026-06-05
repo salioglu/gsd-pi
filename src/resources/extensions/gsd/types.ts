@@ -35,6 +35,7 @@ export interface RoadmapSliceEntry {
   depends: string[]; // e.g. ["S01", "S02"]
   done: boolean;
   demo: string; // the "After this:" sentence
+  isSketch?: boolean; // ADR-011: true when the roadmap shows the `[sketch]` badge
 }
 
 export interface BoundaryMapEntry {

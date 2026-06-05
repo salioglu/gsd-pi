@@ -452,6 +452,44 @@ export function _resetDecisionSaveLock(): void {
   _decisionSaveLock = Promise.resolve();
 }
 
+/**
+ * Re-project root DECISIONS.md from the authoritative decision records, with no
+ * new decision being added. Mirrors the projection saveDecisionToDb performs
+ * after a save, but over the full set — so a DB → markdown re-projection
+ * (recover, rebuild, reconcile) re-derives DECISIONS.md and never leaves it
+ * showing a stale subset (e.g. after a worktree merge that accepted one
+ * branch's DECISIONS.md while the DB holds the union of both branches'
+ * decisions). DB stays the single source of truth; this only writes markdown.
+ */
+export async function regenerateDecisionsMarkdown(basePath: string): Promise<void> {
+  const { getAllDecisionsFromMemories } = await import('./context-store.js');
+  const allDecisions: Decision[] = getAllDecisionsFromMemories();
+
+  const filePath = resolveGsdRootFile(basePath, 'DECISIONS');
+  let existingContent: string | null = null;
+  if (existsSync(filePath)) {
+    existingContent = readFileSync(filePath, 'utf-8');
+  }
+
+  // Nothing to project: no decisions in the DB and no file to normalize.
+  if (allDecisions.length === 0 && existingContent === null) return;
+
+  let md: string;
+  if (existingContent && !isDecisionsTableFormat(existingContent)) {
+    // Preserve freeform content; refresh only the appended decisions table.
+    const marker = '---\n\n## Decisions Table';
+    const markerIdx = existingContent.indexOf(marker);
+    const freeformPart = markerIdx >= 0
+      ? existingContent.substring(0, markerIdx).trimEnd()
+      : existingContent.trimEnd();
+    md = freeformPart + '\n' + generateDecisionsAppendBlock(allDecisions);
+  } else {
+    md = generateDecisionsMd(allDecisions);
+  }
+
+  await saveFile(filePath, md);
+}
+
 // ─── Save Decision to DB + Regenerate Markdown ────────────────────────────
 
 export interface SaveDecisionFields {

@@ -193,7 +193,12 @@ export function parseRoadmapSlices(content: string): RoadmapSliceEntry[] {
         ? expandDependencies(depsMatch[1]!.split(",").map(s => s.trim()))
         : [];
 
-      currentSlice = { id, title, risk, depends, done, demo: "" };
+      // ADR-011: the renderer writes a `[sketch]` badge for sketch slices.
+      // Parse it back so the is_sketch flag survives a markdown → DB re-import
+      // (e.g. /gsd recover); otherwise the flag was silently lost.
+      const isSketch = /\[sketch\]/i.test(rest);
+
+      currentSlice = { id, title, risk, depends, done, demo: "", isSketch };
       continue;
     }
 

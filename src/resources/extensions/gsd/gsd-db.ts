@@ -25,7 +25,7 @@
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { existsSync, copyFileSync, mkdirSync, realpathSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { Decision, Requirement, GateRow, GateId, GateScope, GateStatus, GateVerdict } from "./types.js";
 import { GSDError, GSD_STALE_STATE } from "./errors.js";
 import type { GsdWorkspace, MilestoneScope } from "./workspace.js";
@@ -758,6 +758,28 @@ export function checkpointDatabase(): void {
   try {
     currentDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   } catch (e) { logWarning("db", `WAL checkpoint failed: ${(e as Error).message}`); }
+}
+
+/**
+ * Copy the live database file to `.gsd/backups/<label>-<timestamp>.db` so a
+ * destructive operation (e.g. recover, which clears the hierarchy tables) is
+ * reversible. Checkpoints the WAL first so the snapshot is complete. Returns
+ * the backup path, or null if no DB is open or the copy failed.
+ */
+export function backupDatabaseSnapshot(label: string): string | null {
+  if (!currentPath) return null;
+  try {
+    checkpointDatabase();
+    const backupsDir = join(dirname(currentPath), "backups");
+    mkdirSync(backupsDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const dest = join(backupsDir, `${label}-${stamp}.db`);
+    copyFileSync(currentPath, dest);
+    return dest;
+  } catch (e) {
+    logWarning("db", `database snapshot failed: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 const _transactionRunner = createDbTransactionRunner();
