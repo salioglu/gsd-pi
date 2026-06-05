@@ -291,7 +291,7 @@ function restoreToolBaseline(pi: ExtensionAPI): void {
  * mismatch is surfaced once per (model, requested-level). Returns the level
  * actually applied so callers can record it.
  */
-function applyThinkingLevelForModel(
+export function applyThinkingLevelForModel(
   pi: ExtensionAPI,
   desired: ReturnType<ExtensionAPI["getThinkingLevel"]> | null | undefined,
   model: Model<Api>,
