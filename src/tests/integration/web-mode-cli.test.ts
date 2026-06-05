@@ -70,6 +70,21 @@ test('web CLI branch preserves cwd-scoped launch inputs', async (t) => {
   })
 })
 
+test('web authenticated URL keeps initial route before token fragment', () => {
+  assert.equal(
+    webMode.buildAuthenticatedWebUrl('http://127.0.0.1:45123', 'abc123', '/?view=planner&milestone=M002'),
+    'http://127.0.0.1:45123/?view=planner&milestone=M002#token=abc123',
+  )
+  assert.equal(
+    webMode.buildAuthenticatedWebUrl('http://127.0.0.1:45123', 'abc123', 'planner'),
+    'http://127.0.0.1:45123/planner#token=abc123',
+  )
+  assert.equal(
+    webMode.buildAuthenticatedWebUrl('http://127.0.0.1:45123', 'abc123', '//example.com/escape'),
+    'http://127.0.0.1:45123/#token=abc123',
+  )
+})
+
 test('launchWebMode prefers the packaged standalone host and opens the resolved URL', async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-host-'))
   const standaloneRoot = join(tmp, 'dist', 'web', 'standalone')

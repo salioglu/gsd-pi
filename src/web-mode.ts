@@ -46,6 +46,8 @@ export interface WebModeLaunchOptions {
   packageRoot?: string
   host?: string
   port?: number
+  /** Initial browser path to open after the local web host is ready. */
+  initialPath?: string
   /** Additional allowed origins for CORS (forwarded as GSD_WEB_ALLOWED_ORIGINS). */
   allowedOrigins?: string[]
 }
@@ -392,6 +394,24 @@ function emitLaunchStatus(stderr: WritableLike, status: WebModeLaunchStatus): vo
   stderr.write(formatLaunchStatus(status))
 }
 
+export function normalizeWebInitialPath(initialPath?: string): string {
+  const trimmed = initialPath?.trim()
+  if (!trimmed) return '/'
+
+  const path = trimmed.startsWith('/') ? trimmed : `/${trimmed}`
+  try {
+    const parsed = new URL(path, 'http://local.gsd')
+    if (parsed.origin !== 'http://local.gsd') return '/'
+    return `${parsed.pathname}${parsed.search}`
+  } catch {
+    return '/'
+  }
+}
+
+export function buildAuthenticatedWebUrl(baseUrl: string, authToken: string, initialPath?: string): string {
+  return `${baseUrl}${normalizeWebInitialPath(initialPath)}#token=${authToken}`
+}
+
 function buildSpawnSpec(
   resolution: ResolvedWebHostBootstrap,
   host: string,
@@ -634,6 +654,7 @@ export async function launchWebMode(
   const port = options.port ?? await (deps.resolvePort ?? reserveWebPort)(host)
   const authToken = randomBytes(32).toString('hex')
   const url = `http://${host}:${port}`
+  const authenticatedUrl = buildAuthenticatedWebUrl(url, authToken, options.initialPath)
   const env = {
     ...(deps.env ?? process.env),
     HOSTNAME: host,
@@ -801,7 +822,6 @@ export async function launchWebMode(
       // Register in multi-instance registry
       registerInstance(options.cwd, { pid, port, url }, deps.registryPath)
     }
-    const authenticatedUrl = `${url}/#token=${authToken}`
     try {
       ;(deps.openBrowser ?? openBrowser)(authenticatedUrl)
     } catch (browserError) {
@@ -825,7 +845,6 @@ export async function launchWebMode(
     return failure
   }
 
-  const authenticatedUrl = `${url}/#token=${authToken}`
   const success: WebModeLaunchSuccess = {
     mode: 'web',
     ok: true,

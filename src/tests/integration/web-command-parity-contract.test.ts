@@ -205,9 +205,11 @@ test("current GSD command family samples dispatch to correct outcomes after S02"
 })
 
 const EXPECTED_GSD_OUTCOMES = new Map<string, "surface" | "prompt" | "local" | "view-navigate">([
-  // Surface commands (19)
+  // Browser view navigation
   ["status", "view-navigate"],
   ["visualize", "view-navigate"],
+  ["planner", "view-navigate"],
+  // Surface commands (19)
   ["forensics", "surface"],
   ["doctor", "surface"],
   ["skill-health", "surface"],
@@ -244,8 +246,8 @@ const EXPECTED_GSD_OUTCOMES = new Map<string, "surface" | "prompt" | "local" | "
 test("every registered /gsd subcommand has an explicit browser dispatch outcome", async (t) => {
   assert.equal(
     EXPECTED_GSD_OUTCOMES.size,
-    31,
-    "EXPECTED_GSD_OUTCOMES must cover all 31 GSD subcommands (19 surface + 2 view-navigate + 9 passthrough + 1 help)",
+    32,
+    "EXPECTED_GSD_OUTCOMES must cover all 32 GSD subcommands (19 surface + 3 view-navigate + 9 passthrough + 1 help)",
   )
 
   for (const [subcommand, expectedKind] of EXPECTED_GSD_OUTCOMES) {
@@ -280,9 +282,10 @@ test("every registered /gsd subcommand has an explicit browser dispatch outcome"
     }
 
     if (expectedKind === "view-navigate") {
-      await t.test(`/gsd ${subcommand} navigates to the visualizer view`, () => {
+      await t.test(`/gsd ${subcommand} navigates to the expected view`, () => {
         const outcome = dispatchBrowserSlashCommand(`/gsd ${subcommand}`) as any
-        assert.equal(outcome.view, "visualize", `/gsd ${subcommand} should navigate to the visualizer view`)
+        const expectedView = subcommand === "planner" ? "planner" : "visualize"
+        assert.equal(outcome.view, expectedView, `/gsd ${subcommand} should navigate to the ${expectedView} view`)
       })
     }
   }
@@ -378,6 +381,12 @@ test("/gsd status and /gsd visualize dispatch as view-navigate to the visualizer
     assert.equal(outcome.kind, "view-navigate")
     assert.equal(outcome.view, "visualize")
   }
+})
+
+test("/gsd planner dispatches as view-navigate to the planner view", () => {
+  const outcome = dispatchBrowserSlashCommand("/gsd planner")
+  assert.equal(outcome.kind, "view-navigate")
+  assert.equal(outcome.view, "planner")
 })
 
 test("slash /settings and sidebar settings click open the same shared surface contract", () => {

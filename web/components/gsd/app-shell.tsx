@@ -32,7 +32,7 @@ import { ProjectsPanel, ProjectSelectionGate } from "@/components/gsd/projects-v
 import { UpdateBanner } from "@/components/gsd/update-banner"
 import { getAuthToken, authFetch } from "@/lib/auth"
 
-const KNOWN_VIEWS = new Set(["dashboard", "power", "chat", "roadmap", "files", "activity", "visualize"])
+const KNOWN_VIEWS = new Set(["dashboard", "power", "chat", "roadmap", "planner", "files", "activity", "visualize"])
 
 const ViewLoading = () => (
   <div className="h-full w-full p-4">
@@ -41,6 +41,10 @@ const ViewLoading = () => (
 )
 
 const Roadmap = dynamic(() => import("@/components/gsd/roadmap").then((mod) => mod.Roadmap), {
+  loading: ViewLoading,
+  ssr: false,
+})
+const PlannerView = dynamic(() => import("@/components/gsd/planner-view").then((mod) => mod.PlannerView), {
   loading: ViewLoading,
   ssr: false,
 })
@@ -69,6 +73,12 @@ function viewStorageKey(projectCwd: string): string {
   return `gsd-active-view:${projectCwd}`
 }
 
+function getInitialRouteView(): string | null {
+  if (typeof window === "undefined") return null
+  const view = new URLSearchParams(window.location.search).get("view")
+  return view && KNOWN_VIEWS.has(view) ? view : null
+}
+
 function WorkspaceChrome() {
   const [activeView, setActiveView] = useState("dashboard")
   const [isTerminalExpanded, setIsTerminalExpanded] = useState(false)
@@ -87,6 +97,7 @@ function WorkspaceChrome() {
   const [projectsPanelOpen, setProjectsPanelOpen] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [mobileMilestoneOpen, setMobileMilestoneOpen] = useState(false)
+  const initialRouteViewRef = useRef<string | null>(null)
   const workspace = useGSDWorkspaceState()
   const { refreshBoot } = useGSDWorkspaceActions()
 
@@ -97,8 +108,17 @@ function WorkspaceChrome() {
   const scopeLabel = getCurrentScopeLabel(workspace.boot?.workspace)
   const visibleError = getVisibleWorkspaceError(workspace)
 
+  useEffect(() => {
+    const view = getInitialRouteView()
+    if (!view) return
+    initialRouteViewRef.current = view
+    setActiveView(view)
+    setViewRestored(true)
+  }, [])
+
   // Restore persisted view once boot provides projectCwd
   useEffect(() => {
+    if (getInitialRouteView()) return
     if (viewRestored || !projectPath) return
     const restoreTimer = window.setTimeout(() => {
       try {
@@ -120,7 +140,13 @@ function WorkspaceChrome() {
   useEffect(() => {
     if (prevProjectPath.current !== projectPath) {
       prevProjectPath.current = projectPath
-      setViewRestored(false)
+      setViewRestored(Boolean(initialRouteViewRef.current))
+    }
+  }, [projectPath])
+
+  useEffect(() => {
+    if (projectPath) {
+      initialRouteViewRef.current = null
     }
   }, [projectPath])
 
@@ -473,6 +499,7 @@ function WorkspaceChrome() {
                 )}
                 {activeView === "power" && <DualTerminal />}
                 {activeView === "roadmap" && <Roadmap />}
+                {activeView === "planner" && <PlannerView />}
                 {activeView === "files" && <FilesView />}
                 {activeView === "activity" && <ActivityView />}
                 {activeView === "visualize" && <VisualizerView />}

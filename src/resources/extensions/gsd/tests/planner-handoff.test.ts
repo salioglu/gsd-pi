@@ -8,12 +8,27 @@ import { GSD_COMMAND_DESCRIPTION, getGsdArgumentCompletions, TOP_LEVEL_SUBCOMMAN
 import { handleCoreCommand } from "../commands/handlers/core.ts";
 import { DISPATCH_RULES } from "../auto-dispatch.ts";
 import {
-  buildGsdPlannerSpawnPlan,
-  formatGsdPlannerCommand,
+  buildGsdPlannerLaunchPlan,
+  formatGsdPlannerLaunchTarget,
+  formatPlannerLaunchUnavailable,
+  LEGACY_GSD_PLANNER_COMMAND,
+  launchGsdPlanner,
   hasPlannerHandoffBeenOffered,
   markPlannerHandoffOffered,
   PLANNER_HANDOFF_RULE_NAME,
 } from "../planner-handoff.ts";
+
+function createMockCommandCtx() {
+  const notifications: Array<{ message: string; level?: string }> = [];
+  return {
+    notifications,
+    ui: {
+      notify(message: string, level?: string) {
+        notifications.push({ message, level });
+      },
+    },
+  };
+}
 
 describe("planner handoff command catalog", () => {
   test("/gsd planner is hidden from description and completions", () => {
@@ -41,40 +56,106 @@ describe("planner handoff command catalog", () => {
 });
 
 describe("planner handoff command handler", () => {
-  test("/gsd planner falls through to the unknown-command path", async () => {
-    const notifications: Array<{ message: string; level?: string }> = [];
-    const ctx = {
-      ui: {
-        notify(message: string, level?: string) {
-          notifications.push({ message, level });
-        },
-      },
-    };
+  test("/gsd planner dry-run prints the built-in Planner route", async () => {
+    const ctx = createMockCommandCtx();
 
     const handled = await handleCoreCommand("planner M001 --dry-run --inspect", ctx as any);
 
-    assert.equal(handled, false);
-    assert.deepEqual(notifications, []);
+    assert.equal(handled, true);
+    assert.equal(ctx.notifications.length, 1);
+    assert.equal(ctx.notifications[0]?.level, "info");
+    assert.equal(ctx.notifications[0]?.message, "GSD Planner route: /?view=planner&milestone=M001");
+  });
+
+  test("/gsd planner ignores pasted launcher context flags", async () => {
+    const ctx = createMockCommandCtx();
+
+    const handled = await handleCoreCommand(
+      `planner ${LEGACY_GSD_PLANNER_COMMAND} --project /tmp/ignored --milestone M002 --dry-run --inspect --project /tmp/also-ignored --milestone`,
+      ctx as any,
+    );
+
+    assert.equal(handled, true);
+    assert.equal(ctx.notifications.length, 1);
+    const message = ctx.notifications[0]?.message ?? "";
+    assert.equal((message.match(/--project/g) ?? []).length, 0);
+    assert.equal((message.match(/--milestone/g) ?? []).length, 0);
+    assert.match(message, /milestone=M002/);
+    assert.doesNotMatch(message, /\/tmp\/ignored/);
+    assert.doesNotMatch(message, /\/tmp\/also-ignored/);
   });
 });
 
 describe("planner handoff launcher", () => {
-  test("builds gsd-planner command with project and milestone context", () => {
-    const plan = buildGsdPlannerSpawnPlan({
+  test("builds built-in Planner route with milestone context", () => {
+    const plan = buildGsdPlannerLaunchPlan({
       basePath: "/tmp/project with spaces",
       milestoneId: "M001",
-      extraArgs: ["--inspect"],
     });
 
     assert.deepEqual(plan, {
-      command: "gsd-planner",
-      args: ["--project", "/tmp/project with spaces", "--milestone", "M001", "--inspect"],
       cwd: "/tmp/project with spaces",
+      initialPath: "/?view=planner&milestone=M001",
+      milestoneId: "M001",
     });
     assert.equal(
-      formatGsdPlannerCommand(plan),
-      'gsd-planner --project "/tmp/project with spaces" --milestone M001 --inspect',
+      formatGsdPlannerLaunchTarget(plan),
+      "GSD Planner route: /?view=planner&milestone=M001",
     );
+  });
+
+  test("launches Planner through built-in web mode", async () => {
+    let launchOptions: {
+      cwd: string;
+      projectSessionsDir: string;
+      agentDir: string;
+      initialPath?: string;
+    } | undefined;
+    const result = await launchGsdPlanner(
+      {
+        basePath: "/tmp/project",
+        milestoneId: "M002",
+      },
+      {
+        agentDir: "/tmp/agent",
+        sessionsDir: "/tmp/sessions",
+        launchWebMode: async (options) => {
+          launchOptions = options;
+          return {
+            mode: "web",
+            ok: true,
+            cwd: options.cwd,
+            projectSessionsDir: options.projectSessionsDir,
+            host: "127.0.0.1",
+            port: 45123,
+            url: "http://127.0.0.1:45123",
+            hostKind: "source-dev",
+            hostPath: "/tmp/web/package.json",
+            hostRoot: "/tmp/web",
+          };
+        },
+      },
+    );
+
+    assert.equal(result.status, "launched");
+    assert.equal(launchOptions?.cwd, "/tmp/project");
+    assert.equal(launchOptions?.agentDir, "/tmp/agent");
+    assert.equal(launchOptions?.initialPath, "/?view=planner&milestone=M002");
+    assert.match(String(launchOptions?.projectSessionsDir), /tmp\/sessions/);
+  });
+
+  test("launch failure guidance points to built-in web mode", () => {
+    const plan = buildGsdPlannerLaunchPlan({
+      basePath: "/tmp/project",
+      milestoneId: "M002",
+    });
+
+    const message = formatPlannerLaunchUnavailable(plan, new Error("boot-ready: timed out"));
+
+    assert.match(message, /Could not launch GSD Planner: boot-ready: timed out/);
+    assert.match(message, /Open the built-in web app manually: gsd --web \/tmp\/project/);
+    assert.match(message, /Continue without planner edits: \/gsd auto/);
+    assert.doesNotMatch(message, /gsd-planner/);
   });
 
   test("records one-shot handoff markers per milestone", () => {

@@ -1,39 +1,37 @@
 // Project/App: gsd-pi
-// File Purpose: Optional gsd-planner handoff after milestone planning.
+// File Purpose: Optional built-in planner handoff after milestone planning.
 
-import { spawn as spawnChild, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { agentDir as defaultAgentDir, sessionsDir as defaultSessionsDir } from "../../../app-paths.js";
+import { getProjectSessionsDir } from "../../../project-sessions.js";
+import { launchWebMode, type WebModeLaunchStatus } from "../../../web-mode.js";
 import { gsdRoot } from "./paths.js";
 
-export const PLANNER_HANDOFF_RULE_NAME = "planning review handoff -> gsd-planner";
-export const GSD_PLANNER_COMMAND = "gsd-planner";
+export const PLANNER_HANDOFF_RULE_NAME = "planning review handoff -> /gsd planner";
+export const GSD_PLANNER_VIEW = "planner";
+export const LEGACY_GSD_PLANNER_COMMAND = "gsd-planner";
 
-export interface GsdPlannerSpawnPlan {
-  command: string;
-  args: string[];
+export interface GsdPlannerLaunchPlan {
   cwd: string;
+  initialPath: string;
+  milestoneId: string | null;
 }
 
 export interface GsdPlannerLaunchInput {
   basePath: string;
   milestoneId?: string | null;
-  extraArgs?: string[];
 }
 
 export type GsdPlannerLaunchResult =
-  | { status: "launched"; plan: GsdPlannerSpawnPlan }
-  | { status: "failed"; plan: GsdPlannerSpawnPlan; error: Error };
-
-type SpawnLike = (
-  command: string,
-  args: readonly string[],
-  options: SpawnOptions,
-) => ChildProcess;
+  | { status: "launched"; plan: GsdPlannerLaunchPlan; webStatus: WebModeLaunchStatus }
+  | { status: "failed"; plan: GsdPlannerLaunchPlan; webStatus: WebModeLaunchStatus; error: Error };
 
 export interface GsdPlannerLaunchDeps {
-  spawn?: SpawnLike;
+  launchWebMode?: typeof launchWebMode;
+  agentDir?: string;
+  sessionsDir?: string;
 }
 
 function handoffDir(basePath: string): string {
@@ -69,15 +67,19 @@ export function markPlannerHandoffOffered(
   );
 }
 
-export function buildGsdPlannerSpawnPlan(input: GsdPlannerLaunchInput): GsdPlannerSpawnPlan {
-  const args = ["--project", input.basePath];
+export function buildGsdPlannerInitialPath(milestoneId?: string | null): string {
+  const params = new URLSearchParams({ view: GSD_PLANNER_VIEW });
+  const normalizedMilestoneId = milestoneId?.trim();
+  if (normalizedMilestoneId) params.set("milestone", normalizedMilestoneId);
+  return `/?${params.toString()}`;
+}
+
+export function buildGsdPlannerLaunchPlan(input: GsdPlannerLaunchInput): GsdPlannerLaunchPlan {
   const milestoneId = input.milestoneId?.trim();
-  if (milestoneId) args.push("--milestone", milestoneId);
-  args.push(...(input.extraArgs ?? []));
   return {
-    command: GSD_PLANNER_COMMAND,
-    args,
     cwd: input.basePath,
+    initialPath: buildGsdPlannerInitialPath(milestoneId),
+    milestoneId: milestoneId || null,
   };
 }
 
@@ -85,65 +87,45 @@ function quoteArg(arg: string): string {
   return /^[A-Za-z0-9_./:=@+-]+$/.test(arg) ? arg : JSON.stringify(arg);
 }
 
-export function formatGsdPlannerCommand(plan: GsdPlannerSpawnPlan): string {
-  return [plan.command, ...plan.args].map(quoteArg).join(" ");
+export function formatGsdPlannerLaunchTarget(plan: GsdPlannerLaunchPlan): string {
+  return `GSD Planner route: ${plan.initialPath}`;
 }
 
 export async function launchGsdPlanner(
   input: GsdPlannerLaunchInput,
   deps: GsdPlannerLaunchDeps = {},
 ): Promise<GsdPlannerLaunchResult> {
-  const plan = buildGsdPlannerSpawnPlan(input);
-  const spawn = deps.spawn ?? spawnChild;
+  const plan = buildGsdPlannerLaunchPlan(input);
+  const webStatus = await (deps.launchWebMode ?? launchWebMode)({
+    cwd: plan.cwd,
+    projectSessionsDir: getProjectSessionsDir(plan.cwd, deps.sessionsDir ?? defaultSessionsDir),
+    agentDir: deps.agentDir ?? defaultAgentDir,
+    initialPath: plan.initialPath,
+  });
 
-  let child: ChildProcess;
-  try {
-    child = spawn(plan.command, plan.args, {
-      cwd: plan.cwd,
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-  } catch (err) {
+  if (!webStatus.ok) {
     return {
       status: "failed",
       plan,
-      error: err instanceof Error ? err : new Error(String(err)),
+      webStatus,
+      error: new Error(webStatus.failureReason),
     };
   }
 
-  return new Promise((resolve) => {
-    let settled = false;
-    const settle = (result: GsdPlannerLaunchResult) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-
-    child.once("error", (err) => {
-      settle({
-        status: "failed",
-        plan,
-        error: err instanceof Error ? err : new Error(String(err)),
-      });
-    });
-    child.once("spawn", () => {
-      child.unref();
-      settle({ status: "launched", plan });
-    });
-  });
+  return { status: "launched", plan, webStatus };
 }
 
 export function formatPlannerHandoffPauseReason(milestoneId: string): string {
   return [
     `Milestone ${milestoneId} is planned. Review or customize the plan before implementation if needed.`,
-    `Run /gsd planner to launch ${GSD_PLANNER_COMMAND}, or run /gsd auto to continue without planner changes.`,
+    "Run /gsd planner to open the built-in Planner, or run /gsd auto to continue without planner changes.",
   ].join(" ");
 }
 
-export function formatPlannerLaunchUnavailable(plan: GsdPlannerSpawnPlan, error: Error): string {
+export function formatPlannerLaunchUnavailable(plan: GsdPlannerLaunchPlan, error: Error): string {
   return [
-    `Could not launch ${GSD_PLANNER_COMMAND}: ${error.message}`,
-    `Install ${GSD_PLANNER_COMMAND} or run it manually: ${formatGsdPlannerCommand(plan)}`,
+    `Could not launch GSD Planner: ${error.message}`,
+    `Open the built-in web app manually: ${["gsd", "--web", plan.cwd].map(quoteArg).join(" ")}`,
+    "Continue without planner edits: /gsd auto",
   ].join("\n");
 }

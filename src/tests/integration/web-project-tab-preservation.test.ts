@@ -46,6 +46,7 @@ const KNOWN_VIEWS = new Set([
   "power",
   "chat",
   "roadmap",
+  "planner",
   "files",
   "activity",
   "visualize",

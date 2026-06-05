@@ -153,9 +153,9 @@ const GSD_PASSTHROUGH_SUBCOMMANDS = new Set<string>([
 
 export const GSD_HELP_TEXT = `Available /gsd subcommands:
 
-Workflow:    next · auto · stop · pause · skip · queue · quick · capture · triage
+Workflow:    next · auto · stop · pause · skip · queue · planner · quick
 Diagnostics: status · visualize · forensics · doctor · skill-health · inspect
-Context:     knowledge · history · undo · discuss
+Context:     knowledge · history · undo · discuss · capture · triage
 Settings:    model · prefs · config · hooks · mode · steer
 Advanced:    report · export · cleanup · run-hook · migrate · remote
 
@@ -202,6 +202,15 @@ function dispatchGSDSubcommand(
       input,
       commandName: "gsd",
       view: "visualize",
+    }
+  }
+
+  if (subcommand === "planner") {
+    return {
+      kind: "view-navigate",
+      input,
+      commandName: "gsd",
+      view: "planner",
     }
   }
 
