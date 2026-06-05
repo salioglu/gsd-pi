@@ -663,6 +663,10 @@ export async function handleCoreCommand(
     await handleOnboarding(trimmed.replace(/^onboarding\s*/, "").trim(), ctx);
     return true;
   }
+  if (trimmed === "planner" || trimmed.startsWith("planner ")) {
+    await handlePlanner(trimmed.replace(/^planner\s*/, "").trim(), ctx);
+    return true;
+  }
   return false;
 }
 

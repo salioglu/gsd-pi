@@ -51,7 +51,7 @@ describe("planner handoff command catalog", () => {
 
     assert.ok(nestedCompletions.length > 0, "planner should expose nested completions");
     assert.ok(
-      nestedCompletions.some((c) => c.value === "--dry-run"),
+      nestedCompletions.some((c) => c.value === "planner --dry-run"),
       "planner should expose --dry-run completion",
     );
   });
