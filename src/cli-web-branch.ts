@@ -19,6 +19,8 @@ export interface CliFlags {
   web?: boolean
   /** Optional project path for web mode: `gsd --web <path>` or `gsd web start <path>` */
   webPath?: string
+  /** Internal initial browser route for web mode launchers. */
+  webInitialPath?: string
   /** Custom host to bind web server to: `--host 0.0.0.0` */
   webHost?: string
   /** Custom port for web server: `--port 8080` */
@@ -69,6 +71,8 @@ export function parseCliArgs(argv: string[]): CliFlags {
       if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
         flags.webPath = args[++i]
       }
+    } else if (arg === '--web-initial-path' && i + 1 < args.length) {
+      flags.webInitialPath = args[++i]
     } else if (arg === '--host' && i + 1 < args.length) {
       flags.webHost = args[++i]
     } else if (arg === '--port' && i + 1 < args.length) {
@@ -288,14 +292,16 @@ export async function runWebCliBranch(
   const projectSessionsDir = getProjectSessionsDir(currentCwd, baseSessionsDir)
 
   migrateLegacyFlatSessions(baseSessionsDir, projectSessionsDir)
-  const status = await (deps.runWebMode ?? launchWebMode)({
+  const launchOptions = {
     cwd: currentCwd,
     projectSessionsDir,
     agentDir,
     host: flags.webHost,
     port: flags.webPort,
     allowedOrigins: flags.webAllowedOrigins,
-  })
+    ...(flags.webInitialPath ? { initialPath: flags.webInitialPath } : {}),
+  }
+  const status = await (deps.runWebMode ?? launchWebMode)(launchOptions)
 
   if (!status.ok) {
     emitWebModeFailure(stderr, status)

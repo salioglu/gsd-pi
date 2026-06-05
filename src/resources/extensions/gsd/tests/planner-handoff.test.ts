@@ -88,12 +88,26 @@ describe("planner handoff command handler", () => {
 
 describe("planner handoff launcher", () => {
   test("builds built-in Planner route with milestone context", () => {
-    const plan = buildGsdPlannerLaunchPlan({
-      basePath: "/tmp/project with spaces",
-      milestoneId: "M001",
-    });
+    const plan = buildGsdPlannerLaunchPlan(
+      {
+        basePath: "/tmp/project with spaces",
+        milestoneId: "M001",
+      },
+      {
+        command: "/usr/local/bin/node",
+        baseArgs: ["/tmp/gsd.js"],
+      },
+    );
 
     assert.deepEqual(plan, {
+      command: "/usr/local/bin/node",
+      args: [
+        "/tmp/gsd.js",
+        "--web",
+        "/tmp/project with spaces",
+        "--web-initial-path",
+        "/?view=planner&milestone=M001",
+      ],
       cwd: "/tmp/project with spaces",
       initialPath: "/?view=planner&milestone=M001",
       milestoneId: "M001",
@@ -105,43 +119,55 @@ describe("planner handoff launcher", () => {
   });
 
   test("launches Planner through built-in web mode", async () => {
-    let launchOptions: {
-      cwd: string;
-      projectSessionsDir: string;
-      agentDir: string;
-      initialPath?: string;
-    } | undefined;
+    let unrefCalled = false;
+    let spawnInvocation:
+      | { command: string; args: readonly string[]; options: Record<string, unknown> }
+      | undefined;
+
     const result = await launchGsdPlanner(
       {
         basePath: "/tmp/project",
         milestoneId: "M002",
       },
       {
-        agentDir: "/tmp/agent",
-        sessionsDir: "/tmp/sessions",
-        launchWebMode: async (options) => {
-          launchOptions = options;
-          return {
-            mode: "web",
-            ok: true,
-            cwd: options.cwd,
-            projectSessionsDir: options.projectSessionsDir,
-            host: "127.0.0.1",
-            port: 45123,
-            url: "http://127.0.0.1:45123",
-            hostKind: "source-dev",
-            hostPath: "/tmp/web/package.json",
-            hostRoot: "/tmp/web",
+        launcher: {
+          command: "/usr/local/bin/node",
+          baseArgs: ["/tmp/gsd.js"],
+        },
+        spawn: (command, args, options) => {
+          spawnInvocation = { command, args, options: options as Record<string, unknown> };
+          const child = {
+            once(event: string, cb: () => void) {
+              if (event === "spawn") setImmediate(cb);
+              return child;
+            },
+            unref() {
+              unrefCalled = true;
+            },
           };
+          return child as any;
         },
       },
     );
 
     assert.equal(result.status, "launched");
-    assert.equal(launchOptions?.cwd, "/tmp/project");
-    assert.equal(launchOptions?.agentDir, "/tmp/agent");
-    assert.equal(launchOptions?.initialPath, "/?view=planner&milestone=M002");
-    assert.match(String(launchOptions?.projectSessionsDir), /tmp\/sessions/);
+    assert.deepEqual(spawnInvocation, {
+      command: "/usr/local/bin/node",
+      args: [
+        "/tmp/gsd.js",
+        "--web",
+        "/tmp/project",
+        "--web-initial-path",
+        "/?view=planner&milestone=M002",
+      ],
+      options: {
+        cwd: "/tmp/project",
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      },
+    });
+    assert.equal(unrefCalled, true);
   });
 
   test("launch failure guidance points to built-in web mode", () => {
@@ -154,6 +180,7 @@ describe("planner handoff launcher", () => {
 
     assert.match(message, /Could not launch GSD Planner: boot-ready: timed out/);
     assert.match(message, /Open the built-in web app manually: gsd --web \/tmp\/project/);
+    assert.match(message, /--web-initial-path "\/\?view=planner&milestone=M002"/);
     assert.match(message, /Continue without planner edits: \/gsd auto/);
     assert.doesNotMatch(message, /gsd-planner/);
   });

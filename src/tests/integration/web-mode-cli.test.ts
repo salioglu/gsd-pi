@@ -284,6 +284,47 @@ test('parseCliArgs does not capture --web followed by a flag as path', () => {
   assert.equal(flags.model, 'test')
 })
 
+test('parseCliArgs captures hidden web initial path', () => {
+  const flags = cliWeb.parseCliArgs(['node', 'dist/loader.js', '--web', '/tmp/project', '--web-initial-path', '/?view=planner&milestone=M002'])
+  assert.equal(flags.web, true)
+  assert.equal(flags.webPath, '/tmp/project')
+  assert.equal(flags.webInitialPath, '/?view=planner&milestone=M002')
+})
+
+test('web CLI branch passes the initial route to web mode', async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-initial-path-'))
+  const projectDir = join(tmp, 'my-project')
+  mkdirSync(projectDir, { recursive: true })
+  let initialPath = ''
+
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }) });
+
+  const flags = cliWeb.parseCliArgs(['node', 'dist/loader.js', '--web', projectDir, '--web-initial-path', '/?view=planner&milestone=M002'])
+
+  const result = await cliWeb.runWebCliBranch(flags, {
+    runWebMode: async (options) => {
+      initialPath = options.initialPath ?? ''
+      return {
+        mode: 'web',
+        ok: true,
+        cwd: options.cwd,
+        projectSessionsDir: options.projectSessionsDir,
+        host: '127.0.0.1',
+        port: 43127,
+        url: 'http://127.0.0.1:43127',
+        hostKind: 'source-dev',
+        hostPath: '/tmp/fake-web/package.json',
+        hostRoot: '/tmp/fake-web',
+      }
+    },
+  })
+
+  assert.equal(result.handled, true)
+  if (!result.handled) throw new Error('expected web branch to be handled')
+  assert.equal(result.exitCode, 0)
+  assert.equal(initialPath, '/?view=planner&milestone=M002')
+})
+
 test('gsd web <path> is handled as web start with path', async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-path-'))
   const projectDir = join(tmp, 'my-project')
