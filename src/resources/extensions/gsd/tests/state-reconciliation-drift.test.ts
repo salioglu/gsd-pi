@@ -687,6 +687,53 @@ test("ADR-017 (#5702): stale-render drift detected and repaired end-to-end", asy
   assert.match(repairedContent, /\[x\][^\n]*T02:/, "T02 checkbox should be checked after repair");
 });
 
+test("ADR-017 (#5702): stale-render plan repair resolves a legacy descriptor milestone dir", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-adr017-render-descriptor-"));
+  // The milestone DIRECTORY carries a legacy descriptor ("M001-old"); the DB id
+  // is canonical "M001". The plan repair must map the dir segment back to the
+  // DB id, otherwise the DB lookup finds no tasks and the "wrote nothing" guard
+  // throws on valid drift.
+  const sliceDir = join(base, ".gsd", "milestones", "M001-old", "slices", "S01");
+  mkdirSync(join(sliceDir, "tasks"), { recursive: true });
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmTreeQuiet(base);
+  });
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  clearRendererCaches();
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "First task", status: "done" });
+
+  const planPath = join(sliceDir, "S01-PLAN.md");
+  writeFileSync(planPath, makeStalePlanContent("S01", [
+    { id: "T01", title: "First task", done: false },
+  ]));
+  clearRendererCaches();
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  // Must NOT throw "wrote nothing": the descriptor dir resolves to M001 and the
+  // drift is repaired rather than aborting reconciliation.
+  assert.equal(result.ok, true);
+  assert.ok(
+    result.repaired.find((d) => d.kind === "stale-render"),
+    "stale-render drift repaired despite the descriptor directory",
+  );
+  // The projection re-renders from the DB under the canonical milestone id.
+  const canonicalPlan = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
+  assert.ok(existsSync(canonicalPlan), "plan re-rendered under the canonical milestone dir");
+  assert.match(
+    readFileSync(canonicalPlan, "utf-8"),
+    /\[x\][^\n]*T01:/,
+    "T01 checkbox checked in the re-rendered plan",
+  );
+});
+
 test("ADR-017 (#5702): stale-render detector reason strings match repair contract", (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-adr017-render-reasons-"));
   const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
