@@ -473,17 +473,15 @@ function persistSliceAssessmentBackfill(
       task_id: null,
       full_content: content,
     });
-    if (!getAssessment(assessmentRelPath)) {
-      insertAssessment({
-        path: assessmentRelPath,
-        milestoneId: mid,
-        sliceId,
-        taskId: null,
-        status,
-        scope,
-        fullContent: content,
-      });
-    }
+    insertAssessment({
+      path: assessmentRelPath,
+      milestoneId: mid,
+      sliceId,
+      taskId: null,
+      status,
+      scope,
+      fullContent: content,
+    });
   });
 }
 
@@ -520,19 +518,29 @@ function backfillMissingAssessmentsFromSummaries(basePath: string, mid: string):
     const assessmentRelPath = relSliceFile(basePath, mid, sliceId, "ASSESSMENT");
     const now = new Date().toISOString();
     const didCreateAssessment = !existsSync(assessmentPath);
-    const content = didCreateAssessment ? [
-      "---",
-      `sliceId: ${sliceId}`,
-      "verdict: PASS",
-      `date: ${now}`,
-      "---",
-      "",
-      `# Assessment — ${sliceId}`,
-      "",
-      "Auto-created during milestone validation because this completed slice had a SUMMARY but no ASSESSMENT artifact.",
-      "No additional reassessment changes were detected in this backfill step.",
-      "",
-    ].join("\n") : readFileSync(assessmentPath, "utf-8");
+    let content: string;
+    if (!didCreateAssessment) {
+      content = readFileSync(assessmentPath, "utf-8");
+    } else {
+      // Check the DB for pre-existing content before synthesizing a PASS — a
+      // failed UAT verdict that only lives in SQLite must not be clobbered.
+      const dbRow = isDbAvailable()
+        ? (getAssessment(assessmentRelPath) ?? getAssessment(stripGsdPrefix(assessmentRelPath)))
+        : null;
+      content = stringField(dbRow, "full_content") ?? [
+        "---",
+        `sliceId: ${sliceId}`,
+        "verdict: PASS",
+        `date: ${now}`,
+        "---",
+        "",
+        `# Assessment — ${sliceId}`,
+        "",
+        "Auto-created during milestone validation because this completed slice had a SUMMARY but no ASSESSMENT artifact.",
+        "No additional reassessment changes were detected in this backfill step.",
+        "",
+      ].join("\n");
+    }
 
     if (isDbAvailable()) {
       try {
