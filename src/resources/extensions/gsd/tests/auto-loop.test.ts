@@ -1127,6 +1127,8 @@ function makeLoopSession(overrides?: Partial<Record<string, unknown>>) {
       getContextUsage: () => ({ percent: 10, tokens: 1000, limit: 10000 }),
     },
     clearTimers: () => {},
+    setCurrentUnit(unit: any) { (this as any).currentUnit = unit; },
+    clearCurrentUnit() { (this as any).currentUnit = null; },
     ...overrides,
   } as any;
 }

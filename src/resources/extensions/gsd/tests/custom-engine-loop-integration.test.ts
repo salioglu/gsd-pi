@@ -141,6 +141,8 @@ function makeLoopSession(overrides?: Record<string, unknown>) {
     },
     clearTimers: () => {},
     lockBasePath: "/tmp/project",
+    setCurrentUnit(unit: any) { (this as any).currentUnit = unit; },
+    clearCurrentUnit() { (this as any).currentUnit = null; },
     ...overrides,
   } as any;
 }
