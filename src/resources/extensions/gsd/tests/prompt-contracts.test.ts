@@ -10,6 +10,13 @@ import {
   RUN_UAT_TOOL_PRESENTATION_PLAN_ID,
   RUN_UAT_WORKFLOW_TOOL_NAMES,
 } from "../tool-presentation-plan.ts";
+import {
+  buildMinimalAutoGsdToolSet,
+  MINIMAL_AUTO_BASE_TOOL_NAMES,
+  MINIMAL_GSD_TOOL_NAMES,
+} from "../bootstrap/register-hooks.ts";
+import { shouldBlockAutoUnitToolCall } from "../auto-unit-tool-scope.ts";
+import { UNIT_TOOL_CONTRACTS } from "../unit-tool-contracts.ts";
 
 const promptsDir = join(process.cwd(), "src/resources/extensions/gsd/prompts");
 const templatesDir = join(process.cwd(), "src/resources/extensions/gsd/templates");
@@ -21,6 +28,84 @@ function readPrompt(name: string): string {
 function readTemplate(name: string): string {
   return readFileSync(join(templatesDir, `${name}.md`), "utf-8");
 }
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const registeredPhaseToolNames = [
+  ...new Set([
+    ...MINIMAL_AUTO_BASE_TOOL_NAMES,
+    ...MINIMAL_GSD_TOOL_NAMES,
+    ...Object.values(UNIT_TOOL_CONTRACTS).flatMap((contract) => contract.allowedGsdTools),
+  ]),
+];
+
+const PHASE_PROMPT_TOOL_CALLS: Record<string, readonly string[]> = {
+  "research-milestone": ["gsd_summary_save"],
+  "plan-milestone": [
+    "gsd_milestone_status",
+    "gsd_plan_milestone",
+    "gsd_plan_slice",
+    "gsd_decision_save",
+  ],
+  "research-slice": ["gsd_summary_save"],
+  "plan-slice": ["gsd_reassess_roadmap", "gsd_plan_slice", "gsd_decision_save"],
+  "refine-slice": ["gsd_plan_slice", "gsd_decision_save"],
+  "replan-slice": ["gsd_replan_slice"],
+  "execute-task": ["gsd_task_complete"],
+  "reactive-execute": ["gsd_summary_save"],
+  "complete-slice": [
+    "gsd_exec",
+    "gsd_task_reopen",
+    "gsd_replan_slice",
+    "gsd_requirement_update",
+    "capture_thought",
+    "gsd_slice_complete",
+    "gsd_summary_save",
+  ],
+  "reassess-roadmap": ["gsd_milestone_status", "gsd_reassess_roadmap"],
+  "validate-milestone": ["gsd_milestone_status", "gsd_validate_milestone", "gsd_reassess_roadmap"],
+  "run-uat": ["gsd_uat_exec", "gsd_uat_result_save"],
+  "gate-evaluate": ["gsd_save_gate_result"],
+  "complete-milestone": [
+    "gsd_milestone_status",
+    "gsd_requirement_update",
+    "gsd_summary_save",
+    "capture_thought",
+    "gsd_complete_milestone",
+  ],
+};
+
+test("auto phase prompt tool calls are available in scoped tool surfaces", () => {
+  for (const [unitType, promptTools] of Object.entries(PHASE_PROMPT_TOOL_CALLS)) {
+    const prompt = readPrompt(unitType);
+    const activeTools = buildMinimalAutoGsdToolSet(
+      registeredPhaseToolNames,
+      unitType,
+      registeredPhaseToolNames,
+    );
+
+    for (const toolName of promptTools) {
+      assert.match(
+        prompt,
+        new RegExp(`\\b${escapeRegExp(toolName)}\\b`),
+        `${unitType} prompt should mention ${toolName}`,
+      );
+      assert.ok(
+        activeTools.includes(toolName),
+        `${unitType} prompt mentions ${toolName}, but scoped tools are ${activeTools.join(", ")}`,
+      );
+
+      const scopeResult = shouldBlockAutoUnitToolCall(unitType, toolName);
+      assert.equal(
+        scopeResult.block,
+        false,
+        `${unitType} phase gate blocked ${toolName}: ${scopeResult.reason ?? "unknown reason"}`,
+      );
+    }
+  }
+});
 
 test("reactive-execute prompt keeps task summaries with subagents and avoids batch commits", () => {
   const prompt = readPrompt("reactive-execute");

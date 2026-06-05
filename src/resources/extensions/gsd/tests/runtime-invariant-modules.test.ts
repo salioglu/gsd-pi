@@ -108,6 +108,26 @@ test("auto Unit tool scope blocks complete-slice from saving UAT Assessment", ()
   assert.match(result.reason ?? "", /Run UAT owns persisted UAT Assessment/);
 });
 
+test("auto Unit tool scope allows plan-slice to reassess invalid roadmap assumptions", () => {
+  const result = shouldBlockAutoUnitToolCall("plan-slice", "gsd_reassess_roadmap");
+
+  assert.equal(result.block, false);
+});
+
+test("auto Unit tool scope allows status/read helpers named by closeout prompts", () => {
+  for (const unitType of ["plan-milestone", "validate-milestone", "complete-milestone", "reassess-roadmap"]) {
+    const result = shouldBlockAutoUnitToolCall(unitType, "gsd_milestone_status");
+    assert.equal(result.block, false, `${unitType} should be able to call gsd_milestone_status`);
+  }
+});
+
+test("auto Unit tool scope blocks stale per-task planner in slice planning phases", () => {
+  for (const unitType of ["plan-slice", "refine-slice", "replan-slice"]) {
+    const result = shouldBlockAutoUnitToolCall(unitType, "gsd_plan_task");
+    assert.equal(result.block, true, `${unitType} should not call stale gsd_plan_task`);
+  }
+});
+
 test("Recovery Classification covers ADR-015 failure families", () => {
   const cases = [
     ["invalid tool schema enum", "tool-schema", "stop"],

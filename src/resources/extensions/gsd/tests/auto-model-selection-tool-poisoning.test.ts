@@ -140,7 +140,7 @@ function makeCtx(
 test("vacuous-truth (a): unit type with empty workflow-required tools → dispatch succeeds", async () => {
   const env = makeTempProject();
   try {
-    // `refine-slice` is not in the getRequiredWorkflowToolsForAutoUnit switch
+    // `rewrite-docs` has no required workflow tools
     // → returns []. Exercises the empty-requiredTools branch in
     // applyModelPolicyFilter (existing test used
     // gate-evaluate which has non-empty required tools and never hit this path).
@@ -162,7 +162,7 @@ test("vacuous-truth (a): unit type with empty workflow-required tools → dispat
     const result = await selectAndApplyModel(
       makeCtx(availableModels),
       pi as any,
-      "refine-slice",
+      "rewrite-docs",
       "x1",
       env.dir,
       undefined,
@@ -309,8 +309,8 @@ test("genuinely-impossible (a): pi-native required tool incompatible with candid
 test("genuinely-impossible (b): cross-provider routing disabled + provider mismatch → typed error", async () => {
   const env = makeTempProject();
   try {
-    // Use plan-slice (workflow-required: ["gsd_plan_slice"]) but pretend no
-    // candidate model can carry it.  The simplest way: provide a model whose
+    // Use plan-slice but pretend no candidate model can carry its required
+    // workflow tools. The simplest way: provide a model whose
     // api is a fictitious "no-tools" string — `filterToolsForProvider` returns
     // every tool as filtered for an unknown api with toolCalling=false, OR we
     // can pick a real api that also denies the tool.  We use an api that

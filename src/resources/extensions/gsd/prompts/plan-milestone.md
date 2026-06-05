@@ -14,7 +14,7 @@ All relevant context is preloaded below. Start immediately without re-reading th
 
 ## Already Planned? Soft Brake
 
-If `{{outputPath}}` exists with at least one slice line (e.g. `- [ ] **S01:`) AND `gsd_query` reports slice rows for this milestone, a prior `gsd_plan_milestone` call already persisted the plan. Do **not** re-call it; its UPSERT could overwrite existing planning. Skip to the ready phrase.
+If `{{outputPath}}` exists with at least one slice line (e.g. `- [ ] **S01:`) AND `gsd_milestone_status` reports slice rows for this milestone, a prior `gsd_plan_milestone` call already persisted the plan. Do **not** re-call it; its UPSERT could overwrite existing planning. Skip to the ready phrase.
 
 If only the file or only DB rows exist, the prior write was incomplete; plan normally so the tool reconciles both.
 

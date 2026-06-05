@@ -48,10 +48,50 @@ test("auto execute-task requires canonical task completion tool", () => {
   assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("execute-task"), ["gsd_task_complete"]);
 });
 
+test("plan-slice requires planning and roadmap reassessment tools", () => {
+  const expected = ["gsd_plan_slice", "gsd_reassess_roadmap"];
+  assert.deepEqual(getRequiredWorkflowToolsForGuidedUnit("plan-slice"), expected);
+  assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("plan-slice"), expected);
+});
+
+test("plan-milestone requires status, roadmap, and single-slice planning tools", () => {
+  const expected = ["gsd_milestone_status", "gsd_plan_milestone", "gsd_plan_slice"];
+  assert.deepEqual(getRequiredWorkflowToolsForGuidedUnit("plan-milestone"), expected);
+  assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("plan-milestone"), expected);
+});
+
+test("refine-slice requires canonical slice planning tool", () => {
+  assert.deepEqual(getRequiredWorkflowToolsForGuidedUnit("refine-slice"), ["gsd_plan_slice"]);
+  assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("refine-slice"), ["gsd_plan_slice"]);
+});
+
 test("complete-slice requires closeout and execution handoff tools", () => {
-  const expected = ["gsd_slice_complete", "gsd_task_reopen", "gsd_replan_slice"];
+  const expected = [
+    "gsd_slice_complete",
+    "gsd_task_reopen",
+    "gsd_replan_slice",
+    "gsd_requirement_update",
+    "gsd_summary_save",
+  ];
   assert.deepEqual(getRequiredWorkflowToolsForGuidedUnit("complete-slice"), expected);
   assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("complete-slice"), expected);
+});
+
+test("complete-milestone requires status, requirement, project refresh, and closeout tools", () => {
+  const expected = [
+    "gsd_milestone_status",
+    "gsd_requirement_update",
+    "gsd_summary_save",
+    "gsd_complete_milestone",
+  ];
+  assert.deepEqual(getRequiredWorkflowToolsForGuidedUnit("complete-milestone"), expected);
+  assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("complete-milestone"), expected);
+});
+
+test("reactive-execute requires task completion and failed-task summary tools", () => {
+  const expected = ["gsd_task_complete", "gsd_summary_save"];
+  assert.deepEqual(getRequiredWorkflowToolsForGuidedUnit("reactive-execute"), expected);
+  assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("reactive-execute"), expected);
 });
 
 test("workflow MCP capability surface includes native legacy gsd aliases", () => {
@@ -679,7 +719,7 @@ test("transport compatibility ignores API-backed providers", () => {
 test("transport compatibility now allows plan-slice over workflow MCP surface", () => {
   const error = getWorkflowTransportSupportError(
     "claude-code",
-    ["gsd_plan_slice"],
+    getRequiredWorkflowToolsForAutoUnit("plan-slice"),
     {
       projectRoot: "/tmp/project",
       env: { GSD_WORKFLOW_MCP_COMMAND: "node" },
@@ -696,7 +736,7 @@ test("transport compatibility now allows plan-slice over workflow MCP surface", 
 test("transport compatibility now allows complete-slice over workflow MCP surface", () => {
   const error = getWorkflowTransportSupportError(
     "claude-code",
-    ["gsd_complete_slice"],
+    getRequiredWorkflowToolsForAutoUnit("complete-slice"),
     {
       projectRoot: "/tmp/project",
       env: { GSD_WORKFLOW_MCP_COMMAND: "node" },
@@ -747,7 +787,7 @@ test("transport compatibility now allows gate-evaluate over workflow MCP surface
 test("transport compatibility now allows validate-milestone over workflow MCP surface", () => {
   const error = getWorkflowTransportSupportError(
     "claude-code",
-    ["gsd_milestone_status", "gsd_validate_milestone"],
+    getRequiredWorkflowToolsForAutoUnit("validate-milestone"),
     {
       projectRoot: "/tmp/project",
       env: { GSD_WORKFLOW_MCP_COMMAND: "node" },
@@ -764,7 +804,7 @@ test("transport compatibility now allows validate-milestone over workflow MCP su
 test("transport compatibility now allows complete-milestone over workflow MCP surface", () => {
   const error = getWorkflowTransportSupportError(
     "claude-code",
-    ["gsd_milestone_status", "gsd_complete_milestone"],
+    getRequiredWorkflowToolsForAutoUnit("complete-milestone"),
     {
       projectRoot: "/tmp/project",
       env: { GSD_WORKFLOW_MCP_COMMAND: "node" },

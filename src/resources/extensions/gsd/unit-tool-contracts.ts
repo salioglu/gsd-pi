@@ -52,8 +52,14 @@ export const UNIT_TOOL_CONTRACTS: Record<string, UnitToolSurfaceContract> = {
     requiredWorkflowTools: ["gsd_summary_save"],
   },
   "plan-milestone": {
-    allowedGsdTools: ["gsd_plan_milestone", "gsd_decision_save", "gsd_requirement_update"],
-    requiredWorkflowTools: ["gsd_plan_milestone"],
+    allowedGsdTools: [
+      "gsd_milestone_status",
+      "gsd_plan_milestone",
+      "gsd_plan_slice",
+      "gsd_decision_save",
+      "gsd_requirement_update",
+    ],
+    requiredWorkflowTools: ["gsd_milestone_status", "gsd_plan_milestone", "gsd_plan_slice"],
   },
   "discuss-milestone": {
     allowedGsdTools: [
@@ -77,27 +83,38 @@ export const UNIT_TOOL_CONTRACTS: Record<string, UnitToolSurfaceContract> = {
     requiredWorkflowTools: ["gsd_summary_save"],
   },
   "validate-milestone": {
-    allowedGsdTools: ["gsd_validate_milestone", "gsd_reassess_roadmap", "subagent"],
+    allowedGsdTools: ["gsd_milestone_status", "gsd_validate_milestone", "gsd_reassess_roadmap", "subagent"],
     requiredWorkflowTools: ["gsd_milestone_status", "gsd_validate_milestone", "gsd_reassess_roadmap"],
   },
   "complete-milestone": {
-    allowedGsdTools: ["gsd_complete_milestone", "subagent"],
-    requiredWorkflowTools: ["gsd_milestone_status", "gsd_complete_milestone"],
+    allowedGsdTools: [
+      "gsd_milestone_status",
+      "gsd_requirement_update",
+      "gsd_summary_save",
+      "gsd_complete_milestone",
+      "subagent",
+    ],
+    requiredWorkflowTools: [
+      "gsd_milestone_status",
+      "gsd_requirement_update",
+      "gsd_summary_save",
+      "gsd_complete_milestone",
+    ],
   },
   "research-slice": {
     allowedGsdTools: ["gsd_summary_save", "gsd_decision_save"],
     requiredWorkflowTools: ["gsd_summary_save"],
   },
   "plan-slice": {
-    allowedGsdTools: ["gsd_plan_slice", "gsd_plan_task", "gsd_decision_save"],
-    requiredWorkflowTools: ["gsd_plan_slice"],
+    allowedGsdTools: ["gsd_plan_slice", "gsd_reassess_roadmap", "gsd_decision_save"],
+    requiredWorkflowTools: ["gsd_plan_slice", "gsd_reassess_roadmap"],
   },
   "refine-slice": {
-    allowedGsdTools: ["gsd_plan_slice", "gsd_plan_task", "gsd_decision_save"],
-    requiredWorkflowTools: [],
+    allowedGsdTools: ["gsd_plan_slice", "gsd_decision_save"],
+    requiredWorkflowTools: ["gsd_plan_slice"],
   },
   "replan-slice": {
-    allowedGsdTools: ["gsd_replan_slice", "gsd_plan_task", "gsd_decision_save"],
+    allowedGsdTools: ["gsd_replan_slice", "gsd_decision_save"],
     requiredWorkflowTools: ["gsd_replan_slice"],
   },
   "complete-slice": {
@@ -107,15 +124,22 @@ export const UNIT_TOOL_CONTRACTS: Record<string, UnitToolSurfaceContract> = {
       "gsd_replan_slice",
       "gsd_decision_save",
       "gsd_requirement_update",
+      "gsd_summary_save",
       "subagent",
     ],
-    requiredWorkflowTools: ["gsd_slice_complete", "gsd_task_reopen", "gsd_replan_slice"],
+    requiredWorkflowTools: [
+      "gsd_slice_complete",
+      "gsd_task_reopen",
+      "gsd_replan_slice",
+      "gsd_requirement_update",
+      "gsd_summary_save",
+    ],
     forbiddenGsdTools: {
       gsd_uat_result_save: "Run UAT owns persisted UAT Assessment.",
     },
   },
   "reassess-roadmap": {
-    allowedGsdTools: ["gsd_reassess_roadmap"],
+    allowedGsdTools: ["gsd_milestone_status", "gsd_reassess_roadmap"],
     requiredWorkflowTools: ["gsd_milestone_status", "gsd_reassess_roadmap"],
   },
   "execute-task": {
@@ -127,8 +151,8 @@ export const UNIT_TOOL_CONTRACTS: Record<string, UnitToolSurfaceContract> = {
     requiredWorkflowTools: ["gsd_task_complete"],
   },
   "reactive-execute": {
-    allowedGsdTools: ["gsd_task_complete", "gsd_decision_save"],
-    requiredWorkflowTools: ["gsd_task_complete"],
+    allowedGsdTools: ["gsd_task_complete", "gsd_summary_save", "gsd_decision_save"],
+    requiredWorkflowTools: ["gsd_task_complete", "gsd_summary_save"],
   },
   "run-uat": {
     allowedGsdTools: [...RUN_UAT_WORKFLOW_TOOL_NAMES, "subagent"],
