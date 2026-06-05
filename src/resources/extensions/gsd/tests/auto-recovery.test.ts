@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 
 import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArtifactPath, diagnoseExpectedArtifact, diagnoseWorktreeIntegrityFailure, buildLoopRemediationSteps, writeBlockerPlaceholder, refreshRecoveryDbForArtifact, writeReactiveExecuteBlocker } from "../auto-recovery.ts";
 import { resolveMilestoneFile } from "../paths.ts";
-import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getTask } from "../gsd-db.ts";
+import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getTask, saveGateResult } from "../gsd-db.ts";
 import { readEvents } from "../workflow-events.ts";
 import { clearParseCache } from "../files.ts";
 import { parseRoadmap } from "../parsers-legacy.ts";
@@ -1611,6 +1611,27 @@ test("verifyExpectedArtifact checks pending gate-evaluate artifacts without ESM 
   const verified = verifyExpectedArtifact("gate-evaluate", "M001/S01/gates+Q3", base);
 
   assert.equal(verified, false, "pending gates should keep gate-evaluate unverified");
+});
+
+test("verifyExpectedArtifact fails closed for gate-evaluate when the DB is unavailable", () => {
+  const base = makeTmpProject();
+  closeDatabase();
+
+  const verified = verifyExpectedArtifact("gate-evaluate", "M001/S01/gates+Q3", base);
+
+  assert.equal(verified, false, "gate-evaluate must verify against the DB-backed gate rows");
+});
+
+test("verifyExpectedArtifact ignores complete-slice gates in stale gate-evaluate unit ids", () => {
+  const base = makeTmpProject();
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q4", scope: "slice" });
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q8", scope: "slice" });
+  saveGateResult({ milestoneId: "M001", sliceId: "S01", gateId: "Q3", verdict: "pass", rationale: "OK", findings: "" });
+  saveGateResult({ milestoneId: "M001", sliceId: "S01", gateId: "Q4", verdict: "pass", rationale: "OK", findings: "" });
+
+  const verified = verifyExpectedArtifact("gate-evaluate", "M001/S01/gates+Q3,Q4,Q8", base);
+
+  assert.equal(verified, true, "pending Q8 belongs to complete-slice and must not keep gate-evaluate unverified");
 });
 
 // ─── #4414 regressions ────────────────────────────────────────────────────────

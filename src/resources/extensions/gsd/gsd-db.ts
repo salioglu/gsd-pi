@@ -2364,12 +2364,13 @@ export function saveGateResult(g: {
   findings: string;
 }): void {
   if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
-  currentDb.prepare(
+  const evaluatedAt = new Date().toISOString();
+  const result = currentDb.prepare(
     `UPDATE quality_gates
      SET status = 'complete', verdict = :verdict, rationale = :rationale,
          findings = :findings, evaluated_at = :evaluated_at
      WHERE milestone_id = :mid AND slice_id = :sid AND gate_id = :gid
-       AND task_id = :tid`,
+       AND (task_id = :tid OR (:tid = '' AND task_id IS NULL))`,
   ).run({
     ":mid": g.milestoneId,
     ":sid": g.sliceId,
@@ -2378,8 +2379,15 @@ export function saveGateResult(g: {
     ":verdict": g.verdict,
     ":rationale": g.rationale,
     ":findings": g.findings,
-    ":evaluated_at": new Date().toISOString(),
-  });
+    ":evaluated_at": evaluatedAt,
+  }) as { changes?: number };
+
+  if ((result.changes ?? 0) === 0) {
+    throw new GSDError(
+      GSD_STALE_STATE,
+      `quality gate row not found for ${g.milestoneId}/${g.sliceId}/${g.gateId}${g.taskId ? `/${g.taskId}` : ""}`,
+    );
+  }
 
   const outcome =
     g.verdict === "pass"
@@ -2402,7 +2410,7 @@ export function saveGateResult(g: {
     attempt: 1,
     maxAttempts: 1,
     retryable: false,
-    evaluatedAt: new Date().toISOString(),
+    evaluatedAt,
   });
 }
 
@@ -2436,6 +2444,30 @@ export function markAllGatesOmitted(milestoneId: string, sliceId: string): void 
     ":sid": sliceId,
     ":now": new Date().toISOString(),
   });
+}
+
+export function markPendingGatesOmittedForTurn(
+  milestoneId: string,
+  sliceId: string,
+  turn: OwnerTurn,
+): void {
+  if (!currentDb) return;
+  const gateIds = [...getGateIdsForTurn(turn)];
+  if (gateIds.length === 0) return;
+  const placeholders = gateIds.map((_, i) => `:gid${i}`).join(",");
+  const params: Record<string, unknown> = {
+    ":mid": milestoneId,
+    ":sid": sliceId,
+    ":now": new Date().toISOString(),
+  };
+  gateIds.forEach((id, index) => {
+    params[`:gid${index}`] = id;
+  });
+  currentDb.prepare(
+    `UPDATE quality_gates SET status = 'complete', verdict = 'omitted', evaluated_at = :now
+     WHERE milestone_id = :mid AND slice_id = :sid AND status = 'pending'
+       AND gate_id IN (${placeholders})`,
+  ).run(params);
 }
 
 export function getPendingSliceGateCount(milestoneId: string, sliceId: string): number {

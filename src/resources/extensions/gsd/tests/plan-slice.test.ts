@@ -133,6 +133,36 @@ test('handlePlanSlice persists explicit slice/task target repositories', async (
   }
 });
 
+test('handlePlanSlice honors configured gate-evaluation gate sets', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParentSlice();
+    writeFileSync(
+      join(base, '.gsd', 'PREFERENCES.md'),
+      [
+        '---',
+        'gate_evaluation:',
+        '  enabled: true',
+        '  slice_gates:',
+        '    - Q3',
+        '  task_gates: false',
+        '---',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await handlePlanSlice(validParams(), base);
+    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+
+    const gateIds = getGateResults('M001', 'S02').map((gate) => gate.gate_id).sort();
+    assert.deepEqual(gateIds, ['Q3', 'Q8']);
+  } finally {
+    cleanup(base);
+  }
+});
+
 test('handlePlanSlice rejects unknown target repositories', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));

@@ -48,6 +48,7 @@ import { invalidateStateCache } from "../state.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { parseProject } from "../schemas/parsers.js";
 import { getAutoRuntimeSnapshot } from "../auto-runtime-state.js";
+import { renderPlanFromDb } from "../markdown-renderer.js";
 import {
   buildRunUatPresentationForType,
   canonicalWorkflowToolName,
@@ -994,6 +995,7 @@ export async function executeSaveGateResult(
       rationale: params.rationale,
       findings: params.findings ?? "",
     });
+    await renderPlanFromDb(basePath, params.milestoneId, params.sliceId);
     invalidateStateCache();
     return {
       content: [{ type: "text", text: `Gate ${params.gateId} result saved: verdict=${params.verdict}` }],

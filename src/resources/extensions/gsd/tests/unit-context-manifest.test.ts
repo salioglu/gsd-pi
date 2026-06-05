@@ -85,6 +85,12 @@ test("#4782 phase 1: no manifest has the same artifact key in inline AND excerpt
   }
 });
 
+test("gate-evaluate manifest matches its prompt builder context", () => {
+  assert.deepEqual(UNIT_MANIFESTS["gate-evaluate"].artifacts.inline, ["slice-plan"]);
+  assert.deepEqual(UNIT_MANIFESTS["gate-evaluate"].artifacts.excerpt, []);
+  assert.deepEqual(UNIT_MANIFESTS["gate-evaluate"].artifacts.onDemand, []);
+});
+
 test("#4782 phase 1: every manifest has a positive maxSystemPromptChars", () => {
   for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
     assert.ok(
@@ -432,7 +438,7 @@ test('Unit Tool Contract exposes subagent dispatch permissions', () => {
   });
   assert.deepEqual(resolveSubagentPermissionContract("gate-evaluate"), {
     allowed: true,
-    allowedSubagents: ["reviewer", "security", "tester"],
+    allowedSubagents: ["tester"],
     toolsMode: "planning-dispatch",
   });
   assert.deepEqual(resolveSubagentPermissionContract("run-uat"), {

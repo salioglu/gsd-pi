@@ -1285,7 +1285,7 @@ async function configureHooks(ctx: ExtensionCommandContext, prefs: Record<string
   if (geEnabled !== undefined) ge.enabled = geEnabled;
   const currentSliceGates = Array.isArray(ge.slice_gates) ? ge.slice_gates as string[] : [];
   const sgInput = await ctx.ui.input(
-    `Slice gates to evaluate (comma-separated, blank keeps)${currentSliceGates.length ? ` (current: ${currentSliceGates.join(", ")})` : " (default: Q3,Q4)"}:`,
+    `Gate-evaluate slice gates (Q3,Q4; comma-separated, blank keeps)${currentSliceGates.length ? ` (current: ${currentSliceGates.join(", ")})` : " (default: Q3,Q4)"}:`,
     currentSliceGates.join(", "),
   );
   if (sgInput !== null && sgInput !== undefined) {

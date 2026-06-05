@@ -9,7 +9,6 @@ import {
   openDatabase,
   closeDatabase,
   _getAdapter,
-  insertGateRow,
   insertAssessment,
   upsertRequirement,
   getAllMilestones,
@@ -1447,12 +1446,25 @@ test("executeSaveGateResult validates inputs and persists verdicts", async () =>
     openTestDb(base);
     seedMilestone("M005", "Milestone Five");
     seedSlice("M005", "S05", "pending");
-    insertGateRow({
+    mkdirSync(join(base, "src"), { recursive: true });
+    writeFileSync(join(base, "src", "gate.ts"), "export const gate = true;\n", "utf-8");
+    await inProjectDir(base, () => executePlanSlice({
       milestoneId: "M005",
       sliceId: "S05",
-      gateId: "Q3",
-      scope: "slice",
-    });
+      goal: "Plan gate save projection.",
+      tasks: [
+        {
+          taskId: "T01",
+          title: "Add gate fixture",
+          description: "Create a fixture touched by gate evaluation.",
+          estimate: "10m",
+          files: ["src/gate.ts"],
+          verify: "node --test",
+          inputs: [],
+          expectedOutput: ["src/gate.ts"],
+        },
+      ],
+    }, base));
 
     const result = await inProjectDir(base, () => executeSaveGateResult({
       milestoneId: "M005",
@@ -1471,6 +1483,33 @@ test("executeSaveGateResult validates inputs and persists verdicts", async () =>
     assert.equal(row?.status, "complete");
     assert.equal(row?.verdict, "pass");
     assert.equal(row?.rationale, "Looks good.");
+    const planPath = join(base, ".gsd", "milestones", "M005", "slices", "S05", "S05-PLAN.md");
+    assert.match(readFileSync(planPath, "utf-8"), /No issues found\./);
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeSaveGateResult fails when no canonical gate row is updated", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    seedMilestone("M005", "Milestone Five");
+    seedSlice("M005", "S05", "pending");
+
+    const result = await inProjectDir(base, () => executeSaveGateResult({
+      milestoneId: "M005",
+      sliceId: "S05",
+      gateId: "Q3",
+      verdict: "pass",
+      rationale: "Looks good.",
+      findings: "No issues found.",
+    }, base));
+
+    assert.equal(result.isError, true);
+    assert.equal(result.details.operation, "save_gate_result");
+    assert.match(String(result.details.error), /quality gate row not found/);
   } finally {
     closeDatabase();
     cleanup(base);

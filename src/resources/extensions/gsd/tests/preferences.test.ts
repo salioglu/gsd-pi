@@ -467,6 +467,20 @@ test("notification fields validate correctly", () => {
   assert.equal(preferences.notifications?.on_complete, false);
 });
 
+test("gate_evaluation slice_gates only accepts gate-evaluate-owned gates", () => {
+  const valid = validatePreferences({
+    gate_evaluation: { enabled: true, slice_gates: ["Q3", "Q4"], task_gates: false },
+  });
+  assert.equal(valid.errors.length, 0);
+  assert.deepEqual(valid.preferences.gate_evaluation?.slice_gates, ["Q3", "Q4"]);
+  assert.equal(valid.preferences.gate_evaluation?.task_gates, false);
+
+  const invalid = validatePreferences({
+    gate_evaluation: { enabled: true, slice_gates: ["Q3", "Q8"] },
+  });
+  assert.ok(invalid.errors.some((error) => error.includes("gate_evaluation.slice_gates")));
+});
+
 test("cmux fields validate correctly", () => {
   const { preferences, errors } = validatePreferences({
     cmux: {

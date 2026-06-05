@@ -15,7 +15,25 @@ import { appendEvent } from "./workflow-events.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { clearParseCache } from "./files.js";
 import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
-import { isDbAvailable, getTask, getSlice, getSliceTasks, getPendingGates, updateTaskStatus, updateSliceStatus, insertSlice, getMilestone, getMilestoneSlices, getLatestAssessmentByScope, updateMilestoneStatus, refreshOpenDatabaseFromDisk, getCompletedMilestoneTaskFileHints, getMilestoneCommitAttributionShas, recordMilestoneCommitAttribution, transaction } from "./gsd-db.js";
+import {
+  isDbAvailable,
+  getTask,
+  getSlice,
+  getSliceTasks,
+  getPendingGatesForTurn,
+  updateTaskStatus,
+  updateSliceStatus,
+  insertSlice,
+  getMilestone,
+  getMilestoneSlices,
+  getLatestAssessmentByScope,
+  updateMilestoneStatus,
+  refreshOpenDatabaseFromDisk,
+  getCompletedMilestoneTaskFileHints,
+  getMilestoneCommitAttributionShas,
+  recordMilestoneCommitAttribution,
+  transaction,
+} from "./gsd-db.js";
 import { isValidationTerminal } from "./state.js";
 import { getErrorMessage } from "./error-utils.js";
 import { logWarning, logError } from "./workflow-logger.js";
@@ -390,8 +408,9 @@ export function verifyExpectedArtifact(
     if (gateIds.length === 0) return true;
 
     try {
-      const pending = getPendingGates(mid, sid, "slice");
-      const pendingIds = new Set(pending.map((g: any) => g.gate_id));
+      if (!isDbAvailable()) return false;
+      const pending = getPendingGatesForTurn(mid, sid, "gate-evaluate");
+      const pendingIds = new Set<string>(pending.map((g) => g.gate_id));
       // All dispatched gates must no longer be pending
       for (const gid of gateIds) {
         if (pendingIds.has(gid)) return false;

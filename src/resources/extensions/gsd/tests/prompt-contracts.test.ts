@@ -659,6 +659,12 @@ test("parallel subagent prompts forbid serialized tasks arrays", () => {
   }
 });
 
+test("gate-evaluate prompt requires gate result findings field", () => {
+  const prompt = readPrompt("gate-evaluate");
+  assert.match(prompt, /`findings`/);
+  assert.match(prompt, /empty string if none/i);
+});
+
 // ─── Project-shape classifier + 3-or-4-options-with-Other-hatch contract ──
 
 test("guided-discuss-project classifies project shape and persists the verdict to PROJECT.md", () => {

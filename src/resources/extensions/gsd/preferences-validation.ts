@@ -12,6 +12,7 @@ import type { DynamicRoutingConfig } from "./model-router.js";
 import { isAbsolute } from "node:path";
 import { VALID_BRANCH_NAME } from "./git-service.js";
 import { normalizeStringArray } from "../shared/format-utils.js";
+import { getGateIdsForTurn } from "./gate-registry.js";
 
 import {
   KNOWN_PREFERENCE_KEYS,
@@ -37,6 +38,7 @@ const VALID_POST_UNIT_HOOK_ON_BLOCK_ACTIONS = new Set([
   "queue-slice",
   "pause",
 ]);
+const VALID_GATE_EVALUATE_SLICE_GATES = new Set<string>(getGateIdsForTurn("gate-evaluate"));
 
 export function validatePreferences(preferences: GSDPreferences): {
   preferences: GSDPreferences;
@@ -907,7 +909,14 @@ export function validatePreferences(preferences: GSDPreferences): {
       }
       if (ge.slice_gates !== undefined) {
         if (Array.isArray(ge.slice_gates) && ge.slice_gates.every((g: unknown) => typeof g === "string")) {
-          validGe.slice_gates = ge.slice_gates;
+          const invalid = ge.slice_gates.filter((g) => !VALID_GATE_EVALUATE_SLICE_GATES.has(g));
+          if (invalid.length === 0) {
+            validGe.slice_gates = ge.slice_gates;
+          } else {
+            errors.push(
+              `gate_evaluation.slice_gates must contain only gate-evaluate slice gates: ${[...VALID_GATE_EVALUATE_SLICE_GATES].join(", ")}`,
+            );
+          }
         } else {
           errors.push("gate_evaluation.slice_gates must be an array of strings");
         }

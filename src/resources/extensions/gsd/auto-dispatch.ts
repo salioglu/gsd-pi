@@ -20,8 +20,8 @@ import { loadFile, extractUatType, loadActiveOverrides } from "./files.js";
 import {
   isDbAvailable,
   getMilestoneSlices,
-  getPendingGates,
-  markAllGatesOmitted,
+  getPendingGatesForTurn,
+  markPendingGatesOmittedForTurn,
   getMilestone,
   insertAssessment,
   setSliceSketchFlag,
@@ -1264,11 +1264,11 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // Gate evaluation is opt-in via preferences
       const gateConfig = prefs?.gate_evaluation;
       if (!gateConfig?.enabled) {
-        markAllGatesOmitted(mid, sid);
+        markPendingGatesOmittedForTurn(mid, sid, "gate-evaluate");
         return { action: "skip" };
       }
 
-      const pending = getPendingGates(mid, sid, "slice");
+      const pending = getPendingGatesForTurn(mid, sid, "gate-evaluate");
       if (pending.length === 0) return { action: "skip" };
 
       return {

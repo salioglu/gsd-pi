@@ -317,11 +317,10 @@ const TOOLS_PLANNING_DISPATCH_RECON: ToolsPolicy = {
   mode: "planning-dispatch",
   allowedSubagents: ["scout", "planner"],
 };
-// Like TOOLS_PLANNING_DISPATCH_RECON, but for closeout units that fan out
-// verification work to review-tier specialists.
+// Like TOOLS_PLANNING_DISPATCH_RECON, but for gate-evaluate's tester fanout.
 const TOOLS_PLANNING_DISPATCH_REVIEW: ToolsPolicy = {
   mode: "planning-dispatch",
-  allowedSubagents: ["reviewer", "security", "tester"],
+  allowedSubagents: ["tester"],
 };
 const TOOLS_DOCS: ToolsPolicy = {
   mode: "docs",
@@ -626,7 +625,7 @@ export const UNIT_MANIFESTS: Record<UnitType, UnitContextManifest> = {
     // plan and report via the DB-backed gate-result tool.
     tools: TOOLS_PLANNING_DISPATCH_REVIEW,
     artifacts: {
-      inline: ["slice-plan", "prior-task-summaries"],
+      inline: ["slice-plan"],
       excerpt: [],
       onDemand: [],
     },

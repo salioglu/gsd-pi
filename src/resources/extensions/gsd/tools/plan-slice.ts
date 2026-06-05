@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { clearParseCache } from "../files.js";
 import { isClosedStatus, isDeferredStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
+import { getGateIdsForTurn } from "../gate-registry.js";
 import {
   transaction,
   getMilestone,
@@ -17,7 +18,7 @@ import {
   deleteTask,
   deleteArtifactByPath,
 } from "../gsd-db.js";
-import type { GateId } from "../types.js";
+import type { GateEvaluationConfig, GateId } from "../types.js";
 import { invalidateStateCache } from "../state.js";
 import { renderPlanFromDb } from "../markdown-renderer.js";
 import { renderAllProjections } from "../workflow-projections.js";
@@ -163,9 +164,27 @@ function validateParams(params: PlanSliceParams): PlanSliceParams {
   };
 }
 
-function loadRepositoryRegistry(basePath: string): RepositoryRegistry {
+function loadPlanningContext(basePath: string): {
+  repositoryRegistry: RepositoryRegistry;
+  gateEvaluation?: GateEvaluationConfig;
+} {
   const loaded = loadEffectiveGSDPreferences(basePath);
-  return createRepositoryRegistryFromPreferences(basePath, loaded?.preferences);
+  return {
+    repositoryRegistry: createRepositoryRegistryFromPreferences(basePath, loaded?.preferences),
+    gateEvaluation: loaded?.preferences?.gate_evaluation,
+  };
+}
+
+function resolveGateEvaluateSliceGates(config: GateEvaluationConfig | undefined): GateId[] {
+  const ownedGateIds = [...getGateIdsForTurn("gate-evaluate")];
+  if (!config?.slice_gates?.length) return ownedGateIds;
+  const owned = new Set<string>(ownedGateIds);
+  return config.slice_gates.filter((gateId): gateId is GateId => owned.has(gateId));
+}
+
+function resolveTaskGates(config: GateEvaluationConfig | undefined): GateId[] {
+  if (config?.task_gates === false) return [];
+  return [...getGateIdsForTurn("execute-task")];
 }
 
 function validateReferencedRepositories(
@@ -265,8 +284,11 @@ export async function handlePlanSlice(
   }
 
   let repositoryRegistry: RepositoryRegistry;
+  let gateEvaluation: GateEvaluationConfig | undefined;
   try {
-    repositoryRegistry = loadRepositoryRegistry(basePath);
+    const context = loadPlanningContext(basePath);
+    repositoryRegistry = context.repositoryRegistry;
+    gateEvaluation = context.gateEvaluation;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { error: `validation failed: ${message}` };
@@ -384,11 +406,11 @@ export async function handlePlanSlice(
 
       // Seed quality gate rows inside the transaction — all-or-nothing with
       // the plan data so a crash can't leave orphaned gates without tasks.
-      const sliceGates: GateId[] = ["Q3", "Q4"];
+      const sliceGates = resolveGateEvaluateSliceGates(gateEvaluation);
       for (const gid of sliceGates) {
         insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "slice" });
       }
-      const taskGates: GateId[] = ["Q5", "Q6", "Q7"];
+      const taskGates = resolveTaskGates(gateEvaluation);
       for (const task of params.tasks) {
         for (const gid of taskGates) {
           insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "task", taskId: task.taskId });
