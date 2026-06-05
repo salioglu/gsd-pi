@@ -31,26 +31,28 @@ function createMockCommandCtx() {
 }
 
 describe("planner handoff command catalog", () => {
-  test("/gsd planner is hidden from description and completions", () => {
-    assert.doesNotMatch(GSD_COMMAND_DESCRIPTION, /\|planner(?:\||$)/);
+  test("/gsd planner is registered in the command description and completions", () => {
+    assert.match(GSD_COMMAND_DESCRIPTION, /\|planner(?:\||$)/);
     assert.equal(
       TOP_LEVEL_SUBCOMMANDS.some((command) => command.cmd === "planner"),
-      false,
-      "planner should not appear in top-level commands",
+      true,
+      "planner should appear in top-level commands",
     );
 
     const completions = getGsdArgumentCompletions("pla");
 
     assert.equal(
       completions.some((completion) => completion.value === "planner"),
-      false,
-      "planner should not appear in top-level completions",
+      true,
+      "planner should appear in top-level completions",
     );
 
-    assert.deepEqual(
-      getGsdArgumentCompletions("planner --"),
-      [],
-      "planner should not expose nested completions",
+    const nestedCompletions = getGsdArgumentCompletions("planner --");
+
+    assert.ok(nestedCompletions.length > 0, "planner should expose nested completions");
+    assert.ok(
+      nestedCompletions.some((c) => c.value === "--dry-run"),
+      "planner should expose --dry-run completion",
     );
   });
 });
@@ -199,7 +201,7 @@ describe("planner handoff launcher", () => {
 });
 
 describe("planner handoff dispatch rule", () => {
-  test("rule is not registered while /gsd planner is disabled", () => {
+  test("auto-dispatch planner handoff rule is not registered", () => {
     assert.equal(
       DISPATCH_RULES.some((rule) => rule.name === PLANNER_HANDOFF_RULE_NAME),
       false,
