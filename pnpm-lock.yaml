@@ -543,6 +543,9 @@ importers:
 
   packages/pi-tui:
     dependencies:
+      '@gsd/native':
+        specifier: workspace:*
+        version: link:../native
       '@sinclair/typebox':
         specifier: ^0.34.41
         version: 0.34.49
