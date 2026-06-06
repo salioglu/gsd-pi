@@ -560,6 +560,28 @@ jobs:
       - name: Verify native platform packages for release version
         run: pnpm run verify:native-platform-packages
 
+      - name: Fold native packages into release lockfile
+        env:
+          RELEASE_VERSION: ${{ needs.prod-release-plan.outputs.version }}
+        run: |
+          # The release commit + tag are created (in "Commit and tag release") BEFORE
+          # the @opengsd/engine-* native packages are published to npm. bump-version.mjs
+          # runs `pnpm install --lockfile-only` at that point, and pnpm silently drops
+          # the still-unpublished engine packages from optionalDependencies — so the
+          # committed pnpm-lock.yaml is missing them. They are published and verified
+          # now, so regenerate the lockfile and fold it back into the release commit
+          # (and move the tag) before either is pushed. Without this every post-release
+          # `pnpm install --frozen-lockfile` on main fails with ERR_PNPM_OUTDATED_LOCKFILE.
+          pnpm install --lockfile-only
+          if git diff --quiet -- pnpm-lock.yaml; then
+            echo "pnpm-lock.yaml already resolves the native packages — nothing to fold in."
+            exit 0
+          fi
+          git add pnpm-lock.yaml
+          git commit --amend --no-edit
+          git tag -f "v${RELEASE_VERSION}"
+          echo "Folded refreshed pnpm-lock.yaml into release commit and tag v${RELEASE_VERSION}."
+
       - name: Validate package is installable
         run: pnpm run validate-pack
 
