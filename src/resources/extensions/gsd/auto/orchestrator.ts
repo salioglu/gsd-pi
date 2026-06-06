@@ -675,10 +675,14 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   private tryStuckArtifactRecovery(unitType: string, unitId: string): boolean {
     const key = `${unitType}:${unitId}`;
     if (this.lastStuckRecoveryKey === key) return false; // already tried this episode
-    const basePath = this.s.basePath;
+    const basePath = this.getLiveDispatchBasePath();
     if (!verifyExpectedArtifact(unitType, unitId, basePath)) return false;
     const refreshed = refreshRecoveryDbForArtifact(unitType, unitId, basePath);
-    if (!refreshed.ok) return false;
+    // Fatal failures cannot be recovered — hard-stop. Non-fatal (e.g. plan-slice
+    // DB refresh hiccup) still fall through: invalidating caches and resetting
+    // the ring gives the next advance a clean slate to pick up the correct state,
+    // mirroring the legacy Level-1 "continue" escalation path.
+    if (!refreshed.ok && refreshed.fatal) return false;
     this.lastStuckRecoveryKey = key;
     invalidateAllCaches();
     this.dispatchKeyWindow = [];
