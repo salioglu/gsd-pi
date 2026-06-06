@@ -158,31 +158,6 @@ importers:
       zod:
         specifier: ^4.0.0
         version: 4.4.3
-    optionalDependencies:
-      '@mariozechner/clipboard':
-        specifier: 0.3.6
-        version: 0.3.6
-      '@opengsd/engine-darwin-arm64':
-        specifier: 1.1.1
-        version: 1.1.1
-      '@opengsd/engine-darwin-x64':
-        specifier: 1.1.1
-        version: 1.1.1
-      '@opengsd/engine-linux-arm64-gnu':
-        specifier: 1.1.1
-        version: 1.1.1
-      '@opengsd/engine-linux-x64-gnu':
-        specifier: 1.1.1
-        version: 1.1.1
-      '@opengsd/engine-win32-x64-msvc':
-        specifier: 1.1.1
-        version: 1.1.1
-      fsevents:
-        specifier: ~2.3.3
-        version: 2.3.3
-      koffi:
-        specifier: ^2.9.0
-        version: 2.16.2
     devDependencies:
       '@types/node':
         specifier: ^24.12.0
@@ -208,6 +183,16 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+    optionalDependencies:
+      '@mariozechner/clipboard':
+        specifier: 0.3.6
+        version: 0.3.6
+      fsevents:
+        specifier: ~2.3.3
+        version: 2.3.3
+      koffi:
+        specifier: ^2.9.0
+        version: 2.16.2
 
   extensions/google-search:
     dependencies:
@@ -383,16 +368,16 @@ importers:
     dependencies:
       '@anthropic-ai/sdk':
         specifier: 0.91.1
-        version: 0.91.1(zod@4.4.3)
+        version: 0.91.1(zod@3.25.76)
       '@anthropic-ai/vertex-sdk':
         specifier: 0.14.4
-        version: 0.14.4(zod@4.4.3)
+        version: 0.14.4(zod@3.25.76)
       '@aws-sdk/client-bedrock-runtime':
         specifier: 3.1048.0
         version: 3.1048.0
       '@google/genai':
         specifier: 1.52.0
-        version: 1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
+        version: 1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))
       '@mistralai/mistralai':
         specifier: 2.2.1
         version: 2.2.1
@@ -407,7 +392,7 @@ importers:
         version: 7.0.6
       openai:
         specifier: 6.26.0
-        version: 6.26.0(ws@8.21.0)(zod@4.4.3)
+        version: 6.26.0(ws@8.21.0)(zod@3.25.76)
       partial-json:
         specifier: 0.1.7
         version: 0.1.7
@@ -505,10 +490,6 @@ importers:
       yaml:
         specifier: 2.9.0
         version: 2.9.0
-    optionalDependencies:
-      '@mariozechner/clipboard':
-        specifier: 0.3.6
-        version: 0.3.6
     devDependencies:
       '@types/cross-spawn':
         specifier: 6.0.6
@@ -540,6 +521,10 @@ importers:
       vitest:
         specifier: 4.1.0
         version: 4.1.0(@types/node@24.12.4)(vite@7.3.3(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)(yaml@2.9.0))
+    optionalDependencies:
+      '@mariozechner/clipboard':
+        specifier: 0.3.6
+        version: 0.3.6
 
   packages/pi-tui:
     dependencies:
@@ -1924,31 +1909,6 @@ packages:
   '@nolyfill/is-core-module@1.0.39':
     resolution: {integrity: sha512-nn5ozdjYQpUCZlWGuxcJY/KpxkWQs4DcbMCmKojjyrYDEAGy4Ce19NN4v5MduafTwJlbKc99UA8YhSVqq9yPZA==}
     engines: {node: '>=12.4.0'}
-
-  '@opengsd/engine-darwin-arm64@1.1.1':
-    resolution: {integrity: sha512-Z0lJq5f+WCQnox3ZJzaz0hZWp0iC9Pmzx1A9TGZ95b/UX+3woDJf3mZ3HX2KiiuhKkMVTGyvzwyKfuvylA+7xw==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@opengsd/engine-darwin-x64@1.1.1':
-    resolution: {integrity: sha512-Wi7xWysu6LsRH7ZBJszy+VtpZJETLeqAZ3/dG0CzjDK0VRAew+8nkZhpvDu1IipHZqsIHtCIhYKOk5apdRXK0A==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@opengsd/engine-linux-arm64-gnu@1.1.1':
-    resolution: {integrity: sha512-8Asyr1Oj+0aszi2rMqRkbyFC+SHTFxqcB6fNnfo7zB+T0CGlH4EdrDfShz08OuZqfj1B3rOTp5EFsqVnUhYNgw==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@opengsd/engine-linux-x64-gnu@1.1.1':
-    resolution: {integrity: sha512-bOQciYjimEbSzmuUKZPciTEJTWWUwKn1PoU3AVNb5EZq+C0Roj5FnsMgP5/pKV54ZoSPR0nSedH+DVKUHxc8dA==}
-    cpu: [x64]
-    os: [linux]
-
-  '@opengsd/engine-win32-x64-msvc@1.1.1':
-    resolution: {integrity: sha512-56WdCcORvLj4FHAG5AJTDSdzeV7m7at6CcYjcGpf1fZtWz/0gGz9zTC10125gewQZiKgD0/sxXcxTtxTCC3Fpw==}
-    cpu: [x64]
-    os: [win32]
 
   '@opengsd/gsd-browser@0.1.27':
     resolution: {integrity: sha512-bUSdFD5VgX1gOk1l5PaZrMBPRc+eh6zQsMLS6nwX4PHDpQgLojIFqD+NTZzifEOynSlHPBy8LbD8T8Bj1iQnDg==}
@@ -6415,11 +6375,26 @@ snapshots:
 
   '@anthropic-ai/sdk@0.52.0': {}
 
+  '@anthropic-ai/sdk@0.91.1(zod@3.25.76)':
+    dependencies:
+      json-schema-to-ts: 3.1.1
+    optionalDependencies:
+      zod: 3.25.76
+
   '@anthropic-ai/sdk@0.91.1(zod@4.4.3)':
     dependencies:
       json-schema-to-ts: 3.1.1
     optionalDependencies:
       zod: 4.4.3
+
+  '@anthropic-ai/vertex-sdk@0.14.4(zod@3.25.76)':
+    dependencies:
+      '@anthropic-ai/sdk': 0.91.1(zod@3.25.76)
+      google-auth-library: 9.15.1
+    transitivePeerDependencies:
+      - encoding
+      - supports-color
+      - zod
 
   '@anthropic-ai/vertex-sdk@0.14.4(zod@4.4.3)':
     dependencies:
@@ -7300,6 +7275,19 @@ snapshots:
 
   '@floating-ui/utils@0.2.11': {}
 
+  '@google/genai@1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))':
+    dependencies:
+      google-auth-library: 10.6.2
+      p-retry: 4.6.2
+      protobufjs: 7.6.1
+      ws: 8.21.0
+    optionalDependencies:
+      '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
+    transitivePeerDependencies:
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
   '@google/genai@1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
     dependencies:
       google-auth-library: 10.6.2
@@ -7616,6 +7604,29 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  '@modelcontextprotocol/sdk@1.29.0(zod@3.25.76)':
+    dependencies:
+      '@hono/node-server': 1.19.14(hono@4.12.23)
+      ajv: 8.20.0
+      ajv-formats: 3.0.1(ajv@8.20.0)
+      content-type: 1.0.5
+      cors: 2.8.6
+      cross-spawn: 7.0.6
+      eventsource: 3.0.7
+      eventsource-parser: 3.1.0
+      express: 5.2.1
+      express-rate-limit: 8.5.2(express@5.2.1)
+      hono: 4.12.23
+      jose: 6.2.3
+      json-schema-typed: 8.0.2
+      pkce-challenge: 5.0.1
+      raw-body: 3.0.2
+      zod: 3.25.76
+      zod-to-json-schema: 3.25.2(zod@3.25.76)
+    transitivePeerDependencies:
+      - supports-color
+    optional: true
+
   '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
     dependencies:
       '@hono/node-server': 1.19.14(hono@4.12.23)
@@ -7690,21 +7701,6 @@ snapshots:
       fastq: 1.20.1
 
   '@nolyfill/is-core-module@1.0.39': {}
-
-  '@opengsd/engine-darwin-arm64@1.1.1':
-    optional: true
-
-  '@opengsd/engine-darwin-x64@1.1.1':
-    optional: true
-
-  '@opengsd/engine-linux-arm64-gnu@1.1.1':
-    optional: true
-
-  '@opengsd/engine-linux-x64-gnu@1.1.1':
-    optional: true
-
-  '@opengsd/engine-win32-x64-msvc@1.1.1':
-    optional: true
 
   '@opengsd/gsd-browser@0.1.27': {}
 
@@ -11522,6 +11518,11 @@ snapshots:
       oniguruma-parser: 0.12.2
       regex: 6.1.0
       regex-recursion: 6.0.2
+
+  openai@6.26.0(ws@8.21.0)(zod@3.25.76):
+    optionalDependencies:
+      ws: 8.21.0
+      zod: 3.25.76
 
   openai@6.26.0(ws@8.21.0)(zod@4.4.3):
     optionalDependencies:
