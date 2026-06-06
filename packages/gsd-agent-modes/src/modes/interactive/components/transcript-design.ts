@@ -135,7 +135,7 @@ export function renderConnectedCard(
 	}
 	const paintBody = (line: string) => {
 		const innerWidth = Math.max(1, width - indent);
-		const inner = padRight(truncateToWidth("   " + line, innerWidth, ""), innerWidth);
+		const inner = padRight("   " + line, innerWidth);
 		const painted = opts.bodyBg ? theme.bg(opts.bodyBg, inner) : inner;
 		return prefix + painted;
 	};
