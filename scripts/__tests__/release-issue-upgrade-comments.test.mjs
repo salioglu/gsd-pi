@@ -161,3 +161,17 @@ test("release issue upgrade workflow triggers on published releases", () => {
     job.steps.some((step) => step.run === "node scripts/release-issue-upgrade-comments.mjs"),
   );
 });
+
+test("workflow concurrency group uses stable fallback to prevent duplicate-comment races on blank dispatch", () => {
+  const workflow = YAML.parse(
+    readFileSync(".github/workflows/release-issue-upgrade-comments.yml", "utf8"),
+  );
+
+  const group = workflow.concurrency.group;
+  assert.equal(workflow.concurrency["cancel-in-progress"], false);
+  // Must not fall back to run_id, which would give each dispatch its own group
+  // and allow two simultaneous blank-tag dispatches to race and duplicate comments.
+  assert.ok(!group.includes("run_id"), "concurrency group must not use run_id as a fallback");
+  // Stable 'latest' fallback serializes blank-tag dispatches via the queue.
+  assert.ok(group.includes("'latest'"), "concurrency group must fall back to 'latest'");
+});
