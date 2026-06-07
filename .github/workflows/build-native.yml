@@ -136,11 +136,16 @@ jobs:
         with:
           version: 10.12.1
 
+      # No `cache: pnpm` here. In platform_packages_only bootstrap mode the
+      # "Install dependencies" step is skipped, so `pnpm install` never creates a
+      # store — and setup-node's post-job cache save then fails the whole job with
+      # "Path Validation Error: Path(s) specified for caching do(es) not exist",
+      # even though every publish step succeeded. The publish job's single install
+      # gains little from caching, so drop it for reliability.
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-          cache: pnpm
 
       - name: Verify npm publish toolchain
         run: |
