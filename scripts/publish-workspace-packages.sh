@@ -24,7 +24,14 @@ VERSION="$(node -p "require('./package.json').version")"
 TAG_FLAG="${TAG_FLAG:-}"
 
 # Lines of "<name>:packages/<dir>" in dependency order.
-mapfile -t ENTRIES < <(node scripts/lib/npm-release-packages.cjs --workspace-dirs)
+mapfile -t _raw_entries < <(node scripts/lib/npm-release-packages.cjs --workspace-dirs)
+# Filter empty strings (defense-in-depth: prevents a stray trailing newline
+# from loading one blank element that bypasses the early-exit check).
+ENTRIES=()
+for _e in "${_raw_entries[@]+"${_raw_entries[@]}"}"; do
+  [[ -n "$_e" ]] && ENTRIES+=("$_e")
+done
+unset _raw_entries _e
 
 if [ "${#ENTRIES[@]}" -eq 0 ]; then
   echo "No publishable workspace packages found."

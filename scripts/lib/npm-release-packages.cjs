@@ -124,12 +124,14 @@ if (require.main === module) {
   // --workspace-dirs emits "<name>:packages/<dir>" lines in dependency order
   // (consumed by scripts/publish-workspace-packages.sh, which publishes each
   // package from its own directory). Default emits the full required name list.
+  // Guard: only write when non-empty so `mapfile -t` in bash doesn't receive a
+  // lone '\n' that loads one blank element and bypasses the empty-list exit.
   const arg = process.argv[2];
   if (arg === '--workspace-dirs') {
-    process.stdout.write(
-      getOrderedWorkspacePublishList().map((p) => `${p.name}:packages/${p.dir}`).join('\n') + '\n',
-    );
+    const entries = getOrderedWorkspacePublishList().map((p) => `${p.name}:packages/${p.dir}`);
+    if (entries.length) process.stdout.write(entries.join('\n') + '\n');
   } else {
-    process.stdout.write(getRequiredNpmPackageNames().join('\n') + '\n');
+    const names = getRequiredNpmPackageNames();
+    if (names.length) process.stdout.write(names.join('\n') + '\n');
   }
 }
