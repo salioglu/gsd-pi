@@ -643,9 +643,15 @@ jobs:
             echo "$OUTPUT"
           else
             if echo "$OUTPUT" | grep -q "cannot publish over the previously published\|You cannot publish over"; then
-              echo "::error::Version ${RELEASE_VERSION} already exists. Trusted publishing only authenticates npm publish, not dist-tag mutation."
-              echo "::error::Promote manually if intended: npm dist-tag add @opengsd/gsd-pi@${RELEASE_VERSION} latest"
-              exit 1
+              echo "::warning::${RELEASE_VERSION} concurrent publish detected — verifying @latest dist-tag."
+              ACTUAL=$(npm view "@opengsd/gsd-pi" dist-tags.latest 2>/dev/null || true)
+              if [ "${ACTUAL}" = "${RELEASE_VERSION}" ]; then
+                echo "Confirmed: @latest already points to ${RELEASE_VERSION}; treating as success."
+              else
+                echo "::error::@latest dist-tag is '${ACTUAL}', not '${RELEASE_VERSION}'. Trusted publishing only authenticates npm publish, not dist-tag mutation."
+                echo "::error::Promote manually if intended: npm dist-tag add @opengsd/gsd-pi@${RELEASE_VERSION} latest"
+                exit 1
+              fi
             else
               echo "$OUTPUT"
               exit 1

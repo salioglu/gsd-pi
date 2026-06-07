@@ -46,7 +46,7 @@ jobs:
             # ({created, modified, "<ver>": "<iso>"}), not a single timestamp —
             # `new Date(map)` is NaN, which silently disabled this whole job.
             # Index the map by the specific version (fall back to `modified`).
-            PUBLISH_TIME=$(TARGET_VERSION="${VERSION}" npm view "${PACKAGE}@${VERSION}" time --json 2>/dev/null | node -e "
+            if ! PUBLISH_TIME=$(TARGET_VERSION="${VERSION}" npm view "${PACKAGE}@${VERSION}" time --json 2>/dev/null | node -e "
               const data = JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8'));
               const iso = data[process.env.TARGET_VERSION] ?? data.modified;
               const ts = Math.floor(new Date(iso).getTime() / 1000);
@@ -55,7 +55,10 @@ jobs:
                 process.exit(1);
               }
               console.log(ts);
-            ")
+            " 2>&1); then
+              echo "::warning::Could not parse publish time for ${PACKAGE}@${VERSION} — skipping."
+              continue
+            fi
 
             if [ "${PUBLISH_TIME}" -gt 0 ] && [ "${PUBLISH_TIME}" -lt "${CUTOFF}" ]; then
               echo "Unpublishing ${PACKAGE}@${VERSION} (published $(date -u -d "@${PUBLISH_TIME}" +%Y-%m-%d 2>/dev/null || date -u -r "${PUBLISH_TIME}" +%Y-%m-%d))"

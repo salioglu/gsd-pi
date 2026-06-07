@@ -92,7 +92,6 @@
     "test": "pnpm run test:unit && pnpm run test:integration && pnpm run test:packages",
     "test:smoke": "node --experimental-strip-types tests/smoke/run.ts",
     "test:live": "node scripts/with-env.mjs GSD_LIVE_TESTS=1 -- node --experimental-strip-types tests/live/run.ts",
-    "test:live-workflow": "node --experimental-strip-types tests/live-workflow/run.ts",
     "test:browser-tools": "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/browser-tools/tests/browser-tools-unit.test.cjs src/resources/extensions/browser-tools/tests/browser-engine-selection.test.mjs src/resources/extensions/browser-tools/tests/managed-gsd-browser-tools.test.mjs src/resources/extensions/browser-tools/tests/browser-tools-integration.test.mjs",
     "test:native": "pnpm --filter @gsd/native run test",
     "test:secret-scan": "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/tests/secret-scan.test.ts",
