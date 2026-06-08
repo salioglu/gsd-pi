@@ -117,7 +117,6 @@ test("ensureWorkspaceGitReadyForPath does not block on staged files with trailin
   try {
     writeFileSync(join(base, "app.ts"), "const x = 1;   \n"); // trailing whitespace
     git(base, "add", "app.ts");
-    // Verify git diff --check actually sees the whitespace (test precondition)
     const ready = await ensureWorkspaceGitReadyForPath(base);
     assert.equal(ready.ok, true, "trailing whitespace in staged files must not block");
   } finally {
