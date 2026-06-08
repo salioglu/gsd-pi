@@ -171,7 +171,7 @@ function renderRoadmapMarkdown(milestone: MilestoneRow, slices: SliceRow[]): str
   lines.push("");
   for (const slice of slices) {
     const done = isClosedStatus(slice.status) ? "x" : " ";
-    const cleanDepends = (slice.depends ?? []).filter(d => /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(d));
+    const cleanDepends = (slice.depends ?? []).map(d => d.replace(/^\[|\]$/g, '')).filter(d => /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(d));
     const depends = `[${cleanDepends.join(",")}]`;
     const safeTitle = sanitizeInlineRoadmapText(slice.title || slice.id) || slice.id;
     const safeRisk = normalizeRiskLevel(slice.risk);
