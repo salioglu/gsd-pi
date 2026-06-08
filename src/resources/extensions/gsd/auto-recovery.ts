@@ -120,22 +120,12 @@ export type ArtifactRecoveryDbRefreshResult =
 
 function closeoutProofRecoveryReason(reason: CloseoutProofFailureReason): string {
   switch (reason) {
-    case "validation-not-pass":
-      return "complete-milestone-validation-not-pass";
     case "slice-missing":
       return "complete-milestone-slices-missing";
-    case "slice-open":
-      return "complete-milestone-slice-open";
-    case "task-open":
-      return "complete-milestone-task-open";
-    case "quality-gate-pending":
-      return "complete-milestone-quality-gate-pending";
     case "summary-artifact-missing":
       return "complete-milestone-summary-missing";
     case "summary-artifact-failed":
       return "complete-milestone-summary-failed";
-    case "implementation-evidence-missing":
-      return "complete-milestone-implementation-missing";
     default:
       return `complete-milestone-${reason}`;
   }
