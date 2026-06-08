@@ -23,6 +23,9 @@ gsd --web --host 0.0.0.0 --port 8080 --allowed-origins "https://example.com"
 | `--host` | `localhost` | Bind address for the web server |
 | `--port` | `3000` | Port for the web server |
 | `--allowed-origins` | (none) | Comma-separated list of allowed CORS origins |
+| `--no-auth` | disabled | Disable the built-in bearer token gate |
+
+`--no-auth` leaves the web interface unprotected unless another layer controls access. Use it only behind trusted external authentication, such as a reverse proxy, VPN, or private network boundary.
 
 ## Features
 
@@ -51,6 +54,7 @@ The web server binds to `localhost:3000` by default. Use `--host`, `--port`, and
 | Variable | Description |
 |----------|-------------|
 | `GSD_WEB_PROJECT_CWD` | Default project path when `?project=` is not specified |
+| `GSD_WEB_NO_AUTH` | Set to `1` to disable the built-in web bearer token gate |
 
 ## Node v24 Compatibility
 
