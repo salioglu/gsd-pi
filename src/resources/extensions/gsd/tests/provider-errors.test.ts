@@ -740,6 +740,15 @@ test("MAX_TRANSIENT_AUTO_RESUMES is at least 8 for sustained overload resilience
   );
 });
 
+// ── OpenAI-completions mid-stream cut (#577) ─────────────────────────────────
+
+test("classifyError: 'Stream ended without finish_reason' is transient network (#577)", () => {
+  const result = classifyError("Stream ended without finish_reason");
+  assert.ok(isTransient(result), "Stream ended without finish_reason must be transient");
+  assert.equal(result.kind, "network");
+  assert.ok("retryAfterMs" in result && result.retryAfterMs > 0);
+});
+
 // ── Stream idle timeout / partial response (#4558) ──────────────────────────
 
 test("classifyError: 'Stream idle timeout - partial response received' is transient network", () => {

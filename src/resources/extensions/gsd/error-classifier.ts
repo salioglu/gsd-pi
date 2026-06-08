@@ -58,7 +58,7 @@ const AFFORDABILITY_RE = /requires more credits|can only afford|insufficient cre
 // are emitted by SDK/harness transports for mid-stream disconnects.
 // These indicate transient network-level interruptions.
 // See: https://github.com/open-gsd/gsd-pi/issues/4558
-const NETWORK_RE = /network|ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|web ?socket|fetch failed|connection.*reset|dns|unexpected eof|stream idle timeout|partial response received/i;
+const NETWORK_RE = /network|ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|web ?socket|fetch failed|connection.*reset|dns|unexpected eof|stream idle timeout|partial response received|stream ended without finish_reason/i;
 // Context overflow errors (context window/length exceeded) should be treated as server-class
 // transient errors so auto-mode can retry with reduced budget or fall back to a larger-context model.
 // See: https://github.com/open-gsd/gsd-pi/issues/4528
