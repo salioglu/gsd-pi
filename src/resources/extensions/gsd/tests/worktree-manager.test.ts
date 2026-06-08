@@ -121,6 +121,27 @@ describe("createWorktree", () => {
     run("git rev-parse --git-dir", info.path);
     assert.ok(!existsSync(join(info.path, "orphan.txt")), "stale file removed by recovery");
   });
+
+  test("removes stale worktree directory with .git file not registered with git and recreates", () => {
+    // Simulate the scenario from issue #590: removeWorktree() failed to delete
+    // the directory (e.g. EPERM on Windows) but git worktree prune cleaned up
+    // the registry — leaving an orphaned directory with a .git *file* (not
+    // directory) that git no longer knows about.
+    const staleDir = worktreePath(base, "M010");
+    mkdirSync(staleDir, { recursive: true });
+    // Write a .git file (worktree gitdir pointer) — not a directory
+    writeFileSync(join(staleDir, ".git"), "gitdir: ../../../../.git/worktrees/M010\n", "utf-8");
+    writeFileSync(join(staleDir, "orphan.txt"), "stale leftover\n", "utf-8");
+
+    // createWorktree must detect the orphan (not in git worktree list), clean it
+    // up, and succeed — not throw GSD_STALE_STATE as if it were a live conflict.
+    const info = createWorktree(base, "M010");
+    assert.strictEqual(info.name, "M010");
+    assert.ok(existsSync(info.path));
+    assert.ok(existsSync(join(info.path, ".git")), "recovered worktree has .git marker");
+    run("git rev-parse --git-dir", info.path);
+    assert.ok(!existsSync(join(info.path, "orphan.txt")), "stale file removed by recovery");
+  });
 });
 
 describe("createWorktree — duplicate rejection", () => {
