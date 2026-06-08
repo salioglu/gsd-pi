@@ -1361,7 +1361,16 @@ export function createClaudeCodeCanUseToolHandler(
 // Elicitation handler
 // ---------------------------------------------------------------------------
 
-/** Create an SDK elicitation handler that routes requests through the extension UI dialogs, or undefined if no UI is available. */
+/**
+ * Create an SDK elicitation handler that routes requests through the extension UI dialogs, or undefined if no UI is available.
+ *
+ * For structured (AskUserQuestion) elicitations, the interview round's result
+ * disambiguates two cases that must not be conflated: an `undefined` result
+ * means the custom UI is unavailable, so we fall back to the simpler `select`
+ * dialogs; an empty-answers result means the user dismissed the question, which
+ * is treated as a clean cancel. Falling back to dialogs on dismissal would
+ * re-ask the same questions (the duplicate-question bug).
+ */
 export function createClaudeCodeElicitationHandler(
 	ui: ExtensionUIContext | undefined,
 ): ((request: SdkElicitationRequest, options: { signal: AbortSignal }) => Promise<SdkElicitationResult>) | undefined {
@@ -1378,14 +1387,16 @@ export function createClaudeCodeElicitationHandler(
 			if (headlessAnswer) return headlessAnswer;
 
 			const interviewResult = await showInterviewRound(questions, { signal }, { ui } as any).catch(() => undefined);
-			if (interviewResult && Object.keys(interviewResult.answers).length > 0) {
-				return {
-					action: "accept",
-					content: roundResultToElicitationContent(questions, interviewResult),
-				};
+			if (interviewResult === undefined) {
+				return promptElicitationWithDialogs(request, questions, ui, signal);
 			}
-
-			return promptElicitationWithDialogs(request, questions, ui, signal);
+			if (Object.keys(interviewResult.answers).length === 0) {
+				return { action: "cancel" };
+			}
+			return {
+				action: "accept",
+				content: roundResultToElicitationContent(questions, interviewResult),
+			};
 		}
 
 		const textFields = parseTextInputElicitation(request);
