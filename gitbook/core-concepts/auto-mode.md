@@ -188,6 +188,8 @@ Three timeout tiers prevent runaway sessions:
 | Idle | 10 min | Detects stalls, intervenes |
 | Hard | 30 min | Pauses auto mode |
 
+Interactive prompts that block waiting for human input (such as questions during discuss-phase/milestone, or secure value entry) are exempt: while one is in flight, the idle and hard watchdogs re-arm instead of firing, so a long human deliberation never cancels the prompt. Genuinely hung non-interactive units still hit the hard cap.
+
 Configure in preferences:
 
 ```yaml

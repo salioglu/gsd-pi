@@ -287,10 +287,23 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
   }, 15000);
 
   // ── 3. Hard timeout ──
-  s.unitTimeoutHandle = setTimeout(async () => {
+  const hardTimeoutBody = async () => {
     try {
       s.unitTimeoutHandle = null;
       if (!s.active) return;
+      // User-interactive tools (ask_user_questions, secure_env_collect) block
+      // waiting for human input by design. Unlike the idle watchdog (above),
+      // the hard timeout had no interactive exemption, so a long human
+      // deliberation crossing the hard cap would still closeout + recover
+      // (triggerTurn) and abort the turn hosting the elicitation, reintroducing
+      // the self-cancel loop on slow answers (#2676). Re-arm instead of firing
+      // while a human is being asked, mirroring the idle watchdog's
+      // refresh-and-return. Conditional on hasInteractiveToolInFlight(), so a
+      // genuinely hung non-interactive unit still hits the hard cap.
+      if (getInFlightToolCount() > 0 && hasInteractiveToolInFlight()) {
+        s.unitTimeoutHandle = setTimeout(hardTimeoutBody, hardTimeoutMs);
+        return;
+      }
       const expectedCurrentUnit = s.currentUnit
         ? { type: s.currentUnit.type, id: s.currentUnit.id, startedAt: s.currentUnit.startedAt }
         : null;
@@ -323,7 +336,8 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
         logWarning("timer", `notification failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-  }, hardTimeoutMs);
+  };
+  s.unitTimeoutHandle = setTimeout(hardTimeoutBody, hardTimeoutMs);
 
   // ── 4. Context-pressure continue-here monitor ──
   if (s.continueHereHandle) {
