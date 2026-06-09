@@ -15,6 +15,22 @@ describe("models.generated.ts", () => {
 		expect(generated).not.toMatch(noisyCostLiteral);
 	});
 
+	test("includes Claude Fable 5 across its supported providers with adaptive thinking", () => {
+		const anthropic = MODELS.anthropic["claude-fable-5"];
+		expect(anthropic).toBeDefined();
+		expect(anthropic.api).toBe("anthropic-messages");
+		expect(anthropic.thinkingLevelMap).toMatchObject({ xhigh: "xhigh" });
+		expect(anthropic.compat).toMatchObject({ forceAdaptiveThinking: true });
+
+		const vertex = MODELS["anthropic-vertex"]["claude-fable-5"];
+		expect(vertex).toBeDefined();
+		expect(vertex.api).toBe("anthropic-vertex");
+		expect(vertex.compat).toMatchObject({ forceAdaptiveThinking: true });
+
+		expect(MODELS["amazon-bedrock"]["us.anthropic.claude-fable-5"]).toBeDefined();
+		expect(MODELS.openrouter["anthropic/claude-fable-5"]).toBeDefined();
+	});
+
 	test("includes Anthropic Vertex models from the generated catalog", () => {
 		const models = MODELS["anthropic-vertex"];
 
