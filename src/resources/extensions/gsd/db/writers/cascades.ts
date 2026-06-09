@@ -92,6 +92,50 @@ export function reopenMilestoneCascade(milestoneId: string): ReopenMilestoneOutc
   return outcome;
 }
 
+export type SkipSliceOutcome =
+  | { ok: true; tasksSkipped: number; wasAlreadySkipped: boolean }
+  | { ok: false; reason: "slice-not-found" }
+  | { ok: false; reason: "slice-already-complete" };
+
+/**
+ * Skip a slice: slice → "skipped" (unless already skipped) and every non-closed
+ * task → "skipped", in one commit. Completed/done slices are rejected; closed
+ * tasks are never downgraded. Folds the hand-rolled cascade previously in
+ * tools/skip-slice.ts. Guards run inside the transaction (TOCTOU-safe).
+ */
+export function skipSliceCascade(milestoneId: string, sliceId: string): SkipSliceOutcome {
+  requireDb();
+  let outcome: SkipSliceOutcome = { ok: true, tasksSkipped: 0, wasAlreadySkipped: false };
+  transaction(() => {
+    const slice = getSlice(milestoneId, sliceId);
+    if (!slice) { outcome = { ok: false, reason: "slice-not-found" }; return; }
+    if (slice.status === "complete" || slice.status === "done") {
+      outcome = { ok: false, reason: "slice-already-complete" };
+      return;
+    }
+    const wasAlreadySkipped = slice.status === "skipped";
+    if (!wasAlreadySkipped) {
+      getDbOrNull()!.prepare(
+        `UPDATE slices SET status = 'skipped', completed_at = NULL WHERE milestone_id = :mid AND id = :sid`,
+      ).run({ ":mid": milestoneId, ":sid": sliceId });
+    }
+    // Cascade: skip every non-closed task so milestone completion doesn't trip
+    // the deep-task guard (#4375). Closed tasks are left untouched.
+    const tasks = getSliceTasks(milestoneId, sliceId);
+    let tasksSkipped = 0;
+    for (const task of tasks) {
+      if (!isClosedStatus(task.status)) {
+        getDbOrNull()!.prepare(
+          `UPDATE tasks SET status = 'skipped', completed_at = NULL WHERE milestone_id = :mid AND slice_id = :sid AND id = :tid`,
+        ).run({ ":mid": milestoneId, ":sid": sliceId, ":tid": task.id });
+        tasksSkipped++;
+      }
+    }
+    outcome = { ok: true, tasksSkipped, wasAlreadySkipped };
+  });
+  return outcome;
+}
+
 /**
  * Reset a slice to "active" and all of its tasks to "pending" in one commit,
  * clearing completion timestamps. Equivalent to the historical per-task
