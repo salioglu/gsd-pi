@@ -132,11 +132,9 @@ async function loadExistingValidation(
     milestoneId,
     `${milestoneId}-VALIDATION.md`,
   );
-  if (canonicalValidationPath) {
-    const canonicalContent = await loadFile(canonicalValidationPath);
-    if (canonicalContent) {
-      return { content: canonicalContent, source: canonicalValidationPath };
-    }
+  const canonicalContent = await loadFile(canonicalValidationPath);
+  if (canonicalContent) {
+    return { content: canonicalContent, source: canonicalValidationPath };
   }
 
   const validationPath = resolveMilestoneFile(basePath, milestoneId, "VALIDATION");

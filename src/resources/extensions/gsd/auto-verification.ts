@@ -269,8 +269,8 @@ async function runValidateMilestonePostCheck(
     mid,
     `${mid}-VALIDATION.md`,
   );
-  const validationContent = validationFile ? await loadFile(validationFile) : null;
-  if (validationFile && validationContent !== null && validationContent.trim() === "") {
+  const validationContent = await loadFile(validationFile);
+  if (validationContent !== null && validationContent.trim() === "") {
     if (await reassessmentInvalidatedValidation()) {
       clearValidationRetry();
       return "continue";
