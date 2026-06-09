@@ -636,6 +636,24 @@ test("buildMinimalAutoGsdToolSet includes gsd_plan_slice for plan-milestone (reg
   );
 });
 
+test("buildMinimalAutoGsdToolSet resolves MCP-scoped gsd_plan_slice for plan-milestone when subprocess only registers prefixed variant (regression #627)", () => {
+  const result = buildMinimalAutoGsdToolSet([
+    "bash",
+    "read",
+    "mcp__gsd-workflow__gsd_plan_milestone",
+    "mcp__gsd-workflow__gsd_plan_slice",
+    "mcp__gsd-workflow__gsd_milestone_status",
+    "mcp__gsd-workflow__gsd_checkpoint_db",
+    "mcp__gsd-workflow__memory_query",
+    "mcp__gsd-workflow__capture_thought",
+  ], "plan-milestone");
+
+  assert.ok(
+    result.includes("mcp__gsd-workflow__gsd_plan_slice"),
+    "mcp__gsd-workflow__gsd_plan_slice must be included when only the MCP-scoped variant is available",
+  );
+});
+
 test("applyUnitSkillVisibility sets manifest or clears for wildcard", () => {
   const calls: Array<string[] | undefined> = [];
   applyUnitSkillVisibility({
