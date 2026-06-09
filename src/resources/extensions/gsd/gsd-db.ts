@@ -64,6 +64,7 @@ export type { ActiveTaskSummary, IdStatusSummary, TaskStatusCounts } from "./db-
 export type { SliceRow, TaskRow } from "./db-task-slice-rows.js";
 
 import { TERMINAL_STATUS_SQL } from "./db/sql-constants.js";
+import { applyStatusTransition } from "./db/writers/status.js";
 
 export function insertDecision(d: Omit<Decision, "seq">): void {
   if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
@@ -528,17 +529,7 @@ export function insertTask(t: {
 }
 
 export function updateTaskStatus(milestoneId: string, sliceId: string, taskId: string, status: string, completedAt?: string): void {
-  if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
-  getDbOrNull()!.prepare(
-    `UPDATE tasks SET status = :status, completed_at = :completed_at
-     WHERE milestone_id = :milestone_id AND slice_id = :slice_id AND id = :id`,
-  ).run({
-    ":status": status,
-    ":completed_at": completedAt ?? null,
-    ":milestone_id": milestoneId,
-    ":slice_id": sliceId,
-    ":id": taskId,
-  });
+  applyStatusTransition({ entity: "task", milestoneId, sliceId, taskId, status, completedAt });
 }
 
 export function setTaskBlockerDiscovered(milestoneId: string, sliceId: string, taskId: string, discovered: boolean): void {
@@ -582,16 +573,7 @@ export function upsertTaskPlanning(milestoneId: string, sliceId: string, taskId:
 
 
 export function updateSliceStatus(milestoneId: string, sliceId: string, status: string, completedAt?: string): void {
-  if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
-  getDbOrNull()!.prepare(
-    `UPDATE slices SET status = :status, completed_at = :completed_at
-     WHERE milestone_id = :milestone_id AND id = :id`,
-  ).run({
-    ":status": status,
-    ":completed_at": completedAt ?? null,
-    ":milestone_id": milestoneId,
-    ":id": sliceId,
-  });
+  applyStatusTransition({ entity: "slice", milestoneId, sliceId, status, completedAt });
 }
 
 export function setTaskSummaryMd(milestoneId: string, sliceId: string, taskId: string, md: string): void {
@@ -760,14 +742,7 @@ function writeMilestoneStatus(milestoneId: string, status: string, completedAt?:
  * must use reopenMilestoneStatus(), which is reserved for gsd_milestone_reopen.
  */
 export function updateMilestoneStatus(milestoneId: string, status: string, completedAt?: string | null): void {
-  if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
-  const currentStatus = getMilestoneStatusForUpdate(milestoneId);
-  if (currentStatus && isClosedStatus(currentStatus) && !isClosedStatus(status)) {
-    throw new Error(
-      `Cannot update closed milestone ${milestoneId} from ${currentStatus} to ${status}; use gsd_milestone_reopen for an explicit reopen.`,
-    );
-  }
-  writeMilestoneStatus(milestoneId, status, completedAt);
+  applyStatusTransition({ entity: "milestone", milestoneId, status, completedAt });
 }
 
 /**

@@ -3,6 +3,7 @@
 
 import { classifyError, isTransient, type ErrorClass } from "./error-classifier.js";
 import { ReconciliationFailedError } from "./state-reconciliation.js";
+import { IllegalPhaseTransitionError } from "./state-transition-matrix.js";
 
 export type RecoveryFailureKind =
   | "tool-schema"
@@ -13,6 +14,7 @@ export type RecoveryFailureKind =
   | "worktree-invalid"
   | "verification-drift"
   | "reconciliation-drift"
+  | "illegal-transition"
   | "provider"
   | "runtime-unknown";
 
@@ -43,7 +45,9 @@ export function classifyFailure(input: RecoveryClassificationInput): RecoveryCla
   const failureKind =
     input.error instanceof ReconciliationFailedError
       ? "reconciliation-drift"
-      : input.failureKind ?? inferFailureKind(message);
+      : input.error instanceof IllegalPhaseTransitionError
+        ? "illegal-transition"
+        : input.failureKind ?? inferFailureKind(message);
 
   switch (failureKind) {
     case "tool-schema":
@@ -110,6 +114,15 @@ export function classifyFailure(input: RecoveryClassificationInput): RecoveryCla
         exitReason: "reconciliation-drift",
         remediation:
           "Inspect the persistent or repair-failed drift kinds reported by the State Reconciliation Module before resuming.",
+      };
+    case "illegal-transition":
+      return {
+        failureKind,
+        action: "escalate",
+        reason: `Illegal phase transition${unitSuffix(input)}: ${message}`,
+        exitReason: "illegal-transition",
+        remediation:
+          "A derived Phase edge rejected by the Phase Transition Invariant survived reconciliation; inspect deriveState and the State Reconciliation Module before resuming.",
       };
     case "provider": {
       const providerClass = classifyError(message, input.retryAfterMs);
