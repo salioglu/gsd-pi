@@ -38,6 +38,8 @@ import {
 } from "../stream-adapter.ts";
 import type { AssistantMessage, Context, Message } from "@gsd/pi-ai";
 import type { SDKUserMessage } from "../sdk-types.ts";
+import { _setAutoActiveForTest } from "../../gsd/auto.ts";
+import { getInFlightToolCount, hasInteractiveToolInFlight, clearInFlightTools } from "../../gsd/auto-tool-tracking.ts";
 
 // ---------------------------------------------------------------------------
 // Env helpers — `GSD_WORKFLOW_MCP_*` save/restore
@@ -1850,6 +1852,115 @@ describe("stream-adapter — MCP elicitation bridge", () => {
 		});
 		assert.equal(inputCalls.length, 1);
 		assert.equal(inputCalls[0]?.opts?.secure, true, "secure_env_collect fields should request secure input");
+	});
+
+	// -- self-cancel loop fix (#2676 / claude-code-cli) ----------------------
+	//
+	// Under claude-code-cli, ask_user_questions arrives as an SDK elicitation,
+	// not an MCP tool dispatch, so the auto-mode watchdogs never saw an in-flight
+	// tool during the human wait and re-dispatched/aborted the turn hosting the
+	// question (the "self-cancel loop"). The fix brackets the human wait with the
+	// interactive-tool guard and disambiguates a system-teardown abort (decline)
+	// from a deliberate user dismissal (cancel).
+
+	test("makes the SDK elicitation visible to the interactive-tool guard during the human wait", async () => {
+		_setAutoActiveForTest(true);
+		clearInFlightTools();
+		try {
+			let countDuringWait = -1;
+			let interactiveDuringWait = false;
+			const handler = createClaudeCodeElicitationHandler({
+				custom: async () => {
+					// Observe the in-flight guard state WHILE the question is open —
+					// this is the window where the watchdogs previously saw 0 tools.
+					countDuringWait = getInFlightToolCount();
+					interactiveDuringWait = hasInteractiveToolInFlight();
+					return {
+						endInterview: false,
+						answers: { storage_scope: { selected: "Cloud-synced", notes: "" }, platform: { selected: ["Web"], notes: "" } },
+					};
+				},
+			} as any);
+			assert.ok(handler);
+
+			const result = await handler!(askUserQuestionsRequest, { signal: new AbortController().signal });
+
+			assert.equal(countDuringWait, 1, "elicitation must register as an in-flight tool during the human wait");
+			assert.equal(interactiveDuringWait, true, "elicitation must be recognized as an interactive tool during the wait");
+			assert.equal(result.action, "accept");
+			assert.equal(getInFlightToolCount(), 0, "in-flight tool must be cleared after the elicitation resolves");
+		} finally {
+			_setAutoActiveForTest(false);
+			clearInFlightTools();
+		}
+	});
+
+	test("clears the in-flight tool even when the interview UI throws (finally)", async () => {
+		_setAutoActiveForTest(true);
+		clearInFlightTools();
+		try {
+			const handler = createClaudeCodeElicitationHandler({
+				// custom throws -> showInterviewRound rejects -> handler falls back
+				// to dialogs; the in-flight entry must still be cleared via finally.
+				custom: async () => {
+					throw new Error("simulated UI failure");
+				},
+				select: async (_title: string, options: string[], opts?: { allowMultiple?: boolean }) => {
+					if (opts?.allowMultiple) return ["Web"];
+					return options[0];
+				},
+				input: async () => "note",
+			} as any);
+			assert.ok(handler);
+
+			await handler!(askUserQuestionsRequest, { signal: new AbortController().signal });
+			assert.equal(getInFlightToolCount(), 0, "in-flight tool must be cleared even when the UI throws");
+		} finally {
+			_setAutoActiveForTest(false);
+			clearInFlightTools();
+		}
+	});
+
+	test("returns decline (not cancel) when an interrupt empties the answers", async () => {
+		// A system/host teardown that aborts the signal mid-wait surfaces as
+		// interrupted:true -> the handler must return decline so the model does
+		// not re-ask against a clean user-declined cancel (the re-ask amplifier).
+		const handler = createClaudeCodeElicitationHandler({
+			custom: async () => ({ endInterview: false, answers: {}, interrupted: true }),
+			select: async () => {
+				throw new Error("interrupted elicitation must not re-open dialogs");
+			},
+		} as any);
+		assert.ok(handler);
+
+		const result = await handler!(askUserQuestionsRequest, { signal: new AbortController().signal });
+		assert.deepEqual(result, { action: "decline" });
+	});
+
+	test("returns cancel (today's semantics) when the user genuinely dismisses", async () => {
+		const handler = createClaudeCodeElicitationHandler({
+			custom: async () => ({ endInterview: false, answers: {} }),
+		} as any);
+		assert.ok(handler);
+
+		const result = await handler!(askUserQuestionsRequest, { signal: new AbortController().signal });
+		assert.deepEqual(result, { action: "cancel" });
+	});
+
+	test("does not register an in-flight tool outside auto-mode (wrapper self-gates)", async () => {
+		_setAutoActiveForTest(false);
+		clearInFlightTools();
+		let countDuringWait = -1;
+		const handler = createClaudeCodeElicitationHandler({
+			custom: async () => {
+				countDuringWait = getInFlightToolCount();
+				return { endInterview: false, answers: { storage_scope: { selected: "Cloud-synced", notes: "" }, platform: { selected: ["Web"], notes: "" } } };
+			},
+		} as any);
+		assert.ok(handler);
+
+		await handler!(askUserQuestionsRequest, { signal: new AbortController().signal });
+		assert.equal(countDuringWait, 0, "foreground/non-auto elicitation must not touch the in-flight guard");
 	});
 });
 

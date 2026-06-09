@@ -62,6 +62,13 @@ export interface RoundResult {
 	/** Always false — end is handled by showWrapUpScreen, not per-question */
 	endInterview: false;
 	answers: Record<string, { selected: string | string[]; notes: string }>;
+	/**
+	 * Set to true only when the round ended because the external AbortSignal
+	 * fired (e.g. a system/host teardown), as distinct from a deliberate user
+	 * dismissal. Consumers use this to avoid laundering a system teardown into a
+	 * clean user-declined cancel. Additive/optional — native consumers ignore it.
+	 */
+	interrupted?: boolean;
 }
 
 export interface WrapUpResult {
@@ -240,7 +247,7 @@ export async function showInterviewRound(
 
 		// External cancellation (e.g. remote channel won the race)
 		if (opts.signal) {
-			const onAbort = () => finish({ endInterview: false, answers: {} });
+			const onAbort = () => finish({ endInterview: false, answers: {}, interrupted: true });
 			if (opts.signal.aborted) { onAbort(); }
 			else {
 				opts.signal.addEventListener("abort", onAbort, { once: true });

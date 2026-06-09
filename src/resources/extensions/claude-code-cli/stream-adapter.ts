@@ -45,6 +45,7 @@ import {
 import { resolveWorkflowQuestionToolSurface } from "../gsd/question-transport.js";
 import { buildProjectGsdMcpServers, ensureProjectWorkflowMcpConfig } from "../gsd/mcp-project-config.js";
 import { loadProjectGSDPreferences } from "../gsd/preferences.js";
+import { markToolStart, markToolEnd } from "../gsd/auto.js";
 import {
 	discoverBrowserMcpServerName,
 	discoverMcpServers,
@@ -1371,6 +1372,17 @@ export function createClaudeCodeCanUseToolHandler(
  * is treated as a clean cancel. Falling back to dialogs on dismissal would
  * re-ask the same questions (the duplicate-question bug).
  */
+/**
+ * Monotonic counter so concurrent/sequential elicitations resolved within the
+ * same millisecond get distinct synthetic in-flight-tool ids (the `cc-elicit-*`
+ * namespace never collides with real MCP toolCallIds).
+ */
+let _elicitationSeq = 0;
+function nextElicitationSeq(): number {
+	_elicitationSeq = (_elicitationSeq + 1) % Number.MAX_SAFE_INTEGER;
+	return _elicitationSeq;
+}
+
 export function createClaudeCodeElicitationHandler(
 	ui: ExtensionUIContext | undefined,
 ): ((request: SdkElicitationRequest, options: { signal: AbortSignal }) => Promise<SdkElicitationResult>) | undefined {
@@ -1386,22 +1398,49 @@ export function createClaudeCodeElicitationHandler(
 			const headlessAnswer = answerElicitationFromHeadlessAnswers(questions, loadHeadlessAnswers());
 			if (headlessAnswer) return headlessAnswer;
 
-			const interviewResult = await showInterviewRound(questions, { signal }, { ui } as any).catch(() => undefined);
-			if (interviewResult === undefined) {
-				return promptElicitationWithDialogs(request, questions, ui, signal);
+			// The SDK elicitation blocks waiting for human input, but it is not an
+			// MCP tool dispatch, so markToolStart/markToolEnd are never called for
+			// it. Without this the soft/context/idle/hard watchdogs see zero
+			// in-flight tools and re-dispatch (and ultimately abort) the agent
+			// turn hosting this elicitation, tearing the question down (#2676 /
+			// claude-code-cli self-cancel loop). Bracketing the human wait with
+			// the s.active-gated interactive-tool guard makes it visible to
+			// hasInteractiveToolInFlight()/getInFlightToolCount() so those
+			// watchdogs exempt it. No-op outside auto-mode (wrapper self-gates).
+			const elicId = "cc-elicit-" + ((request as { id?: string | number }).id ?? `${Date.now()}-${nextElicitationSeq()}`);
+			markToolStart(elicId, "ask_user_questions");
+			try {
+				const interviewResult = await showInterviewRound(questions, { signal }, { ui } as any).catch(() => undefined);
+				if (interviewResult === undefined) {
+					return promptElicitationWithDialogs(request, questions, ui, signal);
+				}
+				if (Object.keys(interviewResult.answers).length === 0) {
+					// A system/host teardown (compaction, session_switch, true
+					// interrupt) that aborted the signal mid-wait sets `interrupted`.
+					// Surface that as a non-affirmative `decline` so it is not
+					// laundered into a clean user-declined `cancel` the model re-asks
+					// against. A genuine user dismissal leaves `interrupted` falsy and
+					// keeps the prior `cancel` semantics.
+					return interviewResult.interrupted ? { action: "decline" } : { action: "cancel" };
+				}
+				return {
+					action: "accept",
+					content: roundResultToElicitationContent(questions, interviewResult),
+				};
+			} finally {
+				markToolEnd(elicId);
 			}
-			if (Object.keys(interviewResult.answers).length === 0) {
-				return { action: "cancel" };
-			}
-			return {
-				action: "accept",
-				content: roundResultToElicitationContent(questions, interviewResult),
-			};
 		}
 
 		const textFields = parseTextInputElicitation(request);
 		if (textFields) {
-			return promptTextInputElicitation(request, textFields, ui, signal);
+			const elicId = "cc-elicit-" + ((request as { id?: string | number }).id ?? `${Date.now()}-${nextElicitationSeq()}`);
+			markToolStart(elicId, "secure_env_collect");
+			try {
+				return await promptTextInputElicitation(request, textFields, ui, signal);
+			} finally {
+				markToolEnd(elicId);
+			}
 		}
 
 		return { action: "decline" };
