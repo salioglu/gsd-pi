@@ -24,14 +24,24 @@ import { join, relative } from "node:path";
 
 const gsdDir = join(process.cwd(), "src/resources/extensions/gsd");
 
-const ALLOWLIST = new Set([
-  "gsd-db.ts",
-  "unit-ownership.ts",
-  // db/engine.ts owns connection lifecycle, schema/migrations (DDL), and the
-  // BEGIN/COMMIT transaction primitives for the single-writer layer. It is the
-  // shared engine handle every writer reads through, not a bypass.
-  "engine.ts",
-]);
+// The single-writer invariant is enforced on a directory layer, not a single
+// filename. Write SQL may live only in:
+//   - db/engine.ts — connection lifecycle, schema/migrations (DDL), and the
+//     BEGIN/COMMIT transaction primitives. The shared handle every writer reads.
+//   - db/writers/**.ts — the Single Writer Layer: one cohesive write subsystem
+//     per file (hierarchy, memory, gates, escalation, reconcile, manifest,
+//     legacy-import, cascades).
+//   - gsd-db.ts — the barrel that re-exports the layer (still holds wrappers
+//     mid-migration).
+//   - unit-ownership.ts — a separate .gsd/unit-claims.db, intentionally outside.
+// db/queries.ts is explicitly NOT allowed write SQL (asserted separately below).
+function isSingleWriterFile(rel: string): boolean {
+  const norm = rel.split("\\").join("/");
+  if (norm === "gsd-db.ts" || norm === "unit-ownership.ts") return true;
+  if (norm === "db/engine.ts") return true;
+  if (norm.startsWith("db/writers/") && norm.endsWith(".ts")) return true;
+  return false;
+}
 
 /** Walk the gsd extension dir and return all .ts files outside tests/. */
 function walkTsFiles(root: string): string[] {
@@ -110,8 +120,7 @@ test("no module outside gsd-db.ts issues raw write SQL against the engine DB", (
 
   for (const abs of files) {
     const rel = relative(gsdDir, abs);
-    const base = rel.split("/").pop()!;
-    if (ALLOWLIST.has(base)) continue;
+    if (isSingleWriterFile(rel)) continue;
 
     let content: string;
     try {
