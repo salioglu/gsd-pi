@@ -615,13 +615,24 @@ test("buildMinimalAutoGsdToolSet resolves MCP-scoped gsd_memory_query and gsd_ca
 });
 
 // ── Regression #627: auto-mode cannot run plan-milestone because gsd_plan_slice is missing ──
-// plan-milestone units require gsd_plan_slice as a required workflow tool.
-// MINIMAL_GSD_TOOL_NAMES must include it so resolveScopedToolNames exposes it.
+// gsd_plan_slice is in AUTO_UNIT_SCOPED_TOOLS["plan-milestone"] (via unit-tool-contracts).
+// buildMinimalAutoGsdToolSet must expose it when unitType is "plan-milestone".
 
-test("MINIMAL_GSD_TOOL_NAMES includes gsd_plan_slice (regression #627)", () => {
+test("buildMinimalAutoGsdToolSet includes gsd_plan_slice for plan-milestone (regression #627)", () => {
+  const result = buildMinimalAutoGsdToolSet([
+    "bash",
+    "read",
+    "gsd_plan_milestone",
+    "gsd_plan_slice",
+    "gsd_milestone_status",
+    "gsd_checkpoint_db",
+    "memory_query",
+    "capture_thought",
+  ], "plan-milestone");
+
   assert.ok(
-    (MINIMAL_GSD_TOOL_NAMES as readonly string[]).includes("gsd_plan_slice"),
-    "MINIMAL_GSD_TOOL_NAMES must include gsd_plan_slice for plan-milestone auto-mode support",
+    result.includes("gsd_plan_slice"),
+    "gsd_plan_slice must be included in plan-milestone auto-mode tool set",
   );
 });
 

@@ -148,7 +148,6 @@ export const MINIMAL_GSD_TOOL_NAMES = [
   "gsd_milestone_status",
   "gsd_checkpoint_db",
   "gsd_plan_milestone",
-  "gsd_plan_slice",
   "memory_query",
   "gsd_memory_query",
   "capture_thought",
