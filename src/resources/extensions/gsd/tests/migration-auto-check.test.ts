@@ -287,3 +287,61 @@ test("migration auto-check refreshes a stale open DB handle before comparing", a
     cleanup(base);
   }
 });
+
+test("rebuildMarkdownProjectionsFromDb realigns markdown when DB holds extra rows", async () => {
+  const base = makeBase();
+  try {
+    await writeGSDDirectory(projectFixture(), base); // markdown: M001 / S01 / T01
+    assert.equal(await ensureDbOpen(base), true);
+    insertMilestone({ id: "M001", title: "Legacy Milestone", status: "active" });
+    insertSlice({
+      id: "S01",
+      milestoneId: "M001",
+      title: "Legacy Slice",
+      status: "pending",
+      risk: "medium",
+      depends: [],
+      demo: "Legacy slice demo",
+      sequence: 1,
+    });
+    insertTask({
+      id: "T01",
+      sliceId: "S01",
+      milestoneId: "M001",
+      title: "Legacy Task",
+      status: "pending",
+    });
+    insertSlice({
+      id: "S02",
+      milestoneId: "M001",
+      title: "Added in DB",
+      status: "pending",
+      risk: "medium",
+      depends: [],
+      demo: "d",
+      sequence: 2,
+    });
+    insertTask({
+      id: "T02",
+      sliceId: "S02",
+      milestoneId: "M001",
+      title: "Added task",
+      status: "pending",
+    });
+
+    const before = await checkMarkdownHierarchyAgainstDb(base);
+    assert.equal(before.recoveryCommand, "/gsd rebuild markdown");
+
+    const { rebuildMarkdownProjectionsFromDb } = await import("../commands-maintenance.ts");
+    const rebuild = await rebuildMarkdownProjectionsFromDb(base);
+    assert.ok(rebuild.rendered > 0, "expected markdown projections to render");
+
+    const after = await checkMarkdownHierarchyAgainstDb(base);
+    assert.equal(after.action, "none");
+    assert.equal(after.reason, "in-sync");
+    assert.deepEqual(after.markdown, { milestones: 1, slices: 2, tasks: 2 });
+    assert.deepEqual(after.beforeDb, { milestones: 1, slices: 2, tasks: 2 });
+  } finally {
+    cleanup(base);
+  }
+});

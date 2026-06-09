@@ -630,6 +630,16 @@ export async function _runMilestoneMergeWithStashRestore(
   );
   if (exitResult.ok) {
     s.milestoneMergedInPhases = true;
+    try {
+      const projectRoot = s.originalBasePath || s.canonicalProjectRoot || s.basePath;
+      const { rebuildMarkdownProjectionsFromDb } = await import("../commands-maintenance.js");
+      await rebuildMarkdownProjectionsFromDb(projectRoot);
+    } catch (err) {
+      logWarning(
+        "engine",
+        `markdown projection rebuild after milestone merge failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   } else {
     mergeError = exitResult.cause ?? new Error(`exit ${exitResult.reason}`);
   }
@@ -1237,6 +1247,19 @@ export async function runPreDispatch(
       await deps.rebuildState(s.basePath);
     } catch (e) {
       logWarning("engine", "STATE.md rebuild failed after milestone transition", { error: String(e) });
+    }
+
+    // Re-project ROADMAP/PLAN markdown from the authoritative DB. Worktree DB
+    // reconciliation during merge can leave main-branch markdown stale relative
+    // to gsd.db (the 3M/3S/10T vs 3M/5S/16T drift class at /gsd startup).
+    try {
+      const { rebuildMarkdownProjectionsFromDb } = await import("../commands-maintenance.js");
+      await rebuildMarkdownProjectionsFromDb(s.canonicalProjectRoot);
+      if (s.basePath !== s.canonicalProjectRoot) {
+        await rebuildMarkdownProjectionsFromDb(s.basePath);
+      }
+    } catch (e) {
+      logWarning("engine", "markdown projection rebuild failed after milestone transition", { error: String(e) });
     }
   }
 

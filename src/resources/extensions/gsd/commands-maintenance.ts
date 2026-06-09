@@ -11,7 +11,7 @@ import { deriveState } from "./state.js";
 import { gsdProjectionRoot, gsdRoot } from "./paths.js";
 import { nativeBranchList, nativeDetectMainBranch, nativeBranchListMerged, nativeBranchDelete, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
 import { logWarning } from "./workflow-logger.js";
-import { backupWorkflowDatabaseSnapshot } from "./db-workspace.js";
+import { backupWorkflowDatabaseSnapshot, refreshWorkflowDatabaseFromDisk } from "./db-workspace.js";
 
 export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
   let branches: string[];
@@ -750,6 +750,62 @@ function parseRebuildTarget(args: string): RebuildTarget {
   return "usage";
 }
 
+export interface RebuildMarkdownProjectionsResult {
+  rendered: number;
+  skipped: number;
+  errors: string[];
+  quarantined: number;
+  quarantinedPaths: string[];
+}
+
+/**
+ * Re-render markdown planning projections from the authoritative DB.
+ *
+ * Quarantines open-unit SUMMARY files that contradict DB status before
+ * rendering. Safe to call after milestone merge/transition or during startup
+ * self-heal when the DB holds rows markdown lacks.
+ */
+export async function rebuildMarkdownProjectionsFromDb(
+  basePath: string,
+): Promise<RebuildMarkdownProjectionsResult> {
+  const { deleteArtifactByPath } = await import("./gsd-db.js");
+  const { detectArtifactDbDrift } = await import("./state-reconciliation/drift/artifact-db.js");
+  const { renderAllFromDb } = await import("./markdown-renderer.js");
+  const { invalidateStateCache } = await import("./state.js");
+
+  invalidateStateCache();
+  refreshWorkflowDatabaseFromDisk();
+
+  const state = await deriveState(basePath);
+  const drifts = detectArtifactDbDrift(state, { basePath, state });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const quarantined: string[] = [];
+  const seen = new Set<string>();
+
+  for (const drift of drifts) {
+    if (drift.kind !== "artifact-db-status-divergence") continue;
+    if (drift.artifactType !== "SUMMARY" || !drift.artifactPath) continue;
+    const absPath = resolveDiskArtifactPath(basePath, drift.artifactPath);
+    if (seen.has(absPath) || !existsSync(absPath)) continue;
+    seen.add(absPath);
+    const artifactDbPath = artifactPathForDb(basePath, absPath);
+    const target = quarantineProjectionFile(basePath, absPath, stamp);
+    deleteArtifactByPath(artifactDbPath);
+    quarantined.push(target);
+  }
+
+  const rendered = await renderAllFromDb(basePath);
+  invalidateStateCache();
+
+  return {
+    rendered: rendered.rendered,
+    skipped: rendered.skipped,
+    errors: rendered.errors,
+    quarantined: quarantined.length,
+    quarantinedPaths: quarantined,
+  };
+}
+
 /**
  * `gsd rebuild markdown` — Re-render markdown projections from the authoritative DB.
  *
@@ -758,10 +814,7 @@ function parseRebuildTarget(args: string): RebuildTarget {
  * under `.gsd/quarantine/projections/` before DB projections are rendered.
  */
 export async function handleRebuild(ctx: ExtensionCommandContext, basePath: string, args = ""): Promise<void> {
-  const { isDbAvailable: dbAvailable, deleteArtifactByPath } = await import("./gsd-db.js");
-  const { detectArtifactDbDrift } = await import("./state-reconciliation/drift/artifact-db.js");
-  const { renderAllFromDb } = await import("./markdown-renderer.js");
-  const { invalidateStateCache } = await import("./state.js");
+  const { isDbAvailable: dbAvailable } = await import("./gsd-db.js");
 
   const target = parseRebuildTarget(args);
   if (target === "usage") {
@@ -795,54 +848,34 @@ export async function handleRebuild(ctx: ExtensionCommandContext, basePath: stri
   }
 
   try {
-    invalidateStateCache();
-    const state = await deriveState(basePath);
-    const drifts = detectArtifactDbDrift(state, { basePath, state });
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const quarantined: string[] = [];
-    const seen = new Set<string>();
-
-    for (const drift of drifts) {
-      if (drift.kind !== "artifact-db-status-divergence") continue;
-      if (drift.artifactType !== "SUMMARY" || !drift.artifactPath) continue;
-      const absPath = resolveDiskArtifactPath(basePath, drift.artifactPath);
-      if (seen.has(absPath) || !existsSync(absPath)) continue;
-      seen.add(absPath);
-      const artifactDbPath = artifactPathForDb(basePath, absPath);
-      const target = quarantineProjectionFile(basePath, absPath, stamp);
-      deleteArtifactByPath(artifactDbPath);
-      quarantined.push(target);
-    }
-
-    const rendered = await renderAllFromDb(basePath);
-    invalidateStateCache();
+    const result = await rebuildMarkdownProjectionsFromDb(basePath);
 
     const lines = [
       "gsd rebuild markdown: rebuilt markdown projections from the canonical DB",
-      `  Rendered:    ${rendered.rendered}`,
-      `  Skipped:     ${rendered.skipped}`,
-      `  Quarantined: ${quarantined.length}`,
+      `  Rendered:    ${result.rendered}`,
+      `  Skipped:     ${result.skipped}`,
+      `  Quarantined: ${result.quarantined}`,
     ];
-    if (rendered.errors.length > 0) {
-      lines.push(`  Errors:      ${rendered.errors.length}`);
-      for (const err of rendered.errors.slice(0, 5)) {
+    if (result.errors.length > 0) {
+      lines.push(`  Errors:      ${result.errors.length}`);
+      for (const err of result.errors.slice(0, 5)) {
         lines.push(`    - ${err}`);
       }
-      if (rendered.errors.length > 5) {
-        lines.push(`    - ${rendered.errors.length - 5} more`);
+      if (result.errors.length > 5) {
+        lines.push(`    - ${result.errors.length - 5} more`);
       }
     }
-    if (quarantined.length > 0) {
+    if (result.quarantined > 0) {
       lines.push("", "  Quarantine:");
-      for (const target of quarantined.slice(0, 5)) {
+      for (const target of result.quarantinedPaths.slice(0, 5)) {
         lines.push(`    - ${target}`);
       }
-      if (quarantined.length > 5) {
-        lines.push(`    - ${quarantined.length - 5} more`);
+      if (result.quarantined > 5) {
+        lines.push(`    - ${result.quarantined - 5} more`);
       }
     }
 
-    ctx.ui.notify(lines.join("\n"), rendered.errors.length > 0 ? "warning" : "success");
+    ctx.ui.notify(lines.join("\n"), result.errors.length > 0 ? "warning" : "success");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logWarning("command", `rebuild failed: ${msg}`);

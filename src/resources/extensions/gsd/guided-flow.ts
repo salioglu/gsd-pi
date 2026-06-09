@@ -1825,11 +1825,42 @@ export async function showSmartEntry(
       const { checkMarkdownHierarchyAgainstDb } = await import("./migration-auto-check.js");
       const result = await checkMarkdownHierarchyAgainstDb(basePath);
       if (result.action === "recovery-required") {
-        ctx.ui.notify(
-          result.message ??
-            `Markdown planning artifacts do not match the authoritative DB. Run \`${result.recoveryCommand ?? "/gsd recover --confirm"}\` to import markdown explicitly.`,
-          "warning",
-        );
+        if (result.recoveryCommand === "/gsd rebuild markdown") {
+          try {
+            const { rebuildMarkdownProjectionsFromDb } = await import("./commands-maintenance.js");
+            const rebuild = await rebuildMarkdownProjectionsFromDb(basePath);
+            const after = await checkMarkdownHierarchyAgainstDb(basePath);
+            if (after.action === "none") {
+              ctx.ui.notify(
+                `Self-heal: rebuilt markdown projections from the authoritative DB ` +
+                  `(${rebuild.rendered} rendered${rebuild.errors.length > 0 ? `, ${rebuild.errors.length} error(s)` : ""}).`,
+                rebuild.errors.length > 0 ? "warning" : "info",
+              );
+            } else {
+              ctx.ui.notify(
+                (result.message ?? "Markdown planning artifacts still diverge from the DB after auto-rebuild.") +
+                  (rebuild.errors.length > 0
+                    ? `\nAuto-rebuild had ${rebuild.errors.length} projection error(s). Run \`/gsd rebuild markdown\` after review.`
+                    : ""),
+                "warning",
+              );
+            }
+          } catch (rebuildErr) {
+            const rebuildMessage = rebuildErr instanceof Error ? rebuildErr.message : String(rebuildErr);
+            logWarning("guided", `markdown auto-rebuild failed: ${rebuildMessage}`, { file: "guided-flow.ts" });
+            ctx.ui.notify(
+              result.message ??
+                `Markdown planning artifacts do not match the authoritative DB. Run \`${result.recoveryCommand ?? "/gsd rebuild markdown"}\` to re-project from the DB.`,
+              "warning",
+            );
+          }
+        } else {
+          ctx.ui.notify(
+            result.message ??
+              `Markdown planning artifacts do not match the authoritative DB. Run \`${result.recoveryCommand ?? "/gsd recover --confirm"}\` to import markdown explicitly.`,
+            "warning",
+          );
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
