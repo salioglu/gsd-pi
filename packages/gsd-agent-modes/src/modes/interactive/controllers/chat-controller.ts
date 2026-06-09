@@ -738,7 +738,10 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 						externalToolResult = {
 							toolCallId: tc.id,
 							content: ext.content ?? [{ type: "text", text: "" }],
-							details: ext.details ?? {},
+							// Preserve undefined when MCP omits structuredContent — an empty
+							// object is truthy and makes ask_user_questions renderResult show
+							// "Cancelled" despite a successful text payload (#cc-elicitation).
+							details: ext.details,
 							isError: ext.isError ?? false,
 						};
 					}
@@ -750,7 +753,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 						externalToolResult = {
 							toolCallId: block.id,
 							content: ext.content ?? [{ type: "text", text: "" }],
-							details: ext.details ?? {},
+							details: ext.details,
 							isError: ext.isError ?? false,
 						};
 					}

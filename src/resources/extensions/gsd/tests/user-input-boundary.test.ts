@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import * as userInputBoundary from "../user-input-boundary.ts";
-import { isAwaitingUserInput, shouldPauseForUserApprovalQuestion } from "../user-input-boundary.ts";
+import {
+  isAwaitingUserInput,
+  messageHasPendingAskUserQuestionsTool,
+  shouldPauseForUserApprovalQuestion,
+} from "../user-input-boundary.ts";
 
 test("lastAssistantText extracts the latest assistant text block content", () => {
   const lastAssistantText = (userInputBoundary as {
@@ -71,6 +75,50 @@ test("isAwaitingUserInput does not trigger on thinking-block approval phrases", 
   ];
   assert.equal(isAwaitingUserInput(messages), false);
   assert.equal(shouldPauseForUserApprovalQuestion("discuss-requirements", messages), false);
+});
+
+test("messageHasPendingAskUserQuestionsTool detects in-flight structured question tools", () => {
+  // No externalResult → still in-flight
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
+        { type: "text", text: "Which direction?" },
+        { type: "toolCall", name: "mcp__gsd-workflow__ask_user_questions" },
+      ],
+    }),
+    true,
+  );
+  // externalResult present → tool call completed, no longer pending
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
+        { type: "toolCall", name: "ask_user_questions", externalResult: { content: [], isError: false } },
+      ],
+    }),
+    false,
+  );
+  // serverToolUse shape (claude-code-cli MCP path) — no externalResult → in-flight
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
+        { type: "serverToolUse", name: "mcp__gsd-workflow__ask_user_questions" },
+      ],
+    }),
+    true,
+  );
+  // serverToolUse shape — externalResult present → completed
+  assert.equal(
+    messageHasPendingAskUserQuestionsTool({
+      role: "assistant",
+      content: [
+        { type: "serverToolUse", name: "ask_user_questions", externalResult: { content: [], isError: false } },
+      ],
+    }),
+    false,
+  );
 });
 
 test("isAwaitingUserInput still triggers on text-block question marks when thinking is also present", () => {

@@ -1422,7 +1422,11 @@ export function createClaudeCodeElicitationHandler(
 			markInteractiveElicitationStart();
 			markToolStart(elicId, "ask_user_questions");
 			try {
-				const interviewResult = await showInterviewRound(questions, { signal }, { ui } as any).catch(() => undefined);
+				const interviewResult = await showInterviewRound(
+					questions,
+					{ signal, overlay: true },
+					{ ui } as any,
+				).catch(() => undefined);
 				if (interviewResult === undefined) {
 					// `await` so the dialog human-wait stays inside try/finally and the
 					// in-flight guard is held until the dialog resolves. Without it,

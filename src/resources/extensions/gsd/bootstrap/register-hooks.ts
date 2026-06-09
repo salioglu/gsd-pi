@@ -46,7 +46,12 @@ import { initNotificationWidget } from "../notification-widget.js";
 import { notifyPreferenceDiagnostics } from "../preferences-diagnostics.js";
 import { resolveWorktreeProjectRoot } from "../worktree-root.js";
 import { extractSubagentAgentClasses } from "./subagent-input.js";
-import { approvalGateIdForUnit, isExplicitApprovalResponse, shouldPauseForUserApprovalQuestion } from "../user-input-boundary.js";
+import {
+  approvalGateIdForUnit,
+  isExplicitApprovalResponse,
+  messageHasPendingAskUserQuestionsTool,
+  shouldPauseForUserApprovalQuestion,
+} from "../user-input-boundary.js";
 import { resolveSkillManifest } from "../skill-manifest.js";
 import { applyUnitSkillVisibility, unitHasSkillManifest } from "../skill-scope.js";
 import { getGuidedUnitContext } from "../guided-unit-context.js";
@@ -1031,6 +1036,10 @@ export function registerHooks(
     // foreground; under the native-TUI provider it is always false and this path
     // runs unchanged (#cc-elicitation-self-cancel).
     if (isInteractiveElicitationInFlight()) return;
+    // Prose with "?" can stream before the MCP tool/elicitation starts. When the
+    // structured ask_user_questions call is already in the partial message, the
+    // tool IS the human boundary — do not arm the text-based approval pause.
+    if (messageHasPendingAskUserQuestionsTool(event.message)) return;
 
     const dash = getAutoRuntimeSnapshot();
     if (dash.active) return;

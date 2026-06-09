@@ -104,6 +104,12 @@ export interface InterviewRoundOptions {
 	 * Defaults to "end interview".
 	 */
 	exitLabel?: string;
+	/**
+	 * Render as a floating overlay instead of replacing the editor. Use when the
+	 * interview must stay visible during an in-flight agent stream (e.g. claude-code-cli
+	 * MCP elicitation).
+	 */
+	overlay?: boolean;
 }
 
 export interface WrapUpOptions {
@@ -852,5 +858,5 @@ export async function showInterviewRound(
 			invalidate: () => { cachedLines = undefined; },
 			handleInput,
 		};
-	});
+	}, opts.overlay ? { overlay: true } : undefined);
 }
