@@ -1412,7 +1412,12 @@ export function createClaudeCodeElicitationHandler(
 			try {
 				const interviewResult = await showInterviewRound(questions, { signal }, { ui } as any).catch(() => undefined);
 				if (interviewResult === undefined) {
-					return promptElicitationWithDialogs(request, questions, ui, signal);
+					// `await` so the dialog human-wait stays inside try/finally and the
+					// in-flight guard is held until the dialog resolves. Without it,
+					// `finally` runs the moment the promise is created and the fallback
+					// wait runs with zero in-flight tools — reintroducing the
+					// self-cancel on this path (Bugbot #1c00624d).
+					return await promptElicitationWithDialogs(request, questions, ui, signal);
 				}
 				if (Object.keys(interviewResult.answers).length === 0) {
 					// A system/host teardown (compaction, session_switch, true
