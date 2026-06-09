@@ -587,6 +587,86 @@ test("handleAgentEvent: message_end keeps the current handoff reply visible", as
 	assert.match(stripAnsi(chatContainer.render(100).join("\n")), /What do you want to build next/);
 });
 
+test("handleAgentEvent: message_end does not force-render viewport when pinned zone was never shown", async () => {
+	initTheme("dark", false);
+	const chatContainer = new Container();
+	let forceRenderCalled = false;
+	const host = createStreamingHost(chatContainer);
+	host.ui.requestRender = (force?: boolean) => {
+		if (force) forceRenderCalled = true;
+	};
+
+	const message = {
+		id: "a-simple",
+		role: "assistant",
+		provider: "claude-code",
+		model: "claude-opus-4-8",
+		timestamp: 1,
+		stopReason: "stop",
+		content: [{ type: "text", text: "Here is my response." }],
+	};
+
+	await handleAgentEvent(host, { type: "message_start", message: { ...message, content: [] } } as any);
+	await handleAgentEvent(host, {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Here is my response.", partial: message },
+	} as any);
+	await handleAgentEvent(host, { type: "message_end", message } as any);
+
+	assert.equal(
+		forceRenderCalled,
+		false,
+		"viewport must not be force-realigned at message_end when no pinned zone was shown this turn",
+	);
+});
+
+test("handleAgentEvent: agent_end does not force-render viewport when pinned zone was never shown", async () => {
+	initTheme("dark", false);
+	const chatContainer = new Container();
+	let forceRenderCalled = false;
+	const host = {
+		isInitialized: true,
+		footer: { invalidate() {} },
+		settingsManager: {
+			getTimestampFormat() {
+				return "date-time-iso";
+			},
+			getShowImages() {
+				return false;
+			},
+		},
+		getRegisteredToolDefinition() {
+			return undefined;
+		},
+		chatContainer,
+		pendingTools: new Map(),
+		loadingAnimation: undefined,
+		statusContainer: { clear() {} },
+		streamingComponent: undefined,
+		streamingMessage: undefined,
+		pinnedMessageContainer: { clear() {} },
+		checkShutdownRequested: async () => {},
+		ui: {
+			requestRender(force?: boolean) {
+				if (force) forceRenderCalled = true;
+			},
+		},
+	} as any;
+
+	await handleAgentEvent(host, {
+		type: "agent_end",
+		messages: [],
+		willRetry: false,
+	} as any);
+
+	assert.equal(
+		forceRenderCalled,
+		false,
+		"viewport must not be force-realigned at agent_end when no pinned zone was shown this turn",
+	);
+});
+
 test("handleAgentEvent: agent_end finalizes orphaned pending tool cards", async () => {
 	initTheme("dark", false);
 	const chatContainer = new Container();
