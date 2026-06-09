@@ -141,6 +141,13 @@ Dispatch remains responsible for selecting the next Unit from reconciled state. 
 
   Takeaway: the `transaction()` discipline is used correctly almost everywhere; candidate 1's value is primarily **locality** (deduping the cascade rule into one home), with one real atomicity bug (now fixed).
 
+- The state machine should be enforced at **two altitudes sharing one typed vocabulary**, with the Phase matrix as an assertion rather than a decision-maker:
+  - **Phase altitude** — `advance()` runs the **Phase Transition Invariant**: `isLegalEdge(lastDerivedPhase, reconciledPhase)` is checked after State Reconciliation; `lastDerivedPhase` is in-memory (reset on start/resume/stop, skipped when null); self-edges are legal; the `illegal-transition` Recovery kind exists for enforcement. `deriveState` still chooses the Phase. **Ships in advisory mode (telemetry only)** because the matrix is a sparse hardening spec, not yet a validated legal-edge graph; enforcing would false-positive on real edges. Enforcement is a one-line flip once the matrix is expanded. See ADR-030 "Implementation status".
+  - **Row altitude** — the **Status Transition Core** (`db/writers/status.ts`, `applyStatusTransition`) is the single chokepoint for status writes. The three `update*Status` functions become thin faces delegating to it; zero call-site churn. **Shipped behavior-neutral this pass:** the milestone closed→open guard is centralized here, but generalizing it to task/slice, write-normalization via `toStatus`, and the transition journal / cache-invalidation responsibilities are deferred (each behavior-sensitive). See ADR-030 "Implementation status".
+  - **Vocabulary** — a canonical `type Status` plus `toStatus(raw): Status` (normalize-on-read, alias-mapping, quarantine unknowns) is the single source for the closed-status predicates and `TERMINAL_STATUS_SQL`; the DB column stays free-form and converges to canonical over time (no forced migration).
+
+  See `docs/dev/ADR-030-two-altitude-state-machine.md`.
+
 - Foreground `/gsd next` and `/gsd auto` runs follow **Closeout Boundary Stop**: after the first durable task, slice, or milestone closeout boundary, the foreground terminal preserves the closeout transcript as the final visible surface instead of replacing it with a terminal roll-up widget. Headless runs may still emit durable terminal completion notifications/widgets for automation.
 
 ## Current implementation snapshot (phase 1)

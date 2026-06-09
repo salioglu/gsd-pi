@@ -14,13 +14,14 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
 import type { AutoAdvanceResult, AutoOrchestrationModule, AutoSessionContext, AutoStatus, AutoTerminalOutcome } from "./contracts.js";
 import type { AutoSession, PendingOrchestrationDispatch } from "./session.js";
-import type { GSDState } from "../types.js";
+import type { GSDState, Phase } from "../types.js";
 import type { MinimalModelRegistry } from "../context-budget.js";
 
 type BlockedAdvanceResult = Extract<AutoAdvanceResult, { kind: "blocked" }>;
 
-import { debugCount, debugTime } from "../debug-logger.js";
+import { debugCount, debugLog, debugTime } from "../debug-logger.js";
 import { reconcileBeforeDispatch } from "../state-reconciliation.js";
+import { isLegalEdge, IllegalPhaseTransitionError } from "../state-transition-matrix.js";
 import { resolveDispatch } from "../auto-dispatch.js";
 import { classifyFailure } from "../recovery-classification.js";
 import { verifyExpectedArtifact, refreshRecoveryDbForArtifact } from "../auto-recovery.js";
@@ -330,6 +331,10 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   private lastAdvanceKey: string | null = null;
   private lastFinalizedUnitKey: string | null = null;
   private dispatchKeyWindow: string[] = [];
+  // ADR-030 Phase Transition Invariant: the prior advance's reconciled Phase,
+  // the "from" endpoint of the edge check. In-memory; reset on start/resume/stop
+  // so the first advance of a session has no edge to assert.
+  private lastDerivedPhase: Phase | null = null;
   // #442: the unit key we last attempted graduated stuck-recovery for. Bounds
   // recovery to one attempt per stuck episode per run (reset on start/resume/
   // stop), mirroring the legacy Level-1-then-Level-2 escalation in phases.ts.
@@ -724,6 +729,21 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     return { action: recovery.action, reason: recovery.reason };
   }
 
+  /**
+   * ADR-030 Phase Transition Invariant (advisory mode). The matrix is an
+   * assertion, not a decision-maker — deriveState already chose the phase; we
+   * only observe illegal *derived* edges that survived reconciliation. The
+   * matrix is still a sparse hardening spec, so this is telemetry-only (no
+   * block) until it is expanded into a validated legal-edge graph. To enforce:
+   * `throw violation;` instead of logging — recovery-classification maps
+   * IllegalPhaseTransitionError to kind "illegal-transition" (escalate).
+   */
+  private observePhaseTransition(from: Phase, to: Phase): void {
+    if (isLegalEdge(from, to)) return;
+    const violation = new IllegalPhaseTransitionError(from, to);
+    debugLog("phase-transition-advisory", { from, to, message: violation.message });
+  }
+
   // ── Lifecycle verbs ──────────────────────────────────────────────────────
 
   /**
@@ -787,6 +807,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     this.lastFinalizedUnitKey = null;
     this.dispatchKeyWindow = [];
     this.lastStuckRecoveryKey = null;
+    this.lastDerivedPhase = null;
     this.status.phase = "running";
     this.bumpTransition();
     this.journalTransition({ name: "start" });
@@ -875,6 +896,12 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         this.postAdvanceRecord(blocked);
         return blocked;
       }
+
+      const reconciledPhase = reconciliation.stateSnapshot.phase;
+      if (this.lastDerivedPhase !== null) {
+        this.observePhaseTransition(this.lastDerivedPhase, reconciledPhase);
+      }
+      this.lastDerivedPhase = reconciledPhase;
 
       const decision = await this.decideNextUnit({ stateSnapshot: reconciliation.stateSnapshot });
       if (!decision) {
@@ -1146,6 +1173,9 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     // Preserve dispatchKeyWindow across resume so stuck-loop detection
     // accumulates across pause/resume cycles rather than resetting each time.
     this.lastStuckRecoveryKey = null;
+    // ADR-030: drop the prior "from" — the first advance after resume has no
+    // edge to assert (avoids a false illegal-edge across the pause boundary).
+    this.lastDerivedPhase = null;
     this.status.phase = "running";
     this.bumpTransition();
     this.journalTransition({ name: "resume" });
@@ -1162,6 +1192,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     this.status.activeUnit = undefined;
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
+    this.lastDerivedPhase = null;
     // Preserve dispatchKeyWindow on pause so stuck-loop detection accumulates
     // across pause/resume cycles. Only clear on a hard stop.
     if (reason !== "pause") {
