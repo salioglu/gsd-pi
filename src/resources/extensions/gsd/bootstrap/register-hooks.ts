@@ -214,14 +214,20 @@ function resolveScopedToolNames(
 
   for (const requested of requestedToolNames) {
     const scopedMatches: string[] = [];
+    const aliasFallbacks: string[] = [];
 
     for (const activeName of activeToolNames) {
       if (mcpToolMatchesBaseName(activeName, requested)) {
         scopedMatches.push(activeName);
       } else if (isWorkflowAliasTool(activeName) && canonicalWorkflowToolName(activeName) === requested) {
-        // Alias registered in place of canonical: include the alias so the agent can call it.
-        scopedMatches.push(activeName);
+        aliasFallbacks.push(activeName);
       }
+    }
+
+    // Only use alias as fallback when canonical is absent — not directly and not via MCP scoping.
+    // Prevents the alias from resurfacing alongside the canonical when both are in the active set.
+    if (!exact.has(requested) && scopedMatches.length === 0) {
+      scopedMatches.push(...aliasFallbacks);
     }
 
     if (requested.startsWith("browser_") && scopedMatches.length > 0) {

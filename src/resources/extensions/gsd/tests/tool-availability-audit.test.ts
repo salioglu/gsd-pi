@@ -146,7 +146,8 @@ for (const unitType of ["execute-task", "execute-task-simple", "reactive-execute
     // Simulates the MCP transport registering gsd_complete_task (alias) instead of gsd_task_complete.
     // adjust_tool_set strips aliases from providerCompatible, so gsd_complete_task is only present
     // in registeredToolNames. resolveScopedToolNames must still surface it so the agent can complete tasks.
-    const aliasOnlyRegistered = FULL_REGISTERED_TOOLS
+    const base: string[] = [...FULL_REGISTERED_TOOLS];
+    const aliasOnlyRegistered = base
       .filter((name) => name !== "gsd_task_complete")
       .concat("gsd_complete_task");
     const aliasStrippedActive = aliasOnlyRegistered.filter((name) => name !== "gsd_complete_task");
@@ -156,6 +157,21 @@ for (const unitType of ["execute-task", "execute-task-simple", "reactive-execute
     assert.ok(
       result.includes("gsd_task_complete") || result.includes("gsd_complete_task"),
       `${unitType} missing gsd_task_complete / gsd_complete_task — agent cannot complete tasks`,
+    );
+  });
+
+  test(`${unitType}: alias does not duplicate canonical when both are in the active set`, () => {
+    // When both canonical and alias are registered/active, only the canonical should be surfaced.
+    const bothPresent: string[] = [...FULL_REGISTERED_TOOLS, "gsd_complete_task"];
+
+    const result = buildMinimalAutoGsdToolSet(bothPresent, unitType, bothPresent);
+
+    const hasCanonical = result.includes("gsd_task_complete");
+    const hasAlias = result.includes("gsd_complete_task");
+    assert.ok(hasCanonical || hasAlias, `${unitType} missing completion tool`);
+    assert.ok(
+      !(hasCanonical && hasAlias),
+      `${unitType} surfaces both gsd_task_complete and gsd_complete_task — alias should not duplicate canonical`,
     );
   });
 }
