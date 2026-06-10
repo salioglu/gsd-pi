@@ -13,7 +13,7 @@ import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-exten
 import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
 
 import { buildMilestoneFileName, clearPathCache, milestonesDir, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
-import { applyAskUserQuestionsGateResult, canonicalToolName, clearDiscussionFlowState, formatPendingAskUserQuestionsGateMessage, isMilestoneDepthVerified, isQueuePhaseActive, markApprovalGateVerified, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeWrite, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { applyAskUserQuestionsGateResult, canonicalToolName, clearDiscussionFlowState, formatPendingAskUserQuestionsGateMessage, isApprovalGateVerifiedInSnapshot, isMilestoneDepthVerified, isMilestoneDepthVerifiedInSnapshot, isQueuePhaseActive, loadWriteGateSnapshot, markApprovalGateVerified, markDepthVerified, refreshWriteGateStateFromDisk, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeWrite, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
 import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
@@ -40,6 +40,7 @@ import { recordToolCall as safetyRecordToolCall, recordToolResult as safetyRecor
 import { parseUnitId } from "../unit-id.js";
 import { classifyCommand } from "../safety/destructive-guard.js";
 import { logWarning as safetyLogWarning } from "../workflow-logger.js";
+import { isUnitCloseoutTool, runInteractiveUnitCloseout } from "../unit-closeout.js";
 import { installNotifyInterceptor } from "./notify-interceptor.js";
 import { initNotificationStore } from "../notification-store.js";
 import { initNotificationWidget } from "../notification-widget.js";
@@ -61,6 +62,8 @@ import { filterToolsForProvider } from "../model-router.js";
 import { mcpToolMatchesBaseName } from "../mcp-tool-name.js";
 import { RUN_UAT_READ_ONLY_TOOL_NAMES, RUN_UAT_WORKFLOW_TOOL_NAMES } from "../tool-presentation-plan.js";
 import { supportsSourceObservationsForUnit } from "../source-observations.js";
+import { clearPendingAutoStart } from "../pending-auto-start.js";
+import { resolveWorkflowToolBasePath } from "./dynamic-tools.js";
 
 let approvalQuestionAbortInFlight = false;
 
@@ -572,8 +575,14 @@ function isShellExecutionTool(canonicalName: string): boolean {
 
 function activateDeferredApprovalGate(basePath: string): void {
   if (deferredApprovalGate?.basePath !== basePath) return;
-  setPendingGate(deferredApprovalGate.gateId, basePath);
+  const gateId = deferredApprovalGate.gateId;
   deferredApprovalGate = null;
+  refreshWriteGateStateFromDisk(basePath);
+  const snapshot = loadWriteGateSnapshot(basePath);
+  const milestoneId = extractDepthVerificationMilestoneId(gateId);
+  if (isApprovalGateVerifiedInSnapshot(snapshot, gateId)) return;
+  if (milestoneId && isMilestoneDepthVerifiedInSnapshot(snapshot, milestoneId)) return;
+  setPendingGate(gateId, basePath);
 }
 
 function extractGateQuestionId(input: unknown): string | undefined {
@@ -802,7 +811,7 @@ export function registerHooks(
     }
   });
 
-  pi.on("session_switch", async (_event, ctx) => {
+  pi.on("session_switch", async (event, ctx) => {
     const basePath = contextBasePath(ctx);
     const preserveCloseoutSurface = isAutoCompletionStopInProgress();
     initSessionNotifications(ctx);
@@ -811,6 +820,13 @@ export function registerHooks(
     clearDeferredApprovalGate();
     await resetAskUserQuestionsTurnCache();
     clearDiscussionFlowState(basePath);
+    // /clear or /new destroys the conversation holding a discuss interview, so
+    // its pending discuss→auto handoff can never be answered — clear it. Resume
+    // restores the interview transcript, so the entry survives. Auto-mode's own
+    // newSession() calls are safe: the handoff consumes the entry on agent_end.
+    if (event.reason === "new") {
+      clearPendingAutoStart(basePath);
+    }
     await syncServiceTierStatus(ctx);
     await applyDisabledModelProviderPolicy(ctx);
     await applyCompactionThresholdOverride(ctx);
@@ -1368,6 +1384,20 @@ export function registerHooks(
     } else if (isAutoActive()) {
       clearToolInvocationError();
     }
+    // Interactive Closeout adapter (ADR-032): auto-mode owns closeout for its
+    // own units; interactive completions get the durable git subset (commit +
+    // Closeout Git Verdict) instead of silently bypassing git.isolation.
+    if (!event.isError && !isAutoActive() && isUnitCloseoutTool(toolName)) {
+      try {
+        runInteractiveUnitCloseout({
+          basePath: resolveWorkflowToolBasePath(ctx, event.input as { milestone_id?: string }),
+          canonicalToolName: toolName,
+          input: event.input,
+        });
+      } catch (err) {
+        safetyLogWarning("engine", `interactive unit closeout failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     if (toolName !== "ask_user_questions") return;
     const basePath = contextBasePath(ctx);
     const milestoneId = await getDiscussionMilestoneIdFor(basePath);
@@ -1419,6 +1449,21 @@ export function registerHooks(
         clearDeferredApprovalGate(basePath);
       }
     }
+
+    // Safety harness: record evidence here, not only in tool_call. External
+    // engines (claude-code-cli) pre-execute tools, so the agent loop skips
+    // beforeToolCall/tool_call for them — tool_execution_start is the only
+    // event that fires for every tool call. recordToolCall dedupes by
+    // toolCallId, so native tools (which hit both events) record once.
+    safetyRecordToolCall(event.toolCallId, event.toolName, (event.args ?? {}) as Record<string, unknown>);
+    const execDash = getAutoRuntimeSnapshot();
+    if (execDash.basePath && execDash.currentUnit?.type === "execute-task") {
+      const { milestone: xMid, slice: xSid, task: xTid } = parseUnitId(execDash.currentUnit.id);
+      if (xMid && xSid && xTid) {
+        saveEvidenceToDisk(execDash.basePath, xMid, xSid, xTid);
+      }
+    }
+
     if (!isAutoActive()) return;
     markToolStart(event.toolCallId, event.toolName);
   });

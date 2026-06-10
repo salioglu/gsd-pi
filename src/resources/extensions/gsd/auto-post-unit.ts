@@ -72,7 +72,7 @@ import {
 } from "./milestone-closeout.js";
 import type { AutoSession, SidecarItem } from "./auto/session.js";
 import { getEvidence, clearEvidenceFromDisk, isExecutionToolName } from "./safety/evidence-collector.js";
-import { validateFileChanges } from "./safety/file-change-validator.js";
+import { validateFileChanges, effectiveFileChangeAllowlist } from "./safety/file-change-validator.js";
 import { crossReferenceEvidence, type ClaimedEvidence } from "./safety/evidence-cross-ref.js";
 import { validateContent } from "./safety/content-validator.js";
 import { resolveSafetyHarnessConfig } from "./safety/safety-harness.js";
@@ -88,7 +88,7 @@ import { writeTurnGitTransaction } from "./uok/gitops.js";
 import { isClosedStatus } from "./status-guards.js";
 import { detectAbandonMilestone } from "./abandon-detect.js";
 import { getPendingGate } from "./bootstrap/write-gate.js";
-import { isDeterministicPolicyError } from "./auto-tool-tracking.js";
+import { isDeterministicPolicyError, isToolUnavailableError } from "./auto-tool-tracking.js";
 import { formatConnectedStepStack, formatPostUnitStatusCard } from "./auto-status-message.js";
 import {
   clearProjectResearchInflightMarker,
@@ -619,8 +619,10 @@ export function _hasExecutionToolCallsInSessionForTest(entries: readonly unknown
       return true;
     }
 
-    if (e?.type !== "message") continue;
-    const msg = e?.message;
+    // Accept both session-manager entries ({type: "message", message}) and
+    // bare agent-end messages ({role, content}) — the auto loop passes the
+    // latter via opts.agentEndMessages.
+    const msg = e?.type === "message" ? e?.message : e;
     if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
     for (const block of msg.content) {
       if (block?.type !== "toolCall") continue;
@@ -1535,6 +1537,11 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       if (safetyConfig.enabled) {
         const { milestone: sMid, slice: sSid, task: sTid } = parseUnitId(s.currentUnit.id);
 
+        const fileChangeAllowlist = effectiveFileChangeAllowlist(
+          safetyConfig.file_change_allowlist,
+          (prefs?.git as { manage_gitignore?: boolean } | undefined)?.manage_gitignore,
+        );
+
         // File change validation (execute-task only, after unit execution)
         if (safetyConfig.file_change_validation && s.currentUnit.type === "execute-task" && sMid && sSid && sTid) {
           try {
@@ -1554,7 +1561,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                   files: taskRow.files,
                 })),
               );
-              const audit = validateFileChanges(s.basePath, expectedOutput, plannedFiles, safetyConfig.file_change_allowlist);
+              const audit = validateFileChanges(s.basePath, expectedOutput, plannedFiles, fileChangeAllowlist);
               if (audit && audit.violations.length > 0) {
                 const warnings = audit.violations.filter(v => v.severity === "warning");
                 for (const v of warnings) {
@@ -1576,7 +1583,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                   s.basePath,
                   expectedOutput,
                   plannedFiles,
-                  safetyConfig.file_change_allowlist,
+                  fileChangeAllowlist,
                 );
                 if (audit && audit.violations.length > 0) {
                   const warnings = audit.violations.filter(v => v.severity === "warning");
@@ -2015,7 +2022,18 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           "error",
         );
       } else if (!triggerArtifactVerified) {
-        if (s.lastToolInvocationError) {
+        if (s.lastToolInvocationError && isToolUnavailableError(s.lastToolInvocationError)) {
+          // Tool-unavailable is the one transient invocation error: the
+          // workflow MCP server registers its surface asynchronously, so a
+          // Unit's first call can race the registration. Fall through to the
+          // bounded verification retry instead of pausing.
+          debugLog("postUnit", { phase: "tool-unavailable-retry", unitType: s.currentUnit.type, unitId: s.currentUnit.id, error: s.lastToolInvocationError });
+          ctx.ui.notify(
+            `Tool unavailable for ${s.currentUnit.type}: ${s.lastToolInvocationError}. The tool surface may still be registering — retrying.`,
+            "warning",
+          );
+          s.lastToolInvocationError = null;
+        } else if (s.lastToolInvocationError) {
           const isUserSkip = /queued user message/i.test(s.lastToolInvocationError);
           const errMsg = isUserSkip
             ? `Tool skipped for ${s.currentUnit.type}: ${s.lastToolInvocationError}. Queued user message interrupted the turn — pausing auto-mode.`

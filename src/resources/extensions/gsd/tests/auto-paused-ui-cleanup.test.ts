@@ -306,7 +306,9 @@ test("pauseAuto records the expected worktree path when paused from project root
 
     const meta = readPausedSessionMetadata(base);
     assert.ok(meta);
-    assert.equal(meta.worktreePath, join(base, ".gsd", "worktrees", "M001"));
+    // No worktree exists yet, so the recorded path is the canonical
+    // .gsd-worktrees/ creation location (worktree-placement seam).
+    assert.equal(meta.worktreePath, join(base, ".gsd-worktrees", "M001"));
   } finally {
     autoSession.reset();
     try {

@@ -116,8 +116,8 @@ describe("worktree-teardown-safety", () => {
 
     const wtPathResult = worktreePath(tempDir, "anything");
     assertTrue(
-      wtPathResult.startsWith(join(tempDir, ".gsd", "worktrees")),
-      "worktreePath returns path under .gsd/worktrees/",
+      wtPathResult.startsWith(join(tempDir, ".gsd-worktrees")),
+      "worktreePath returns path under the canonical .gsd-worktrees/ container",
     );
   });
 

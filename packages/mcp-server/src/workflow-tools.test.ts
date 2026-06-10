@@ -184,6 +184,32 @@ process.env.GSD_WORKFLOW_WRITE_GATE_MODULE ??= fileURLToPath(new URL(
   import.meta.url,
 ));
 
+describe("warmWorkflowToolBridges", () => {
+  it("resolves when the executor and write-gate bridges load and shape-check", async () => {
+    const { warmWorkflowToolBridges: freshWarm } = await import(
+      cacheBustedWorkflowToolsImport("warm-ok")
+    );
+    await freshWarm();
+  });
+
+  it("rejects with an actionable error when the executor module config is broken", async () => {
+    const prevModule = process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+    try {
+      process.env.GSD_WORKFLOW_EXECUTORS_MODULE = "data:text/javascript,export default {}";
+      const { warmWorkflowToolBridges: freshWarm } = await import(
+        cacheBustedWorkflowToolsImport("warm-broken")
+      );
+      await assert.rejects(freshWarm(), /only supports file: URLs or filesystem paths/);
+    } finally {
+      if (prevModule === undefined) {
+        delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+      } else {
+        process.env.GSD_WORKFLOW_EXECUTORS_MODULE = prevModule;
+      }
+    }
+  });
+});
+
 describe("workflow MCP tools", () => {
   it("registers the full headless-safe workflow tool surface", () => {
     const server = makeMockServer();

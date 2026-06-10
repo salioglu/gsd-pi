@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
 
 import { normalizeWorktreePathForCompare } from "./worktree-root.js";
+import { worktreesDirs } from "./worktree-placement.js";
 import { listWorktrees } from "./worktree-manager.js";
 import { getCurrentBranch } from "./worktree.js";
 
@@ -158,10 +159,12 @@ export function createWorktreeSafetyModule(
       const projectRoot = resolve(input.projectRoot);
       const unitRoot = resolve(input.unitRoot);
       const isolationMode = input.isolationMode ?? "worktree";
-      const expectedRoot = isolationMode === "worktree"
-        ? join(projectRoot, ".gsd", "worktrees", milestoneId)
-        : projectRoot;
-      if (!samePath(unitRoot, expectedRoot)) {
+      // A milestone worktree may live in the canonical container or the
+      // legacy one (pre-placement-change worktrees keep their location).
+      const expectedRoots = isolationMode === "worktree"
+        ? worktreesDirs(projectRoot).map((dir) => join(dir, milestoneId))
+        : [projectRoot];
+      if (!expectedRoots.some((expectedRoot) => samePath(unitRoot, expectedRoot))) {
         return failure(
           "invalid-root",
           isolationMode === "worktree"
@@ -170,7 +173,7 @@ export function createWorktreeSafetyModule(
           isolationMode === "worktree"
             ? "Prepare the Unit in its canonical milestone worktree before allowing source writes."
             : "Run the Unit from the project root when worktree isolation is disabled.",
-          { expectedRoot, unitRoot },
+          { expectedRoot: expectedRoots[0], unitRoot },
         );
       }
 

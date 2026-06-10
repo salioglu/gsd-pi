@@ -12,6 +12,7 @@ import { logWarning } from "../workflow-logger.js";
 import { openWorkflowDatabase } from "../db-workspace.js";
 import { getAutoWorktreePath } from "../auto-worktree.js";
 import { resolveWorktreeProjectRoot } from "../worktree-root.js";
+import { worktreesDirs } from "../worktree-placement.js";
 
 export function safeWorkspaceCwd(): string {
   try {
@@ -46,13 +47,15 @@ export function resolveWorkflowToolBasePath(
     const worktree = getAutoWorktreePath(projectRoot, milestoneId);
     if (worktree) return worktree;
   } else {
-    const worktreesDir = join(projectRoot, ".gsd", "worktrees");
-    if (existsSync(worktreesDir)) {
+    const live: string[] = [];
+    for (const worktreesDir of worktreesDirs(projectRoot)) {
+      if (!existsSync(worktreesDir)) continue;
       try {
-        const live = readdirSync(worktreesDir)
-          .map((name) => join(worktreesDir, name))
-          .filter((p) => existsSync(join(p, ".git")));
-        if (live.length === 1) return live[0]!;
+        live.push(
+          ...readdirSync(worktreesDir)
+            .map((name) => join(worktreesDir, name))
+            .filter((p) => existsSync(join(p, ".git"))),
+        );
       } catch (err) {
         logWarning(
           "bootstrap",
@@ -60,6 +63,7 @@ export function resolveWorkflowToolBasePath(
         );
       }
     }
+    if (live.length === 1) return live[0]!;
   }
   return cwd;
 }

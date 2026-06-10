@@ -131,7 +131,7 @@ function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): 
     throw err;
   }
 
-  migrateSchema(db);
+  migrateSchema(db, dbPath);
 }
 
 export function _isLikelyWslDrvFsPathForTest(dbPath: string | null): boolean {
@@ -174,11 +174,11 @@ function copyQualityGateRowsToRepairedTable(db: DbAdapter): void {
   `);
 }
 
-function migrateSchema(db: DbAdapter): void {
+function migrateSchema(db: DbAdapter, dbPath: string | null): void {
   const currentVersion = getCurrentSchemaVersion(db);
   if (currentVersion >= SCHEMA_VERSION) return;
 
-  backupDatabaseBeforeMigration(db, currentPath, currentVersion, {
+  backupDatabaseBeforeMigration(db, dbPath, currentVersion, {
     existsSync,
     copyFileSync,
     logWarning,

@@ -159,12 +159,17 @@ export function isLegalEdge(from: Phase, to: Phase): boolean {
  * class in `classifyFailure` and mapped to the `illegal-transition` kind.
  */
 export class IllegalPhaseTransitionError extends Error {
-  constructor(
-    readonly from: Phase,
-    readonly to: Phase,
-  ) {
+  // Explicit fields, not constructor parameter properties — strip-types
+  // consumers (workspace-index subprocess, integration tests) reject the
+  // parameter-property syntax with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX.
+  readonly from: Phase;
+  readonly to: Phase;
+
+  constructor(from: Phase, to: Phase) {
     super(`Illegal phase transition ${from} -> ${to} survived reconciliation`);
     this.name = "IllegalPhaseTransitionError";
+    this.from = from;
+    this.to = to;
   }
 }
 

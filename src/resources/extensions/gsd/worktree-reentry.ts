@@ -10,7 +10,7 @@ import { readdirSync } from "node:fs";
 
 import { enterAutoWorktree, getAutoWorktreePath } from "./auto-worktree.js";
 import { getIsolationMode } from "./preferences.js";
-import { worktreesDir } from "./worktree-manager.js";
+import { allWorktreesDirs } from "./worktree-manager.js";
 import { isGsdWorktreePath, resolveWorktreeProjectRoot } from "./worktree-root.js";
 
 interface LiveWorktree {
@@ -19,15 +19,18 @@ interface LiveWorktree {
 }
 
 /**
- * Enumerate the live (valid git) auto-worktrees under <projectRoot>/.gsd/worktrees/.
+ * Enumerate the live (valid git) auto-worktrees in the project's worktree
+ * containers (canonical .gsd-worktrees/ and legacy .gsd/worktrees/).
  * Reuses getAutoWorktreePath's validation so stray directories are ignored.
  */
 function liveMilestoneWorktrees(projectRoot: string): LiveWorktree[] {
-  let names: string[];
-  try {
-    names = readdirSync(worktreesDir(projectRoot));
-  } catch {
-    return [];
+  const names = new Set<string>();
+  for (const dir of allWorktreesDirs(projectRoot)) {
+    try {
+      for (const name of readdirSync(dir)) names.add(name);
+    } catch {
+      // container absent — skip
+    }
   }
   const live: LiveWorktree[] = [];
   for (const id of names) {

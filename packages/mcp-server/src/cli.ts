@@ -9,6 +9,7 @@ import { SessionManager } from './session-manager.js';
 import { createMcpServer } from './server.js';
 import { installGlobalErrorHandlers } from './cli-errors.js';
 import { loadStoredCredentialEnvKeys } from './tool-credentials.js';
+import { warmWorkflowToolBridges } from './workflow-tools.js';
 
 const MCP_PKG = '@modelcontextprotocol/sdk';
 
@@ -52,10 +53,12 @@ async function main(): Promise<void> {
   // Handle stdin end — MCP client disconnected
   process.stdin.on('end', () => void cleanup());
 
-  // Connect and start serving
+  // Connect and start serving. The workflow bridges are warmed eagerly so a
+  // broken executor/write-gate module fails the spawn with an actionable
+  // error instead of advertising tools that error on their first call.
   try {
-    await server.connect(transport);
-    process.stderr.write('[gsd-mcp-server] MCP server started on stdio\n');
+    await Promise.all([server.connect(transport), warmWorkflowToolBridges()]);
+    process.stderr.write('[gsd-mcp-server] MCP server started on stdio; workflow bridges ready\n');
   } catch (err) {
     process.stderr.write(
       `[gsd-mcp-server] Fatal: failed to start — ${err instanceof Error ? err.message : String(err)}\n`

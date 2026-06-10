@@ -23,7 +23,7 @@ A source-writing Unit is any Unit whose Tool Contract permits writes outside `.g
 Worktree Safety validates:
 
 - the milestone id is present and path-safe
-- the Unit root is the canonical `<projectRoot>/.gsd/worktrees/<milestone>` path
+- the Unit root is the canonical `<projectRoot>/.gsd-worktrees/<milestone>` path (amended by ADR-031; the legacy `<projectRoot>/.gsd/worktrees/<milestone>` path is also accepted for worktrees created before the placement change)
 - the worktree root exists
 - `.git` is a worktree file, not a standalone `.git` directory
 - the root is registered by `git worktree list`

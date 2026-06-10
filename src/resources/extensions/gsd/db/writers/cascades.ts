@@ -81,8 +81,6 @@ export function reopenMilestoneCascade(milestoneId: string): ReopenMilestoneOutc
     if (!isClosedStatus(milestone.status)) { outcome = { ok: false, reason: "milestone-not-closed", status: milestone.status }; return; }
 
     const slices = getMilestoneSlices(milestoneId);
-    let taskTotal = 0;
-    for (const s of slices) taskTotal += getSliceTasks(milestoneId, s.id).length;
 
     getDbOrNull()!.prepare(
       `UPDATE milestones SET status = 'active', completed_at = NULL WHERE id = :mid`,
@@ -90,10 +88,11 @@ export function reopenMilestoneCascade(milestoneId: string): ReopenMilestoneOutc
     getDbOrNull()!.prepare(
       `UPDATE slices SET status = 'in_progress', completed_at = NULL WHERE milestone_id = :mid`,
     ).run({ ":mid": milestoneId });
-    getDbOrNull()!.prepare(
+    const tasksResult = getDbOrNull()!.prepare(
       `UPDATE tasks SET status = 'pending', completed_at = NULL WHERE milestone_id = :mid`,
     ).run({ ":mid": milestoneId });
-    outcome = { ok: true, slicesReset: slices.length, tasksReset: taskTotal };
+    const tasksReset = (tasksResult as { changes?: number }).changes ?? 0;
+    outcome = { ok: true, slicesReset: slices.length, tasksReset };
   });
   return outcome;
 }

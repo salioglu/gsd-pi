@@ -10,6 +10,7 @@ import { getIsolationMode } from "../preferences.js";
 import { compileSubagentPermissionContract, type ToolsPolicy } from "../unit-context-manifest.js";
 import { logWarning } from "../workflow-logger.js";
 import { isGsdWorktreePath, resolveWorktreeProjectRoot } from "../worktree-root.js";
+import { worktreesDirs } from "../worktree-placement.js";
 
 /**
  * Regex matching milestone CONTEXT.md file names in both legacy M001
@@ -244,6 +245,23 @@ export function loadWriteGateSnapshot(basePath: string): WriteGateSnapshot {
   }
 }
 
+/**
+ * Merge the persisted write-gate snapshot into the in-process Map entry.
+ * The workflow MCP server runs in a child process and records depth
+ * verification there; without this refresh the extension host keeps stale
+ * pending-gate memory and `activateDeferredApprovalGate` can re-arm a gate
+ * that the subprocess already cleared on disk.
+ */
+export function refreshWriteGateStateFromDisk(basePath: string): void {
+  if (!shouldPersistWriteGateSnapshot()) return;
+  const snapshot = loadWriteGateSnapshot(basePath);
+  const state = getWriteGateState(basePath);
+  state.pendingGateId = snapshot.pendingGateId;
+  state.activeQueuePhase = snapshot.activeQueuePhase;
+  state.verifiedDepthMilestones = new Set(snapshot.verifiedDepthMilestones);
+  state.verifiedApprovalGates = new Set(snapshot.verifiedApprovalGates ?? []);
+}
+
 export function isDepthVerified(basePath: string = process.cwd()): boolean {
   return getWriteGateState(basePath).verifiedDepthMilestones.size > 0;
 }
@@ -256,6 +274,7 @@ export function isMilestoneDepthVerified(
   basePath: string = process.cwd(),
 ): boolean {
   if (!milestoneId) return false;
+  refreshWriteGateStateFromDisk(basePath);
   return getWriteGateState(basePath).verifiedDepthMilestones.has(milestoneId);
 }
 
@@ -357,6 +376,7 @@ export function clearPendingGate(basePath: string): void {
  * Get the currently pending gate, if any.
  */
 export function getPendingGate(basePath: string = process.cwd()): string | null {
+  refreshWriteGateStateFromDisk(basePath);
   return getWriteGateState(basePath).pendingGateId;
 }
 
@@ -1138,10 +1158,12 @@ export function shouldBlockWorktreeWrite(
   const realTarget = realpathOrResolve(absTarget);
   const realRoot = realpathOrResolve(projectRoot);
   const realGsd = realpathOrResolve(join(projectRoot, ".gsd"));
-  const realWorktreesDir = realpathOrResolve(join(projectRoot, ".gsd", "worktrees"));
 
-  // Allow writes inside the legitimate worktrees subtree.
-  if (isPathContained(realTarget, realWorktreesDir)) return { block: false };
+  // Allow writes inside a legitimate worktrees subtree (canonical
+  // .gsd-worktrees/ or legacy .gsd/worktrees/).
+  for (const container of worktreesDirs(projectRoot)) {
+    if (isPathContained(realTarget, realpathOrResolve(container))) return { block: false };
+  }
 
   // Allow writes to .gsd/ planning artifacts, but reject siblings whose name
   // starts with "worktrees" (the worktrees-extra prefix trick — case 4).

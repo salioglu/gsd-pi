@@ -142,6 +142,27 @@ describe("createWorktree", () => {
     run("git rev-parse --git-dir", info.path);
     assert.ok(!existsSync(join(info.path, "orphan.txt")), "stale file removed by recovery");
   });
+
+  test("removes stale canonical directory when legacy orphan is cleaned and canonical target is stale", () => {
+    // Scenario: a stale .gsd-worktrees/M020 directory (no .git — aborted prior
+    // creation) coexists with an orphaned .gsd/worktrees/M020 dir (.git file not
+    // registered with git). worktreePathFor returns the legacy path (canonical has
+    // no .git marker), so only the legacy path was previously cleaned — the stale
+    // canonical blocked git worktree add. The fix ensures createWorktree also
+    // removes the stale canonical before calling git worktree add.
+    const canonicalDir = join(base, ".gsd-worktrees", "M020");
+    const legacyDir = join(base, ".gsd", "worktrees", "M020");
+
+    mkdirSync(canonicalDir, { recursive: true });  // stale canonical: exists, no .git
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(join(legacyDir, ".git"), "gitdir: ../../../../.git/worktrees/M020\n", "utf-8");
+
+    const info = createWorktree(base, "M020");
+    assert.strictEqual(info.name, "M020");
+    assert.ok(existsSync(info.path), "worktree path should exist after creation");
+    assert.ok(existsSync(join(info.path, ".git")), "new worktree has .git marker");
+    run("git rev-parse --git-dir", info.path);
+  });
 });
 
 describe("createWorktree — duplicate rejection", () => {
@@ -180,7 +201,7 @@ describe("createWorktree — branch cleanup on add failure", () => {
 
     // Make the worktrees parent directory non-writable so `git worktree add`
     // fails after the branch has already been force-reset.
-    const parentDir = join(base, ".gsd", "worktrees");
+    const parentDir = join(base, ".gsd-worktrees");
     mkdirSync(parentDir, { recursive: true });
     run(`chmod 555 "${parentDir}"`, base);
 

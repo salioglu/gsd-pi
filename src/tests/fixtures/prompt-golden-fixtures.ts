@@ -27,7 +27,7 @@ export const promptGoldenUnits = [
   },
   {
     unitType: "complete-slice",
-    phase2StartChars: 12520,
+    phase2StartChars: 12640,
     requiredMarkers: [
       "UNIT: Complete Slice S01",
       "Inlined Context",

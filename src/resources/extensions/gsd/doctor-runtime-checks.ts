@@ -414,26 +414,31 @@ export async function checkRuntimeHealth(
         ".gsd/event-log.jsonl",
       ];
 
-      // If blanket .gsd/ or .gsd is present, all patterns are covered
+      // If blanket .gsd/ or .gsd is present, all .gsd/* patterns are covered —
+      // but NOT the .gsd-worktrees/ sibling, which always needs its own entry.
       const hasBlanketIgnore = existingLines.has(".gsd/") || existingLines.has(".gsd");
-
+      const missing: string[] = [];
+      if (!existingLines.has(".gsd-worktrees/") && !existingLines.has(".gsd-worktrees")) {
+        missing.push(".gsd-worktrees/");
+      }
       if (!hasBlanketIgnore) {
-        const missing = criticalPatterns.filter(p => !existingLines.has(p));
-        if (missing.length > 0) {
-          issues.push({
-            severity: "warning",
-            code: "gitignore_missing_patterns",
-            scope: "project",
-            unitId: "project",
-            message: `${missing.length} critical GSD runtime pattern(s) missing from .gitignore: ${missing.join(", ")}`,
-            file: ".gitignore",
-            fixable: true,
-          });
+        missing.push(...criticalPatterns.filter(p => !existingLines.has(p)));
+      }
 
-          if (shouldFix("gitignore_missing_patterns")) {
-            ensureGitignore(basePath, { manageGitignore });
-            fixesApplied.push("added missing GSD runtime patterns to .gitignore");
-          }
+      if (missing.length > 0) {
+        issues.push({
+          severity: "warning",
+          code: "gitignore_missing_patterns",
+          scope: "project",
+          unitId: "project",
+          message: `${missing.length} critical GSD runtime pattern(s) missing from .gitignore: ${missing.join(", ")}`,
+          file: ".gitignore",
+          fixable: true,
+        });
+
+        if (shouldFix("gitignore_missing_patterns")) {
+          ensureGitignore(basePath, { manageGitignore });
+          fixesApplied.push("added missing GSD runtime patterns to .gitignore");
         }
       }
     }
