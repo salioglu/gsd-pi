@@ -12,6 +12,9 @@ import { isWorkflowToolSurfaceName } from "./workflow-tool-surface.js";
  */
 export const TOOL_SURFACE_NOT_READY = "workflow tool surface not ready";
 
+/** MCP server statuses that will not self-heal within the session. */
+const TERMINAL_MCP_SERVER_STATUSES = new Set(["failed", "needs-auth", "disabled"]);
+
 export interface LiveToolSurfaceObservation {
   /** Tool names the session reported at init (MCP tools appear as mcp__<server>__<tool>). */
   tools: readonly string[];
@@ -47,6 +50,17 @@ export function getToolSurfaceReadinessError(input: {
   const server = observation.mcpServers.find((entry) => entry.name === workflowServerName);
   if (!server) {
     return `${TOOL_SURFACE_NOT_READY} for ${unitType}: MCP server "${workflowServerName}" is absent from the init surface (not yet connected): ${required.join(", ")}`;
+  }
+
+  // The SDK does not wait for MCP servers before init — a still-connecting
+  // server reports "pending" there routinely, then registers within seconds,
+  // usually well before the Unit's first workflow tool call. Aborting on
+  // "pending" would fail the common healthy session, so it passes through;
+  // a genuine miss after pass-through still surfaces in-session as
+  // "No such tool available" and classifies tool-unavailable → bounded retry.
+  // Only statuses that cannot self-heal abort here.
+  if (server.status !== "connected" && !TERMINAL_MCP_SERVER_STATUSES.has(server.status)) {
+    return null;
   }
 
   const missing = required.filter(

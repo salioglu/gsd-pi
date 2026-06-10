@@ -58,6 +58,18 @@ describe("getToolSurfaceReadinessError", () => {
     assert.match(error, /gsd_uat_exec/);
   });
 
+  test("passes a still-connecting (pending) server through instead of aborting", () => {
+    // The SDK reports still-connecting servers as "pending" at init — the
+    // common healthy session. A genuine miss after pass-through is caught
+    // in-session ("No such tool available" → tool-unavailable → retry).
+    const error = getToolSurfaceReadinessError({
+      unitType: "plan-slice",
+      workflowServerName: SERVER,
+      observation: { tools: ["read", "bash"], mcpServers: [{ name: SERVER, status: "pending" }] },
+    });
+    assert.equal(error, null);
+  });
+
   test("returns null when all required tools are registered under the MCP prefix", () => {
     const error = getToolSurfaceReadinessError({
       unitType: "run-uat",
@@ -82,6 +94,26 @@ describe("getToolSurfaceReadinessError", () => {
     assert.match(error, /gsd_uat_exec/);
   });
 
+  test("aborts on needs-auth (terminal — cannot self-heal)", () => {
+    const error = getToolSurfaceReadinessError({
+      unitType: "run-uat",
+      workflowServerName: SERVER,
+      observation: { tools: ["read", "bash"], mcpServers: [{ name: SERVER, status: "needs-auth" }] },
+    });
+    assert.ok(error, "expected a readiness error for needs-auth");
+    assert.match(error, /status is "needs-auth"/);
+  });
+
+  test("aborts on disabled (terminal — cannot self-heal)", () => {
+    const error = getToolSurfaceReadinessError({
+      unitType: "run-uat",
+      workflowServerName: SERVER,
+      observation: { tools: ["read", "bash"], mcpServers: [{ name: SERVER, status: "disabled" }] },
+    });
+    assert.ok(error, "expected a readiness error for disabled");
+    assert.match(error, /status is "disabled"/);
+  });
+
   test("reports partially-registered surfaces even when the server says connected", () => {
     const error = getToolSurfaceReadinessError({
       unitType: "run-uat",
@@ -102,7 +134,7 @@ describe("readiness error classification contract", () => {
   const readinessError = getToolSurfaceReadinessError({
     unitType: "run-uat",
     workflowServerName: SERVER,
-    observation: { tools: [], mcpServers: [{ name: SERVER, status: "pending" }] },
+    observation: { tools: [], mcpServers: [{ name: SERVER, status: "failed" }] },
   })!;
 
   test("auto-tool-tracking treats the readiness error as tool-unavailable", () => {
