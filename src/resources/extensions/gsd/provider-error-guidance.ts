@@ -12,10 +12,9 @@ export interface ProviderErrorGuidanceInput {
   hasConfiguredFallbacks?: boolean;
 }
 
-export interface ProviderErrorGuidance {
-  summary: string;
-  steps: string[];
-}
+import { formatGuidance, type Guidance } from "./guidance.js";
+
+export type ProviderErrorGuidance = Guidance;
 
 /** Map auto unit types to the `models:` key in PREFERENCES.md. */
 export function unitTypeToPrefsPhaseKey(unitType: string | undefined): string | undefined {
@@ -131,6 +130,5 @@ export function resolveProviderErrorGuidance(input: ProviderErrorGuidanceInput):
 
 /** Flatten guidance into a pause banner / notification string. */
 export function formatProviderErrorGuidance(guidance: ProviderErrorGuidance): string {
-  const numbered = guidance.steps.map((step, index) => `${index + 1}. ${step}`).join("\n");
-  return `${guidance.summary}\n\n${numbered}`;
+  return formatGuidance(guidance);
 }
