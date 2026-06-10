@@ -587,7 +587,7 @@ markStartup('AuthStorage.create')
 loadStoredEnvKeys(authStorage)
 migratePiCredentials(authStorage)
 
-// Resolve models.json path with fallback to ~/.pi/agent/models.json
+// Resolve models.json path
 const { resolveModelsJsonPath } = await import('./models-resolver.js')
 const modelsJsonPath = resolveModelsJsonPath()
 

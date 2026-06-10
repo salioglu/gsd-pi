@@ -113,7 +113,7 @@ test("hasStaleCompiledExtensionSiblings detects nested bundled extension format 
   );
 });
 
-test("buildResourceLoader excludes duplicate top-level pi extensions when bundled resources use .js", async (t) => {
+test("buildResourceLoader does not load any pi extensions from ~/.pi/agent/extensions", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-home-"));
   const piExtensionsDir = join(tmp, ".pi", "agent", "extensions");
   const fakeAgentDir = join(tmp, ".gsd", "agent");
@@ -135,12 +135,12 @@ test("buildResourceLoader excludes duplicate top-level pi extensions when bundle
   assert.equal(
     additionalExtensionPaths.some((entryPath) => entryPath.endsWith("ask-user-questions.ts")),
     false,
-    "bundled compiled extensions should suppress duplicate pi top-level .ts siblings",
+    "pi extensions should not be loaded even if they duplicate a bundled extension",
   );
   assert.equal(
     additionalExtensionPaths.some((entryPath) => entryPath.endsWith("custom-extension.ts")),
-    true,
-    "non-duplicate pi extensions should still load",
+    false,
+    "pi extensions should not be loaded even if they are not bundled duplicates",
   );
 });
 

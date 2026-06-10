@@ -746,9 +746,8 @@ function collectRelativeFiles(rootDir: string): Set<string> {
 }
 
 /**
- * Constructs a DefaultResourceLoader that loads extensions from both
- * ~/.gsd/agent/extensions/ (GSD's default) and ~/.pi/agent/extensions/ (pi's default).
- * This allows users to use extensions from either location.
+ * Constructs a DefaultResourceLoader that loads extensions from
+ * ~/.gsd/agent/extensions/ (GSD's default) only.
  */
 // Cache bundled extension keys at module load — avoids re-scanning the extensions
 // directory in buildResourceLoader() (already scanned by loader.ts for env var).
@@ -773,18 +772,8 @@ export async function buildResourceLoader(
   const { DefaultResourceLoader } = await loadPiCodingAgentModule()
   const { sortExtensionPaths } = await import('./extension-sort.js')
   const registry = loadRegistry()
-  const piAgentDir = join(homedir(), '.pi', 'agent')
-  const piExtensionsDir = join(piAgentDir, 'extensions')
   const bundledKeys = getBundledExtensionKeys()
-  const piExtensionPaths = discoverExtensionEntryPaths(piExtensionsDir)
-    .filter((entryPath) => !bundledKeys.has(getExtensionKey(entryPath, piExtensionsDir)))
-    .filter((entryPath) => {
-      const manifest = readManifestFromEntryPath(entryPath)
-      if (!manifest) return true
-      return isExtensionEnabled(registry, manifest.id)
-    })
   const additionalExtensionPaths = [
-    ...piExtensionPaths,
     ...(options.additionalExtensionPaths ?? []),
   ]
 
