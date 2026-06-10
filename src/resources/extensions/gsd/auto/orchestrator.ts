@@ -617,7 +617,11 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   // ── WorktreeAdapter (folded) ─────────────────────────────────────────────
 
   private getEffectiveUnitIsolationMode(basePath: string): ReturnType<typeof getIsolationMode> {
-    return resolveEffectiveUnitIsolationMode(getIsolationMode(basePath), this.s.isolationDegraded);
+    return resolveEffectiveUnitIsolationMode(
+      getIsolationMode(basePath),
+      this.s.isolationDegraded,
+      this.s.strandedRecoveryIsolationMode,
+    );
   }
 
   private buildLifecycle(): WorktreeLifecycle {

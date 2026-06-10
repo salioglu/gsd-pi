@@ -638,12 +638,21 @@ type AutoIsolationMode = ReturnType<typeof getIsolationMode>;
 export function _resolveEffectiveUnitIsolationModeForTest(
   configuredMode: AutoIsolationMode,
   isolationDegraded: boolean,
+  strandedRecoveryIsolationMode: "worktree" | "branch" | null = null,
 ): AutoIsolationMode {
-  return resolveEffectiveUnitIsolationMode(configuredMode, isolationDegraded);
+  return resolveEffectiveUnitIsolationMode(
+    configuredMode,
+    isolationDegraded,
+    strandedRecoveryIsolationMode,
+  );
 }
 
 function getEffectiveUnitIsolationMode(basePath: string): AutoIsolationMode {
-  return resolveEffectiveUnitIsolationMode(getIsolationMode(basePath), s.isolationDegraded);
+  return resolveEffectiveUnitIsolationMode(
+    getIsolationMode(basePath),
+    s.isolationDegraded,
+    s.strandedRecoveryIsolationMode,
+  );
 }
 
 /** Crash recovery prompt — set by startAuto, consumed by the main loop */

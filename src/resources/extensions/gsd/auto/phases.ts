@@ -365,10 +365,12 @@ async function validateSourceWriteWorktreeSafety(
   const projectRoot = s.canonicalProjectRoot ?? resolveWorktreeProjectRoot(s.basePath, s.originalBasePath);
   // A degraded session already fell back to the milestone branch in the
   // project root — validating against the canonical worktree root there
-  // would fail every dispatch with a false invalid-root.
+  // would fail every dispatch with a false invalid-root. The same applies
+  // to a stranded-recovery session that adopted the milestone branch.
   const isolationMode = resolveEffectiveUnitIsolationMode(
     deps.getIsolationMode(projectRoot),
     s.isolationDegraded,
+    s.strandedRecoveryIsolationMode,
   );
   if (isolationMode !== "worktree") return null;
 

@@ -675,7 +675,16 @@ export function _enterMilestoneCore(
   // Handles the case where originalBasePath is falsy and basePath is itself
   // a worktree path — prevents double-nested worktree paths (#3729).
   const basePath = resolveWorktreeProjectRoot(s.basePath, s.originalBasePath);
-  const mode = opts.modeOverride ?? getIsolationMode(basePath);
+  // A stranded-recovery session that adopted the milestone branch in the
+  // project root must keep re-entering in that mode: the root checkout holds
+  // the branch, so creating the canonical worktree would fail with "already
+  // in use by another worktree". The override clears when the recovered
+  // milestone merges (_mergeAndExit), restoring configured isolation for
+  // subsequent milestones.
+  const mode =
+    opts.modeOverride ??
+    s.strandedRecoveryIsolationMode ??
+    getIsolationMode(basePath);
 
   if (s.isolationDegraded) {
     if (mode === "worktree") {

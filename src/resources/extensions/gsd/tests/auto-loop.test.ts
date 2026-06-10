@@ -5578,6 +5578,68 @@ test("dispatch Worktree Safety honors degraded branch fallback instead of demand
   assert.ok(!deps.callLog.includes("stopAuto"), "auto-mode must not stop on the degraded fallback");
 });
 
+test("dispatch Worktree Safety honors stranded branch recovery instead of demanding the canonical worktree root", async (t) => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  const pi = makeMockPi();
+  const notifications: string[] = [];
+  ctx.ui.notify = (msg: string) => { notifications.push(msg); };
+
+  // Bootstrap adopted stranded work by checking out the milestone branch in
+  // the project root (strandedRecoveryIsolationMode = "branch"). Isolation is
+  // NOT degraded — the adoption is intentional. The safety gate must validate
+  // against the effective branch mode, not the configured worktree mode.
+  const projectRoot = mkdtempSync(join(tmpdir(), "gsd-wt-safety-stranded-"));
+  t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
+
+  const s = makeLoopSession({
+    basePath: projectRoot,
+    originalBasePath: projectRoot,
+    canonicalProjectRoot: projectRoot,
+    strandedRecoveryIsolationMode: "branch",
+  });
+  const deps = makeMockDeps({
+    getIsolationMode: () => "worktree",
+  });
+  const result = await runDispatch(
+    {
+      ctx,
+      pi,
+      s,
+      deps,
+      prefs: undefined,
+      iteration: 1,
+      flowId: "test-flow",
+      nextSeq: () => 1,
+    },
+    {
+      state: {
+        phase: "executing",
+        activeMilestone: { id: "M001", title: "Test", status: "active" },
+        activeSlice: { id: "S01", title: "Slice 1" },
+        activeTask: { id: "T01" },
+        registry: [{ id: "M001", status: "active" }],
+        blockers: [],
+      } as any,
+      mid: "M001",
+      midTitle: "Test",
+    },
+    {
+      recentUnits: [],
+      stuckRecoveryAttempts: 0,
+      consecutiveFinalizeTimeouts: 0,
+    },
+  );
+
+  assert.equal(result.action, "next", "dispatch must proceed under stranded branch recovery");
+  assert.ok(
+    !notifications.some((n) => n.includes("Worktree Safety failed")),
+    "stranded branch recovery must not trip a false invalid-root",
+  );
+  assert.ok(!deps.callLog.includes("stopAuto"), "auto-mode must not stop on stranded branch recovery");
+});
+
 test("runDispatch runs stuck detection while artifact verification retry is pending (#5719)", async (t) => {
   _resetPendingResolve();
 
