@@ -16,6 +16,7 @@ import type {
   ExtensionCommandContext,
 } from "@gsd/pi-coding-agent";
 import { deriveState } from "./state.js";
+import { findWorktreeSegment, isGsdWorktreePath } from "./worktree-root.js";
 import { loadFile, getManifestStatus } from "./files.js";
 import type { InterruptedSessionAssessment } from "./interrupted-session.js";
 import {
@@ -96,7 +97,6 @@ import {
   rmSync,
 } from "node:fs";
 import { join } from "node:path";
-import { sep as pathSep } from "node:path";
 
 import { validateDirectory } from "./validate-directory.js";
 import {
@@ -601,7 +601,7 @@ export function auditOrphanedMilestoneBranches(
               warnings.push(`Failed to remove worktree directory for ${milestoneId}: ${err2 instanceof Error ? err2.message : String(err2)}`);
             }
           } else {
-            warnings.push(`Orphaned worktree directory for ${milestoneId} is outside .gsd/worktrees/ — skipping removal for safety.`);
+            warnings.push(`Orphaned worktree directory for ${milestoneId} is outside the GSD worktrees containers — skipping removal for safety.`);
           }
         } else {
           pushAction({
@@ -717,7 +717,7 @@ export function auditOrphanedMilestoneBranches(
     if (!existsSync(wtDir)) continue;
     if (!isInsideWorktreesDir(basePath, wtDir)) {
       warnings.push(
-        `Orphaned worktree directory for ${m.id} is outside .gsd/worktrees/ — skipping removal for safety.`,
+        `Orphaned worktree directory for ${m.id} is outside the GSD worktrees containers — skipping removal for safety.`,
       );
       continue;
     }
@@ -1325,7 +1325,7 @@ export async function bootstrapAutoSession(
       (state.phase === "pre-planning" || state.phase === "complete") &&
       survivorIsolationMode !== "none" &&
       !detectWorktreeName(base) &&
-      !base.includes(`${pathSep}.gsd${pathSep}worktrees${pathSep}`)
+      !isGsdWorktreePath(base)
     ) {
       const milestoneBranch = `milestone/${survivorMilestoneId}`;
       const { nativeBranchExists } = await import("./native-git-bridge.js");
@@ -1610,16 +1610,10 @@ export async function bootstrapAutoSession(
     // live here is gone.
 
     const isUnderGsdWorktrees = (p: string): boolean => {
-      // Direct layout: /.gsd/worktrees/
-      const marker = `${pathSep}.gsd${pathSep}worktrees${pathSep}`;
-      if (p.includes(marker)) return true;
-      const worktreesSuffix = `${pathSep}.gsd${pathSep}worktrees`;
-      if (p.endsWith(worktreesSuffix)) return true;
-      // Symlink-resolved layout: /.gsd/projects/<hash>/worktrees/
-      const symlinkRe = new RegExp(
-        `\\${pathSep}\\.gsd\\${pathSep}projects\\${pathSep}[a-f0-9]+\\${pathSep}worktrees(?:\\${pathSep}|$)`,
-      );
-      return symlinkRe.test(p);
+      const normalized = p.replaceAll("\\", "/");
+      if (findWorktreeSegment(normalized) !== null) return true;
+      // The container directory itself (no trailing worktree name).
+      return normalized.endsWith("/.gsd/worktrees") || normalized.endsWith("/.gsd-worktrees");
     };
 
     if (

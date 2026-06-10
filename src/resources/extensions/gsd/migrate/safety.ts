@@ -106,14 +106,22 @@ export function assertMigrationHasSlices(preview: MigrationPreview): void {
 }
 
 function hasWorktreeState(targetRoot: string): boolean {
-  const worktreesDir = join(gsdRoot(targetRoot), "worktrees");
-  if (!existsSync(worktreesDir)) return false;
-  try {
-    return readdirSync(worktreesDir, { withFileTypes: true })
-      .some((entry) => entry.isDirectory() || entry.isFile());
-  } catch {
-    return true;
+  const containers = [
+    join(targetRoot, ".gsd-worktrees"),
+    join(gsdRoot(targetRoot), "worktrees"),
+  ];
+  for (const worktreesDir of containers) {
+    if (!existsSync(worktreesDir)) continue;
+    try {
+      if (readdirSync(worktreesDir, { withFileTypes: true })
+        .some((entry) => entry.isDirectory() || entry.isFile())) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
   }
+  return false;
 }
 
 export async function assertMigrationTargetAvailable(targetRoot: string): Promise<void> {

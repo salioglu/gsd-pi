@@ -9,9 +9,10 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { gsdRoot } from "./paths.js";
+import { findWorktreeSegment } from "./worktree-root.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -60,20 +61,10 @@ const VALID_CLASSIFICATIONS: readonly string[] = [
  */
 export function resolveCapturesPath(basePath: string): string {
   const resolved = resolve(basePath);
-  // Direct layout: /.gsd/worktrees/
-  const worktreeMarker = `${sep}.gsd${sep}worktrees${sep}`;
-  let idx = resolved.indexOf(worktreeMarker);
-  if (idx === -1) {
-    // Symlink-resolved layout: /.gsd/projects/<hash>/worktrees/
-    const symlinkRe = new RegExp(
-      `\\${sep}\\.gsd\\${sep}projects\\${sep}[a-f0-9]+\\${sep}worktrees\\${sep}`,
-    );
-    const match = resolved.match(symlinkRe);
-    if (match && match.index !== undefined) idx = match.index;
-  }
-  if (idx !== -1) {
+  const segment = findWorktreeSegment(resolved.replaceAll("\\", "/"));
+  if (segment) {
     // basePath is inside a worktree — resolve to project root
-    const projectRoot = resolved.slice(0, idx);
+    const projectRoot = resolved.slice(0, segment.gsdIdx);
     return join(projectRoot, ".gsd", CAPTURES_FILENAME);
   }
   return join(gsdRoot(basePath), CAPTURES_FILENAME);

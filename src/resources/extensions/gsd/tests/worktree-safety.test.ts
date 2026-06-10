@@ -126,7 +126,9 @@ describe("Worktree Safety module", () => {
     assert.equal(result.ok, false);
     assert.equal(result.kind, "invalid-root");
     assert.equal(result.details?.unitRoot, outsideRoot);
-    assert.equal(result.details?.expectedRoot, unitRoot);
+    // The reported expected root is the canonical container; the legacy
+    // .gsd/worktrees/ location is also accepted but not surfaced here.
+    assert.equal(result.details?.expectedRoot, join(projectRoot, ".gsd-worktrees", "M001"));
   });
 
   test("accepts project root for source-writing Unit when isolation mode is none", () => {

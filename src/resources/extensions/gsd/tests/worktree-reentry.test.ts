@@ -65,7 +65,7 @@ describe("reenterActiveWorktreeIfNeeded", () => {
     const entered = await reenterActiveWorktreeIfNeeded(dir);
     assert.ok(entered, "re-entry returned a worktree path");
     assert.strictEqual(realpathSync(process.cwd()), realpathSync(entered!), "cwd moved into the worktree");
-    assert.strictEqual(entered, join(dir, ".gsd", "worktrees", "M001"));
+    assert.strictEqual(entered, join(dir, ".gsd-worktrees", "M001"));
   });
 
   test("no-op when already inside a worktree", async (t) => {

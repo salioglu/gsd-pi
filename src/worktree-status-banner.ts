@@ -67,7 +67,10 @@ function existingPathVariants(path: string): string[] {
 }
 
 function findGsdWorktrees(basePath: string, entries: WorktreeEntry[]): GsdWorktree[] {
-  const roots = existingPathVariants(join(basePath, '.gsd', 'worktrees'))
+  const roots = [
+    ...existingPathVariants(join(basePath, '.gsd-worktrees')),
+    ...existingPathVariants(join(basePath, '.gsd', 'worktrees')),
+  ]
   const worktrees: GsdWorktree[] = []
 
   for (const entry of entries) {
@@ -126,8 +129,9 @@ function branchHasChanges(basePath: string, mainBranch: string, branch: string):
 }
 
 export function showWorktreeStatusBanner(basePath: string): void {
-  const worktreesDir = join(basePath, '.gsd', 'worktrees')
-  if (!existsSync(worktreesDir)) return
+  const hasWorktreesDir = [join(basePath, '.gsd-worktrees'), join(basePath, '.gsd', 'worktrees')]
+    .some((dir) => existsSync(dir))
+  if (!hasWorktreesDir) return
 
   const entries = parseWorktreeList(gitExec(basePath, ['worktree', 'list', '--porcelain']))
   const worktrees = findGsdWorktrees(basePath, entries)

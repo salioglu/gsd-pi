@@ -418,36 +418,48 @@ function extractMilestoneId(parsed: Record<string, unknown>): string | null {
  * the shared project `.gsd/` and auto-mode's verifyExpectedArtifact (which
  * uses the worktree `.gsd/`) fails, triggering a guaranteed retry per unit.
  */
+/** Containers a GSD worktree may live in: canonical .gsd-worktrees/ first, legacy .gsd/worktrees/ second. */
+function worktreeContainers(projectRoot: string): string[] {
+  return [join(projectRoot, ".gsd-worktrees"), join(projectRoot, ".gsd", "worktrees")];
+}
+
 function resolveActiveWorktreeBasePath(
   projectRoot: string,
   milestoneId: string | null,
 ): string | null {
   if (!milestoneId) return null;
-  const wtPath = join(projectRoot, ".gsd", "worktrees", milestoneId);
-  if (!existsSync(wtPath)) return null;
-  // Sanity check: a real git worktree has a `.git` file with a gitdir pointer.
-  // Bare directories without it shouldn't hijack the write path.
-  if (!existsSync(join(wtPath, ".git"))) return null;
-  return wtPath;
+  for (const container of worktreeContainers(projectRoot)) {
+    const wtPath = join(container, milestoneId);
+    if (!existsSync(wtPath)) continue;
+    // Sanity check: a real git worktree has a `.git` file with a gitdir pointer.
+    // Bare directories without it shouldn't hijack the write path.
+    if (!existsSync(join(wtPath, ".git"))) continue;
+    return wtPath;
+  }
+  return null;
 }
 
 /**
  * Fallback when the tool call has no milestoneId: if exactly one auto-worktree
- * exists under `<projectRoot>/.gsd/worktrees/`, treat it as the active one.
+ * exists across the project's worktree containers, treat it as the active one.
  * Multiple worktrees → ambiguous, return null and let writes go to project root.
  */
 function resolveSoleActiveWorktree(projectRoot: string): string | null {
-  const worktreesDir = join(projectRoot, ".gsd", "worktrees");
-  if (!existsSync(worktreesDir)) return null;
-  let entries: string[];
-  try {
-    entries = readdirSync(worktreesDir);
-  } catch {
-    return null;
+  const live: string[] = [];
+  for (const worktreesDir of worktreeContainers(projectRoot)) {
+    if (!existsSync(worktreesDir)) continue;
+    let entries: string[];
+    try {
+      entries = readdirSync(worktreesDir);
+    } catch {
+      continue;
+    }
+    live.push(
+      ...entries
+        .map((name) => join(worktreesDir, name))
+        .filter((p) => existsSync(join(p, ".git"))),
+    );
   }
-  const live = entries
-    .map((name) => join(worktreesDir, name))
-    .filter((p) => existsSync(join(p, ".git")));
   if (live.length !== 1) return null;
   return live[0];
 }

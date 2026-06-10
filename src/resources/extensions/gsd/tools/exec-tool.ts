@@ -11,6 +11,7 @@ import {
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { isContextModeEnabled, type ContextModeConfig } from "../preferences-types.js";
+import { findWorktreeSegment } from "../worktree-root.js";
 import { contextModeDisabledResult, type ToolExecutionResult } from "./context-mode-tool-result.js";
 
 export interface ExecToolParams {
@@ -201,11 +202,10 @@ function normalizeScanPath(value: string): string {
 
 function parseWorktreeBase(baseDir: string): { originalRoot: string; worktreeRoot: string } | null {
   const normalizedBase = normalizeScanPath(baseDir);
-  const marker = "/.gsd/worktrees/";
-  const markerIndex = normalizedBase.indexOf(marker);
-  if (markerIndex <= 0) return null;
+  const segment = findWorktreeSegment(normalizedBase);
+  if (!segment || segment.gsdIdx <= 0) return null;
   return {
-    originalRoot: normalizedBase.slice(0, markerIndex),
+    originalRoot: normalizedBase.slice(0, segment.gsdIdx),
     worktreeRoot: normalizedBase,
   };
 }
@@ -297,7 +297,7 @@ function scriptReferencesOriginalRootFromWorktree(script: string, baseDir: strin
   const normalizedScript = script.replace(/\\/g, "/");
   return comparablePathVariants(parsed.originalRoot).some((originalRoot) => {
     const originalRootPattern = new RegExp(
-      `${escapeRegExp(originalRoot)}(?=$|[\\s'"\\\`;)&|<>]|/(?!\\.gsd/worktrees(?:/|$)))`,
+      `${escapeRegExp(originalRoot)}(?=$|[\\s'"\\\`;)&|<>]|/(?!\\.gsd(?:-worktrees|/worktrees)(?:/|$)))`,
     );
     return originalRootPattern.test(normalizedScript);
   });

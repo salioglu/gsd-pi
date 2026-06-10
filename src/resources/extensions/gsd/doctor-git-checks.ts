@@ -9,7 +9,7 @@ import { parseRoadmap as parseLegacyRoadmap } from "./parsers-legacy.js";
 import { isDbAvailable, getMilestone } from "./gsd-db.js";
 import { resolveMilestoneFile } from "./paths.js";
 import { deriveState, isMilestoneComplete } from "./state.js";
-import { createWorktree, listWorktrees, resolveGitDir, worktreesDir } from "./worktree-manager.js";
+import { allWorktreesDirs, createWorktree, listWorktrees, resolveGitDir } from "./worktree-manager.js";
 import { abortAndReset } from "./git-self-heal.js";
 import { RUNTIME_EXCLUSION_PATHS, resolveMilestoneIntegrationBranch, writeIntegrationBranch } from "./git-service.js";
 import { nativeIsRepo, nativeWorktreeList, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached, nativeHasChanges, nativeLastCommitEpoch, nativeGetCurrentBranch, nativeAddTracked, nativeCommit } from "./native-git-bridge.js";
@@ -496,8 +496,8 @@ export async function checkGitHealth(
   // that is no longer registered with git. These orphaned dirs cause
   // "already exists" errors when re-creating the same worktree name.
   try {
-    const wtDir = worktreesDir(basePath);
-    if (existsSync(wtDir)) {
+    for (const wtDir of allWorktreesDirs(basePath)) {
+      if (!existsSync(wtDir)) continue;
       // Resolve symlinks and normalize separators so that symlinked .gsd
       // paths (e.g. ~/.gsd/projects/<hash>/worktrees/…) match the paths
       // returned by `git worktree list`.

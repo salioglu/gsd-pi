@@ -161,13 +161,13 @@ test("enterMilestone returns ok:true mode:worktree on successful create", (t) =>
   if (result.ok) {
     assert.equal(result.mode, "worktree");
     assert.ok(
-      result.path.endsWith("/.gsd/worktrees/M001"),
-      `expected path to end with /.gsd/worktrees/M001, got ${result.path}`,
+      result.path.endsWith("/.gsd-worktrees/M001"),
+      `expected path to end with /.gsd-worktrees/M001, got ${result.path}`,
     );
   }
   assert.ok(
-    s.basePath.endsWith("/.gsd/worktrees/M001"),
-    `expected s.basePath to end with /.gsd/worktrees/M001, got ${s.basePath}`,
+    s.basePath.endsWith("/.gsd-worktrees/M001"),
+    `expected s.basePath to end with /.gsd-worktrees/M001, got ${s.basePath}`,
   );
   // After C3 (#5626) `invalidateAllCaches` is inlined; assertion against
   // `deps.calls` for cache invalidation is no longer possible.

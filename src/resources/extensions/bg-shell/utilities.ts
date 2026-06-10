@@ -45,7 +45,7 @@ export function formatTimeAgo(timestamp: number): string {
 
 function deriveProjectRootFromAutoWorktree(cachedCwd?: string): string | undefined {
 	if (!cachedCwd) return undefined;
-	const match = cachedCwd.match(/^(.*?)[\\/]\.gsd[\\/]worktrees[\\/][^\\/]+(?:[\\/].*)?$/);
+	const match = cachedCwd.match(/^(.*?)[\\/]\.gsd(?:-worktrees|[\\/]worktrees)[\\/][^\\/]+(?:[\\/].*)?$/);
 	return match?.[1];
 }
 
@@ -84,7 +84,7 @@ export function resolveBgShellPersistenceCwd(
 	pathExists: (path: string) => boolean = existsSync,
 ): string {
 	const resolvedLiveCwd = liveCwd ?? getBgShellLiveCwd(cachedCwd, pathExists);
-	const cachedIsAutoWorktree = /(?:^|[\\/])\.gsd[\\/]worktrees[\\/]/.test(cachedCwd);
+	const cachedIsAutoWorktree = /(?:^|[\\/])\.gsd(?:-worktrees|[\\/]worktrees)[\\/]/.test(cachedCwd);
 	if (!cachedIsAutoWorktree) return cachedCwd;
 	if (cachedCwd === resolvedLiveCwd && pathExists(cachedCwd)) return cachedCwd;
 	if (!pathExists(cachedCwd)) return resolvedLiveCwd;

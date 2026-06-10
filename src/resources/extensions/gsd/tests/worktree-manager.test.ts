@@ -180,7 +180,7 @@ describe("createWorktree — branch cleanup on add failure", () => {
 
     // Make the worktrees parent directory non-writable so `git worktree add`
     // fails after the branch has already been force-reset.
-    const parentDir = join(base, ".gsd", "worktrees");
+    const parentDir = join(base, ".gsd-worktrees");
     mkdirSync(parentDir, { recursive: true });
     run(`chmod 555 "${parentDir}"`, base);
 

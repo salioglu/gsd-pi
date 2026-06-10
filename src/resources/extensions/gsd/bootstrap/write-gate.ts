@@ -10,6 +10,7 @@ import { getIsolationMode } from "../preferences.js";
 import { compileSubagentPermissionContract, type ToolsPolicy } from "../unit-context-manifest.js";
 import { logWarning } from "../workflow-logger.js";
 import { isGsdWorktreePath, resolveWorktreeProjectRoot } from "../worktree-root.js";
+import { worktreesDirs } from "../worktree-placement.js";
 
 /**
  * Regex matching milestone CONTEXT.md file names in both legacy M001
@@ -1157,10 +1158,12 @@ export function shouldBlockWorktreeWrite(
   const realTarget = realpathOrResolve(absTarget);
   const realRoot = realpathOrResolve(projectRoot);
   const realGsd = realpathOrResolve(join(projectRoot, ".gsd"));
-  const realWorktreesDir = realpathOrResolve(join(projectRoot, ".gsd", "worktrees"));
 
-  // Allow writes inside the legitimate worktrees subtree.
-  if (isPathContained(realTarget, realWorktreesDir)) return { block: false };
+  // Allow writes inside a legitimate worktrees subtree (canonical
+  // .gsd-worktrees/ or legacy .gsd/worktrees/).
+  for (const container of worktreesDirs(projectRoot)) {
+    if (isPathContained(realTarget, realpathOrResolve(container))) return { block: false };
+  }
 
   // Allow writes to .gsd/ planning artifacts, but reject siblings whose name
   // starts with "worktrees" (the worktrees-extra prefix trick — case 4).
