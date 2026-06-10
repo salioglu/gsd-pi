@@ -1,6 +1,6 @@
 ---
 name: gsd-browser
-description: Use gsd-browser for browser automation and UAT: navigating local apps, inspecting pages, clicking or filling controls, taking screenshots, asserting UI behavior, collecting console/network diagnostics, visual diffing, and creating evidence bundles. Prefer this over legacy Playwright browser tooling when both are available.
+description: "Use gsd-browser for browser automation and UAT: navigating local apps, inspecting pages, clicking or filling controls, taking screenshots, asserting UI behavior, collecting console/network diagnostics, visual diffing, and creating evidence bundles. Prefer this over legacy Playwright browser tooling when both are available."
 allowed-tools: Bash(gsd-browser:*), Bash(gsd-browser *)
 ---
 
