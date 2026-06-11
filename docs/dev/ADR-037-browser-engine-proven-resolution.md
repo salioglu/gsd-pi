@@ -37,9 +37,12 @@ reason:
    start, a probe-resolved managed engine must connect its daemon
    (`warmUpManagedGsdBrowser`, bounded by a 10s abort) before browser tools are
    registered against it. Connect failure falls back to legacy Playwright for
-   the session with a user-visible notice. This is the fail-closed-with-
-   fallback answer to ADR-024's blocker: a managed startup failure now degrades
-   instead of blocking browser verification.
+   the session with a user-visible notice, and the outcome is committed back
+   into the resolution record (`commitBrowserEngineResolution`) so ambient
+   readers — UAT guidance, re-warm-up, later sessions in the same process —
+   see the engine actually registered, not the prediction. This is the
+   fail-closed-with-fallback answer to ADR-024's blocker: a managed startup
+   failure now degrades instead of blocking browser verification.
 4. **Non-browser-facing projects keep legacy Playwright.** Browser tools are
    incidental there; the managed daemon is not worth its startup risk. The
    resolution record says so explicitly.

@@ -4,8 +4,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { resolveBrowserEngineResolution, type BrowserEngineResolution } from "../browser-tools/engine/selection.js";
+import { resolveAmbientBrowserEngineResolution, type BrowserEngineResolution } from "../browser-tools/engine/selection.js";
 import { detectWebApp } from "../browser-tools/web-app-detect.js";
+import { UAT_MODE_POLICIES, type UatType } from "./uat-policy.js";
 
 export { detectWebApp };
 
@@ -59,6 +60,24 @@ function describeBrowserToolBacking(engineResolution: BrowserEngineResolution): 
   }
 }
 
+// One bullet per recommended UAT mode; `mode` keys into UAT_MODE_POLICIES so
+// modes that require browser tools drop out of the guidance when the resolved
+// engine provides none (mixed/live-runtime share one bullet and one policy bit).
+const UAT_MODE_GUIDANCE: ReadonlyArray<{ mode: UatType; bullet: string }> = [
+  {
+    mode: "browser-executable",
+    bullet: "- `browser-executable` — navigate to `http://localhost:…`, click, screenshot, assert via `browser_*` tools during run-uat",
+  },
+  {
+    mode: "runtime-executable",
+    bullet: "- `runtime-executable` — run an automated browser test command via `gsd_uat_exec` (for example `npx playwright test`)",
+  },
+  {
+    mode: "mixed",
+    bullet: "- `mixed` / `live-runtime` — combine runtime startup checks with interactive browser verification",
+  },
+];
+
 /**
  * Markdown block injected into plan/complete-slice prompts when the project
  * looks browser-facing. Returns null for CLI/library-only repos. Guidance is
@@ -72,7 +91,8 @@ export function buildWebAppUatGuidanceBlock(
 ): string | null {
   if (!detectWebApp(projectRoot)) return null;
 
-  const resolvedEngine = engineResolution ?? resolveBrowserEngineResolution(process.env, projectRoot);
+  const resolvedEngine = engineResolution ?? resolveAmbientBrowserEngineResolution(projectRoot);
+  const browserToolsAvailable = resolvedEngine.engine !== "off";
   const playwrightScript = findPlaywrightTestScript(projectRoot);
   const hasPlaywright = hasPlaywrightTestDependency(projectRoot) || playwrightScript !== null;
   const lines = [
@@ -81,11 +101,9 @@ export function buildWebAppUatGuidanceBlock(
     describeBrowserToolBacking(resolvedEngine),
     "",
     "**UAT modes (pick one per slice — do not use `artifact-driven` for browser steps):**",
-    ...(resolvedEngine.engine === "off" ? [] : [
-      "- `browser-executable` — navigate to `http://localhost:…`, click, screenshot, assert via `browser_*` tools during run-uat",
-    ]),
-    "- `runtime-executable` — run an automated browser test command via `gsd_uat_exec` (for example `npx playwright test`)",
-    "- `mixed` / `live-runtime` — combine runtime startup checks with interactive browser verification",
+    ...UAT_MODE_GUIDANCE
+      .filter(({ mode }) => browserToolsAvailable || !UAT_MODE_POLICIES[mode].browserTools)
+      .map(({ bullet }) => bullet),
     "",
     "**Planning / closeout rules:**",
     "- Preconditions must name the dev-server command and URL (for example `npm run dev` → `http://localhost:3000`)",
@@ -115,7 +133,7 @@ export function buildWebAppUatGuidanceBlock(
       "- Add a planning task that installs Playwright, adds `playwright.config.ts`, and creates a minimal smoke spec (for example `e2e/smoke.spec.ts`)",
       "- Task `verify` should run `npx playwright test` (or the focused spec) with a safe, simple command",
     );
-    if (resolvedEngine.engine !== "off") {
+    if (browserToolsAvailable) {
       lines.push(
         "- Until specs exist, use `browser-executable` UAT with localhost preconditions and interactive `browser_*` checks at slice closeout",
       );

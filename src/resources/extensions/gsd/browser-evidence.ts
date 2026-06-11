@@ -1,9 +1,15 @@
 // Project/App: gsd-pi
 // File Purpose: Shared browser-observable UAT requirement and evidence detection.
 
-import { browserEvidenceSignalToolPattern } from "../shared/browser-contract.js";
+import { BROWSER_EVIDENCE_SIGNAL_TOOL_NAMES } from "../shared/browser-contract.js";
 
-const BROWSER_TOOL_SIGNAL = browserEvidenceSignalToolPattern();
+// Alternation fragment over the contract's evidence-signal names, e.g.
+// `browser_(?:assert|batch|...)`. The names are `browser_`-prefixed
+// identifiers (pinned by tests/browser-contract.test.ts), so no escaping is
+// needed.
+const BROWSER_TOOL_SIGNAL = `browser_(?:${
+  BROWSER_EVIDENCE_SIGNAL_TOOL_NAMES.map((name) => name.slice("browser_".length)).join("|")
+})`;
 
 export const BROWSER_REQUIREMENT_RE = new RegExp(
   String.raw`\b(?:file://|localhost|playwright|chrome|screenshot|snapshot|${BROWSER_TOOL_SIGNAL})\b|\b(?:open|launch|navigate|load|visit|serve|start)\b.{0,80}\b(?:browser|page|localhost|file://)\b|\bbrowser\s+(?:check|session|test|uat|tool|automation|interaction|flow)\b`,

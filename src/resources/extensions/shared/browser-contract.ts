@@ -64,13 +64,3 @@ export const BROWSER_EVIDENCE_SIGNAL_TOOL_NAMES = [
   "browser_verify",
   "browser_snapshot_refs",
 ] as const satisfies readonly BrowserContractToolName[];
-
-/**
- * Regex alternation fragment matching the evidence-signal tool names, e.g.
- * `browser_(?:assert|batch|...)`. All contract names share the `browser_`
- * prefix, so the fragment stays compact and anchored.
- */
-export function browserEvidenceSignalToolPattern(): string {
-  const suffixes = BROWSER_EVIDENCE_SIGNAL_TOOL_NAMES.map((name) => name.slice("browser_".length));
-  return `browser_(?:${suffixes.join("|")})`;
-}

@@ -55,6 +55,14 @@ function parseGsdBrowserVersion(output: string): string | null {
   return output.match(/\b(\d+\.\d+\.\d+)\b/)?.[1] ?? null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function resolveExplicitGsdBrowserCliPath(env: NodeJS.ProcessEnv): string | undefined {
+  return env.GSD_BROWSER_CLI_PATH?.trim() || env.GSD_BROWSER_BIN_PATH?.trim() || undefined;
+}
+
 function resolveBundledGsdBrowserPackageVersion(): string | null {
   try {
     const requireFromHere = createRequire(import.meta.url);
@@ -66,20 +74,28 @@ function resolveBundledGsdBrowserPackageVersion(): string | null {
   }
 }
 
+// The `gsd-browser --version` subprocess result cannot change mid-session (the
+// engine-switch guard forbids restarting with a different engine), and both the
+// availability probe and the launch-config resolution ask for it at session
+// start — memoize so the up-to-2s spawn happens once per process.
+let cachedPathProbeVersion: string | null | undefined;
+
 function resolvePathGsdBrowserVersion(env: NodeJS.ProcessEnv): string | null {
   const explicit = env.GSD_BROWSER_PATH_VERSION?.trim();
   if (explicit) return parseGsdBrowserVersion(explicit);
+  if (cachedPathProbeVersion !== undefined) return cachedPathProbeVersion;
 
   try {
-    return parseGsdBrowserVersion(execFileSync("gsd-browser", ["--version"], {
+    cachedPathProbeVersion = parseGsdBrowserVersion(execFileSync("gsd-browser", ["--version"], {
       encoding: "utf-8",
       env,
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 2000,
     }));
   } catch {
-    return null;
+    cachedPathProbeVersion = null;
   }
+  return cachedPathProbeVersion;
 }
 
 function shouldPreferPathGsdBrowser(env: NodeJS.ProcessEnv): boolean {
@@ -91,7 +107,7 @@ function shouldPreferPathGsdBrowser(env: NodeJS.ProcessEnv): boolean {
 }
 
 export function resolveBundledGsdBrowserCliPath(env: NodeJS.ProcessEnv = process.env): string | null {
-  const explicit = env.GSD_BROWSER_CLI_PATH?.trim() || env.GSD_BROWSER_BIN_PATH?.trim();
+  const explicit = resolveExplicitGsdBrowserCliPath(env);
   if (explicit) return explicit;
 
   try {
@@ -122,9 +138,11 @@ export type GsdBrowserCliAvailability =
 /**
  * Cheap availability probe for the gsd-browser CLI: explicit env overrides,
  * then the bundled @opengsd/gsd-browser binary (filesystem checks only), then
- * a PATH lookup (one short subprocess). Used by Browser Automation Engine
- * resolution to decide whether the managed engine is provable before
- * preferring it over legacy Playwright.
+ * a PATH lookup (one short subprocess, memoized). Used by Browser Automation
+ * Engine resolution to decide whether the managed engine is provable before
+ * preferring it over legacy Playwright. `via` names the provable source, not
+ * necessarily the launch source — resolveGsdBrowserMcpLaunchConfig may still
+ * prefer a newer PATH CLI over the bundled one.
  */
 export function resolveGsdBrowserCliAvailability(env: NodeJS.ProcessEnv = process.env): GsdBrowserCliAvailability {
   const explicitCommand = env.GSD_BROWSER_MCP_COMMAND?.trim();
@@ -132,7 +150,7 @@ export function resolveGsdBrowserCliAvailability(env: NodeJS.ProcessEnv = proces
     return { available: true, via: "explicit-env", detail: `GSD_BROWSER_MCP_COMMAND=${explicitCommand}` };
   }
 
-  const explicitCliPath = env.GSD_BROWSER_CLI_PATH?.trim() || env.GSD_BROWSER_BIN_PATH?.trim();
+  const explicitCliPath = resolveExplicitGsdBrowserCliPath(env);
   if (explicitCliPath) {
     return existsSync(explicitCliPath)
       ? { available: true, via: "explicit-env", detail: `CLI at ${explicitCliPath}` }
@@ -167,27 +185,25 @@ export function buildGsdBrowserSessionName(projectRoot: string, suffix?: string)
  * are taught here, in one place.
  */
 export function isGsdBrowserMcpServerConfig(config: unknown): boolean {
-  if (!config || typeof config !== "object" || Array.isArray(config)) return false;
-  const record = config as Record<string, unknown>;
+  if (!isRecord(config)) return false;
 
-  const command = typeof record.command === "string" ? record.command : "";
+  const command = typeof config.command === "string" ? config.command : "";
   if (command.includes("gsd-browser") || command.includes("@opengsd/gsd-browser")) {
     return true;
   }
 
-  const env = record.env;
-  if (env && typeof env === "object" && !Array.isArray(env)) {
-    const envRecord = env as Record<string, unknown>;
+  if (isRecord(config.env)) {
+    const env = config.env;
     if (
-      typeof envRecord.GSD_BROWSER_CLI_PATH === "string"
-      || typeof envRecord.GSD_BROWSER_BIN_PATH === "string"
-      || typeof envRecord.GSD_BROWSER_MCP_COMMAND === "string"
+      typeof env.GSD_BROWSER_CLI_PATH === "string"
+      || typeof env.GSD_BROWSER_BIN_PATH === "string"
+      || typeof env.GSD_BROWSER_MCP_COMMAND === "string"
     ) {
       return true;
     }
   }
 
-  const args = Array.isArray(record.args) ? record.args.filter((arg): arg is string => typeof arg === "string") : [];
+  const args = Array.isArray(config.args) ? config.args.filter((arg): arg is string => typeof arg === "string") : [];
   return args.some((arg) => arg.includes("gsd-browser") || arg.includes("@opengsd/gsd-browser"));
 }
 
@@ -201,7 +217,7 @@ export function resolveGsdBrowserMcpLaunchConfig(
   const explicitArgs = parseJsonEnv<unknown>(env, "GSD_BROWSER_MCP_ARGS");
   const explicitEnv = parseJsonEnv<Record<string, string>>(env, "GSD_BROWSER_MCP_ENV");
   const explicitCommand = env.GSD_BROWSER_MCP_COMMAND?.trim();
-  const explicitCliPath = env.GSD_BROWSER_CLI_PATH?.trim() || env.GSD_BROWSER_BIN_PATH?.trim();
+  const explicitCliPath = resolveExplicitGsdBrowserCliPath(env);
   const preferPathCli = !explicitCommand && !explicitCliPath && shouldPreferPathGsdBrowser(env);
   const bundledCliPath = !explicitCommand && !explicitCliPath && !preferPathCli
     ? resolveBundledGsdBrowserCliPath(env)

@@ -60,6 +60,7 @@ import {
 } from "../gsd/mcp-filter.js";
 import { RUN_UAT_CLAUDE_NATIVE_TOOL_NAMES, RUN_UAT_FORBIDDEN_TOOL_NAMES, RUN_UAT_WORKFLOW_TOOL_NAMES, resolveToolPresentationPlan } from "../gsd/tool-presentation-plan.js";
 import { getToolSurfaceReadinessError } from "../gsd/tool-surface-readiness.js";
+import { hasBrowserContractPrefix } from "../shared/browser-contract.js";
 import { showInterviewRound, type Question, type RoundResult } from "../shared/tui.js";
 import type {
 	SDKAssistantMessage,
@@ -1591,7 +1592,7 @@ function browserMcpServerNameFromAllowedTools(allowedTools: unknown): string | u
 		if (typeof toolName !== "string") continue;
 		const parsed = parseAllowedMcpToolName(toolName);
 		if (!parsed) continue;
-		if (parsed.server === "gsd-browser" || parsed.tool.startsWith("browser_")) {
+		if (parsed.server === "gsd-browser" || hasBrowserContractPrefix(parsed.tool)) {
 			return parsed.server;
 		}
 	}
@@ -1604,7 +1605,7 @@ function workflowMcpServerNameFromAllowedTools(allowedTools: unknown): string | 
 	for (const toolName of allowedTools) {
 		if (typeof toolName !== "string") continue;
 		const parsed = parseAllowedMcpToolName(toolName);
-		if (!parsed || parsed.server === browserServerName || parsed.tool.startsWith("browser_")) continue;
+		if (!parsed || parsed.server === browserServerName || hasBrowserContractPrefix(parsed.tool)) continue;
 		return parsed.server;
 	}
 	return undefined;

@@ -10,7 +10,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const jiti = require("jiti")(__dirname, { interopDefault: true, debug: false });
 
-const { resolveBrowserEngineMode, resolveBrowserEngineResolution } = jiti("../engine/selection.ts");
+const {
+  commitBrowserEngineResolution,
+  resolveAmbientBrowserEngineResolution,
+  resolveBrowserEngineResolution,
+} = jiti("../engine/selection.ts");
 
 function makeProject({ webApp }) {
   const dir = mkdtempSync(join(tmpdir(), "gsd-engine-selection-"));
@@ -26,31 +30,27 @@ function makeFakeCli() {
   return cliPath;
 }
 
-describe("resolveBrowserEngineMode", () => {
-  it("accepts the explicit engine modes", () => {
-    assert.equal(resolveBrowserEngineMode({ GSD_BROWSER_ENGINE: "gsd-browser" }), "gsd-browser");
-    assert.equal(resolveBrowserEngineMode({ GSD_BROWSER_ENGINE: "legacy" }), "legacy");
-    assert.equal(resolveBrowserEngineMode({ GSD_BROWSER_ENGINE: "off" }), "off");
+describe("resolveBrowserEngineResolution", () => {
+  it("honors the explicit engine modes verbatim with env source", () => {
+    assert.deepEqual(
+      ["gsd-browser", "legacy", "off"].map(
+        (mode) => resolveBrowserEngineResolution({ GSD_BROWSER_ENGINE: mode }).engine,
+      ),
+      ["gsd-browser", "legacy", "off"],
+    );
+    assert.equal(resolveBrowserEngineResolution({ GSD_BROWSER_ENGINE: "gsd-browser" }).source, "env");
   });
 
   it("accepts compatibility aliases", () => {
-    assert.equal(resolveBrowserEngineMode({ GSD_BROWSER_ENGINE: "playwright" }), "legacy");
-    assert.equal(resolveBrowserEngineMode({ GSD_BROWSER_ENGINE: "false" }), "off");
+    assert.equal(resolveBrowserEngineResolution({ GSD_BROWSER_ENGINE: "playwright" }).engine, "legacy");
+    assert.equal(resolveBrowserEngineResolution({ GSD_BROWSER_ENGINE: "false" }).engine, "off");
   });
 
   it("rejects unknown engine modes", () => {
     assert.throws(
-      () => resolveBrowserEngineMode({ GSD_BROWSER_ENGINE: "surprise" }),
+      () => resolveBrowserEngineResolution({ GSD_BROWSER_ENGINE: "surprise" }),
       /Expected "gsd-browser", "legacy", or "off"/,
     );
-  });
-});
-
-describe("resolveBrowserEngineResolution", () => {
-  it("explicit overrides resolve with env source and skip the probe", () => {
-    const resolution = resolveBrowserEngineResolution({ GSD_BROWSER_ENGINE: "gsd-browser" });
-    assert.equal(resolution.engine, "gsd-browser");
-    assert.equal(resolution.source, "env");
   });
 
   it("defaults to legacy Playwright when no project root is known", () => {
@@ -88,5 +88,18 @@ describe("resolveBrowserEngineResolution", () => {
     assert.equal(resolution.engine, "legacy");
     assert.equal(resolution.source, "probe");
     assert.match(resolution.reason, /falling back to legacy Playwright/);
+  });
+});
+
+describe("committed resolution", () => {
+  it("ambient readers see a committed verification outcome instead of the prediction", () => {
+    const projectRoot = makeProject({ webApp: true });
+    const fallback = {
+      engine: "legacy",
+      source: "probe",
+      reason: "gsd-browser daemon connect failed (test); using legacy Playwright",
+    };
+    commitBrowserEngineResolution(projectRoot, fallback);
+    assert.deepEqual(resolveAmbientBrowserEngineResolution(projectRoot), fallback);
   });
 });

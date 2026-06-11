@@ -58,6 +58,7 @@ import { applyUnitSkillVisibility, unitHasSkillManifest } from "../skill-scope.j
 import { getGuidedUnitContext } from "../guided-unit-context.js";
 import { registerPlanMilestoneSchemaRecovery } from "./plan-milestone-schema-recovery.js";
 import { AUTO_UNIT_SCOPED_TOOLS, RUN_UAT_BROWSER_TOOL_NAMES, canonicalWorkflowToolName, isWorkflowAliasTool } from "../auto-unit-tool-scope.js";
+import { hasBrowserContractPrefix } from "../../shared/browser-contract.js";
 import { filterToolsForProvider } from "../model-router.js";
 import { mcpToolMatchesBaseName } from "../mcp-tool-name.js";
 import { RUN_UAT_READ_ONLY_TOOL_NAMES, RUN_UAT_WORKFLOW_TOOL_NAMES } from "../tool-presentation-plan.js";
@@ -180,7 +181,7 @@ function withPreservedShimTools(toolNames: readonly string[]): string[] {
 
 /** True for the browser automation tools (browser_navigate, browser_click, ...). */
 function isBrowserTool(toolName: string): boolean {
-  return canonicalToolName(toolName).startsWith("browser_");
+  return hasBrowserContractPrefix(canonicalToolName(toolName));
 }
 
 /**

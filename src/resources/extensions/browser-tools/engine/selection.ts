@@ -9,6 +9,12 @@
  *     legacy Playwright with the failure reason recorded.
  *   - Non-browser-facing projects keep legacy Playwright (browser tools are
  *     incidental there; the managed daemon is not worth its startup risk).
+ *
+ * This module owns the committed resolution, not just the prediction: when
+ * registration verifies a probe-resolved managed engine (daemon connect) and
+ * falls back, the outcome is committed here so every ambient reader — UAT
+ * guidance, re-warm-up, later sessions in the same process — sees the engine
+ * the session actually registered.
  */
 import { resolveGsdBrowserCliAvailability } from "../../shared/gsd-browser-cli.js";
 import { detectWebApp } from "../web-app-detect.js";
@@ -22,7 +28,7 @@ export interface BrowserEngineResolution {
   reason: string;
 }
 
-const probeResolutionByProjectRoot = new Map<string, BrowserEngineResolution>();
+const committedResolutionByProjectRoot = new Map<string, BrowserEngineResolution>();
 
 function parseExplicitEngineMode(raw: string): BrowserEngineMode {
   const normalized = raw.toLowerCase();
@@ -37,8 +43,9 @@ function parseExplicitEngineMode(raw: string): BrowserEngineMode {
   throw new Error(`Invalid GSD_BROWSER_ENGINE="${raw}". Expected "gsd-browser", "legacy", or "off".`);
 }
 
+/** Pure resolution from explicit inputs. Never cached; probes on every call. */
 export function resolveBrowserEngineResolution(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   projectRoot?: string,
 ): BrowserEngineResolution {
   const raw = env.GSD_BROWSER_ENGINE?.trim();
@@ -50,45 +57,46 @@ export function resolveBrowserEngineResolution(
     return { engine: "legacy", source: "probe", reason: "no project root to probe; using legacy Playwright" };
   }
 
-  // The probe touches the filesystem (and at worst one short subprocess), so
-  // the ambient-env resolution is cached per project root for process life.
-  const cacheable = env === process.env;
-  const cached = cacheable ? probeResolutionByProjectRoot.get(projectRoot) : undefined;
-  if (cached) return cached;
-
-  let resolution: BrowserEngineResolution;
   if (!detectWebApp(projectRoot)) {
-    resolution = {
+    return {
       engine: "legacy",
       source: "probe",
       reason: "project is not browser-facing; using legacy Playwright",
     };
-  } else {
-    const availability = resolveGsdBrowserCliAvailability(env);
-    resolution = availability.available
-      ? {
-          engine: "gsd-browser",
-          source: "probe",
-          reason: `web app detected and managed gsd-browser engine available (${availability.detail})`,
-        }
-      : {
-          engine: "legacy",
-          source: "probe",
-          reason: `web app detected but gsd-browser unavailable (${availability.detail}); falling back to legacy Playwright`,
-        };
   }
 
-  if (cacheable) probeResolutionByProjectRoot.set(projectRoot, resolution);
+  const availability = resolveGsdBrowserCliAvailability(env);
+  return availability.available
+    ? {
+        engine: "gsd-browser",
+        source: "probe",
+        reason: `web app detected and managed gsd-browser engine available (${availability.detail})`,
+      }
+    : {
+        engine: "legacy",
+        source: "probe",
+        reason: `web app detected but gsd-browser unavailable (${availability.detail}); falling back to legacy Playwright`,
+      };
+}
+
+/**
+ * Session-facing resolution: the committed record for this project root, or
+ * the ambient probe result, cached as the initial commitment (the probe
+ * touches the filesystem and at worst one short subprocess).
+ */
+export function resolveAmbientBrowserEngineResolution(projectRoot: string): BrowserEngineResolution {
+  const committed = committedResolutionByProjectRoot.get(projectRoot);
+  if (committed) return committed;
+
+  const resolution = resolveBrowserEngineResolution(process.env, projectRoot);
+  committedResolutionByProjectRoot.set(projectRoot, resolution);
   return resolution;
 }
 
-export function resolveBrowserEngineMode(
-  env: NodeJS.ProcessEnv = process.env,
-  projectRoot?: string,
-): BrowserEngineMode {
-  return resolveBrowserEngineResolution(env, projectRoot).engine;
-}
-
-export function _resetBrowserEngineResolutionForTest(): void {
-  probeResolutionByProjectRoot.clear();
+/**
+ * Record a verified outcome for this project root — e.g. the probe predicted
+ * gsd-browser but the daemon-connect gate fell back to legacy Playwright.
+ */
+export function commitBrowserEngineResolution(projectRoot: string, resolution: BrowserEngineResolution): void {
+  committedResolutionByProjectRoot.set(projectRoot, resolution);
 }

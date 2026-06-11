@@ -78,6 +78,9 @@ describe("web-app-uat guidance", () => {
       assert.ok(block);
       assert.match(block!, /browser tools are disabled/);
       assert.doesNotMatch(block!, /- `browser-executable`/);
+      // mixed/live-runtime require browser tools per UAT_MODE_POLICIES, so the
+      // bullet must drop out too — recommending them would dead-end at dispatch.
+      assert.doesNotMatch(block!, /- `mixed`/);
       assert.doesNotMatch(block!, /interactive `browser_\*` checks/);
       assert.match(block!, /runtime-executable/);
     } finally {
