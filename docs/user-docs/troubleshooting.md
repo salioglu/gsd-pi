@@ -202,6 +202,30 @@ source ~/.zshrc
 - Missing workspace packages — fixed in v2.10.4+
 - `postinstall` hangs on Linux (Playwright `--with-deps` triggering sudo) — fixed in v2.3.6+
 - Node.js version too old — requires ≥ 22.0.0
+- `ETARGET: No matching version found` / `notarget` — the `@opengsd/gsd-pi` package has not been published to the npm registry yet for the requested version (see below)
+
+**If you see `ETARGET` or `notarget` (package not found on npm):**
+
+The `@opengsd/gsd-pi` package is published to npm from tagged releases. If a release is in progress or you are on a pre-release branch, the package may not yet be available on the public npm registry.
+
+Options:
+
+1. **Wait and retry** — check [npm for @opengsd/gsd-pi](https://www.npmjs.com/package/@opengsd/gsd-pi) to confirm whether a release has landed, then retry.
+
+2. **Use `npx` instead of a global install** — `npx @opengsd/gsd-pi@latest` fetches the package on demand and may pick up the most recently published version without a local cache:
+   ```bash
+   npx @opengsd/gsd-pi@latest
+   ```
+
+3. **Build from source** — clone the repository and build locally:
+   ```bash
+   git clone https://github.com/open-gsd/gsd-pi.git
+   cd gsd-pi
+   pnpm install --frozen-lockfile
+   pnpm run build
+   npm install -g .
+   ```
+   Requires Node.js ≥ 22.0.0 and pnpm. If `pnpm` is not installed: `npm install -g pnpm`.
 
 ### Provider errors during auto mode
 
