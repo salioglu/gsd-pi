@@ -123,6 +123,37 @@ export function buildGsdBrowserSessionName(projectRoot: string, suffix?: string)
   return cleanSuffix ? `gsd-${base}-${hash}-${cleanSuffix}` : `gsd-${base}-${hash}`;
 }
 
+/**
+ * Recognize an MCP server config (from .mcp.json / Claude settings) as a
+ * gsd-browser server. Paired with resolveGsdBrowserMcpLaunchConfig: this module
+ * writes the config shape, so it also owns recognizing it. New launch shapes
+ * are taught here, in one place.
+ */
+export function isGsdBrowserMcpServerConfig(config: unknown): boolean {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return false;
+  const record = config as Record<string, unknown>;
+
+  const command = typeof record.command === "string" ? record.command : "";
+  if (command.includes("gsd-browser") || command.includes("@opengsd/gsd-browser")) {
+    return true;
+  }
+
+  const env = record.env;
+  if (env && typeof env === "object" && !Array.isArray(env)) {
+    const envRecord = env as Record<string, unknown>;
+    if (
+      typeof envRecord.GSD_BROWSER_CLI_PATH === "string"
+      || typeof envRecord.GSD_BROWSER_BIN_PATH === "string"
+      || typeof envRecord.GSD_BROWSER_MCP_COMMAND === "string"
+    ) {
+      return true;
+    }
+  }
+
+  const args = Array.isArray(record.args) ? record.args.filter((arg): arg is string => typeof arg === "string") : [];
+  return args.some((arg) => arg.includes("gsd-browser") || arg.includes("@opengsd/gsd-browser"));
+}
+
 export function resolveGsdBrowserMcpLaunchConfig(
   projectRoot: string,
   env: NodeJS.ProcessEnv = process.env,
