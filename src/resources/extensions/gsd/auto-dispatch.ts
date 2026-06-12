@@ -20,6 +20,7 @@ import { getUatBrowserToolSupportError, type UatType } from "./uat-policy.js";
 import {
   isDbAvailable,
   getMilestoneSlices,
+  getMilestoneSliceSummaries,
   getPendingGatesForTurn,
   markPendingGatesOmittedForTurn,
   getMilestone,
@@ -47,7 +48,6 @@ import {
   buildTaskFileName,
   gsdProjectionRoot,
 } from "./paths.js";
-import { parseRoadmap } from "./parsers-legacy.js";
 import { validateArtifact } from "./schemas/validate.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { logWarning, logError } from "./workflow-logger.js";
@@ -492,23 +492,13 @@ function persistSliceAssessmentBackfill(
 }
 
 function backfillMissingAssessmentsFromSummaries(basePath: string, mid: string): void {
+  // DB-authoritative (ADR-017): no markdown fallback. Without DB rows there
+  // is nothing to backfill.
+  if (!isDbAvailable()) return;
   const completedSliceIds = new Set<string>();
-  if (isDbAvailable()) {
-    for (const slice of getMilestoneSlices(mid)) {
-      if (slice.status === "complete" || slice.status === "done") {
-        completedSliceIds.add(slice.id);
-      }
-    }
-  } else {
-    const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
-    if (!roadmapFile) return;
-    try {
-      const roadmap = parseRoadmap(readFileSync(roadmapFile, "utf-8"));
-      for (const slice of roadmap.slices) {
-        if (slice.done) completedSliceIds.add(slice.id);
-      }
-    } catch {
-      return;
+  for (const slice of getMilestoneSlices(mid)) {
+    if (slice.status === "complete" || slice.status === "done") {
+      completedSliceIds.add(slice.id);
     }
   }
 
@@ -820,21 +810,12 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // Only applies when UAT dispatch is enabled
       if (!prefs?.uat_dispatch) return null;
 
-      // DB-first: prefer closed slices from DB; fall back to ROADMAP on disk.
-      let closedSliceIds: string[];
-      if (isDbAvailable()) {
-        closedSliceIds = getMilestoneSlices(mid)
-          .filter(s => isClosedStatus(s.status))
-          .map(s => s.id);
-      } else {
-        // Filesystem fallback for degraded / unmigrated projects.
-        // `slice.done` in the parsed ROADMAP is the disk-level closed signal.
-        const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
-        const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
-        if (!roadmapContent) return null;
-        const roadmap = parseRoadmap(roadmapContent);
-        closedSliceIds = roadmap.slices.filter(s => s.done).map(s => s.id);
-      }
+      // DB-authoritative (ADR-017): closed slices come from the DB only; the
+      // ROADMAP projection is never parsed for gate decisions.
+      if (!isDbAvailable()) return null;
+      const closedSliceIds = getMilestoneSliceSummaries(mid)
+        .filter(s => s.done)
+        .map(s => s.id);
 
       for (const sliceId of closedSliceIds) {
         const result = await readUatGateVerdict(basePath, mid, sliceId);
@@ -1140,13 +1121,11 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // behavior.
       if (await getMilestonePipelineVariant(mid) === "trivial") return null;
 
-      // Load roadmap to find all slices
-      const roadmapFile =
-        resolveExistingExpectedArtifact("plan-milestone", mid, basePath) ??
-        resolveMilestoneFile(basePath, mid, "ROADMAP");
-      const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
-      if (!roadmapContent) return null;
-      const roadmap = parseRoadmap(roadmapContent);
+      // DB-authoritative slice list (ADR-017): the ROADMAP projection is
+      // never parsed for dispatch decisions. No DB / no rows → skip this rule.
+      if (!isDbAvailable()) return null;
+      const dbSlices = getMilestoneSlices(mid);
+      if (dbSlices.length === 0) return null;
 
       // Find slices that need research (no RESEARCH file, dependencies done)
       const milestoneResearchFile =
@@ -1154,8 +1133,8 @@ export const DISPATCH_RULES: DispatchRule[] = [
         resolveMilestoneFile(basePath, mid, "RESEARCH");
       const researchReadySlices: Array<{ id: string; title: string }> = [];
 
-      for (const slice of roadmap.slices) {
-        if (slice.done) continue;
+      for (const slice of dbSlices) {
+        if (isClosedStatus(slice.status)) continue;
         // Skip S01 when milestone research exists
         if (milestoneResearchFile && slice.id === "S01") continue;
         // Skip if already has research

@@ -51,8 +51,7 @@ import { createWorkspace, scopeMilestone } from "./workspace.js";
 import { normalizeWorktreePathForCompare } from "./worktree-root.js";
 import { isDbAvailable, getTask, getSlice, getMilestone, getMilestoneSlices, updateTaskStatus, _getAdapter, getVerificationEvidence } from "./gsd-db.js";
 import { getWorkflowDatabasePath, refreshWorkflowDatabaseFromDisk } from "./db-workspace.js";
-import { renderPlanCheckboxes, renderRoadmapFromDb } from "./markdown-renderer.js";
-import { parseRoadmap as parseLegacyRoadmap } from "./parsers-legacy.js";
+import { renderPlanCheckboxes, renderRoadmapFromDb, roadmapRenderMarksSliceDone } from "./markdown-renderer.js";
 import { consumeSignal } from "./session-status-io.js";
 import {
   checkPostUnitHooks,
@@ -991,11 +990,13 @@ async function repairCompleteSliceRoadmapProjection(
     return false;
   }
 
+  // Stale-render detection (ADR-017): the DB already says the slice is closed;
+  // this only checks whether the rendered ROADMAP projection reflects it, to
+  // decide whether a repair re-render is needed.
   const roadmapPath = resolveMilestoneFile(artifactBase, mid, "ROADMAP");
   if (roadmapPath && existsSync(roadmapPath)) {
     try {
-      const roadmap = parseLegacyRoadmap(readFileSync(roadmapPath, "utf-8"));
-      if (roadmap.slices.find((roadmapSlice) => roadmapSlice.id === sid)?.done) {
+      if (roadmapRenderMarksSliceDone(readFileSync(roadmapPath, "utf-8"), sid)) {
         return false;
       }
     } catch (err) {

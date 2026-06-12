@@ -911,6 +911,17 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
   return stale;
 }
 
+/**
+ * Render-verification helper: does the rendered ROADMAP markdown mark a slice
+ * as done? Used by completion code to verify/repair the *projection* after a
+ * DB write — never as a source of truth for dispatch or completion decisions
+ * (ADR-017). Lives here so decision-path modules need not import
+ * parsers-legacy directly.
+ */
+export function roadmapRenderMarksSliceDone(roadmapContent: string, sliceId: string): boolean {
+  return parseRoadmap(roadmapContent).slices.some((slice) => slice.id === sliceId && slice.done);
+}
+
 // ─── Stale Repair ─────────────────────────────────────────────────────────
 // Body relocated to state-reconciliation/drift/stale-render.ts (ADR-017 #5702).
 // detectStaleRenders above stays as a useful diagnostic primitive; the

@@ -5,6 +5,7 @@
 // Read-only callers (forensics, dashboard, doctor) depend on this seam, not on
 // the single-writer surface.
 import { getDbOrNull } from "./engine.js";
+import { isClosedStatus } from "../status-guards.js";
 import { getGateIdsForTurn, type OwnerTurn } from "../gate-registry.js";
 import type { Decision, Requirement, GateRow, GateScope } from "../types.js";
 import {
@@ -267,6 +268,30 @@ export function getMilestoneSlices(milestoneId: string): SliceRow[] {
   if (!getDbOrNull()!) return [];
   const rows = getDbOrNull()!.prepare("SELECT * FROM slices WHERE milestone_id = :mid ORDER BY sequence, id").all({ ":mid": milestoneId });
   return rows.map(rowToSlice);
+}
+
+/** Dispatch-eligibility shape consumed by decision-path callers (ADR-017). */
+export interface MilestoneSliceSummary {
+  id: string;
+  /** Closed per the canonical status vocabulary (complete/done/skipped/closed). */
+  done: boolean;
+  depends: string[];
+  sequence: number;
+}
+
+/**
+ * Consolidated DB read for dispatch/gate/completion decisions (ADR-017).
+ * `done` uses the canonical closed-status predicate (`isClosedStatus`) — the
+ * same vocabulary the SQL terminal-status fragment derives from. Decision
+ * paths must consume this instead of parsing `.gsd/*.md` projections.
+ */
+export function getMilestoneSliceSummaries(milestoneId: string): MilestoneSliceSummary[] {
+  return getMilestoneSlices(milestoneId).map((s) => ({
+    id: s.id,
+    done: isClosedStatus(s.status),
+    depends: s.depends ?? [],
+    sequence: s.sequence,
+  }));
 }
 
 export function getArtifact(path: string): ArtifactRow | null {

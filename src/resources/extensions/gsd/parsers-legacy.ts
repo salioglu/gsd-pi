@@ -1,10 +1,22 @@
 // GSD Extension - Legacy Parsers
 // parseRoadmap() and parsePlan() extracted from files.ts.
-// Used only by: md-importer.ts (migration), state.ts (pre-migration fallback),
-// markdown-renderer.ts (detectStaleRenders disk-vs-DB comparison),
-// commands-maintenance.ts (cold-path branch cleanup), and tests.
 //
-// NOT used in the dispatch loop or any hot-path runtime code.
+// ADR-017: the DB is the single source of truth; `.gsd/*.md` files are
+// projections. These parsers may be imported ONLY for:
+//   - migration/import (md-importer, workflow-migration, migration-auto-check)
+//   - drift detection that compares both sources by design
+//     (state-reconciliation/drift, markdown-renderer stale-render detection)
+//   - explicit pre-migration / DB-unavailable fallbacks (state.ts,
+//     reactive-graph.ts, auto-recovery.ts)
+//   - diagnostics and display/telemetry-only surfaces (doctor,
+//     doctor-git-checks, workspace-index, visualizer-data, auto-prompts
+//     context text, commands-maintenance, milestone-closeout, github-sync)
+//   - tests
+//
+// Dispatch/gate/completion DECISION paths must NOT import this module — they
+// read the DB via gsd-db queries (e.g. getMilestoneSliceSummaries). Enforced
+// by tests/parsers-legacy-importers.test.ts; new importers must be added to
+// its allowlist with a one-line justification.
 
 import { extractSection, parseBullets, extractBoldField, extractAllSections, registerCacheClearCallback } from './files.js';
 import { splitFrontmatter } from '../shared/frontmatter.js';

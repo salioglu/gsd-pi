@@ -6,9 +6,8 @@
 // - recovery: DB repair from artifacts, then GitHub finalize
 
 import { loadFile } from "./files.js";
-import { parseRoadmap } from "./parsers-legacy.js";
 import { resolveMilestoneFile } from "./paths.js";
-import { getMilestone, getMilestoneSlices, isDbAvailable } from "./gsd-db.js";
+import { getMilestone, getMilestoneSliceSummaries, isDbAvailable } from "./gsd-db.js";
 import { isClosedStatus } from "./status-guards.js";
 import { runSafely } from "./auto-utils.js";
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
@@ -87,24 +86,18 @@ export async function evaluateCompleteMilestoneDispatch(
   if (closeoutGitStop) return closeoutGitStop;
 
   if (prefs?.uat_dispatch) {
-    let closedSliceIds: string[];
-    if (isDbAvailable()) {
-      closedSliceIds = getMilestoneSlices(mid)
-        .filter((slice) => isClosedStatus(slice.status))
-        .map((slice) => slice.id);
-    } else {
-      const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
-      const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
-      if (!roadmapContent) {
-        return {
-          action: "stop",
-          reason: `Cannot complete milestone ${mid}: unable to verify UAT verdicts because ROADMAP is unavailable while DB is not accessible.`,
-          level: "warning",
-        };
-      }
-      const roadmap = parseRoadmap(roadmapContent);
-      closedSliceIds = roadmap.slices.filter((slice) => slice.done).map((slice) => slice.id);
+    // DB-authoritative (ADR-017): UAT sign-off gating never parses the
+    // ROADMAP projection. Without a DB we cannot verify — stop conservatively.
+    if (!isDbAvailable()) {
+      return {
+        action: "stop",
+        reason: `Cannot complete milestone ${mid}: unable to verify UAT verdicts because the workflow DB is not accessible.`,
+        level: "warning",
+      };
     }
+    const closedSliceIds = getMilestoneSliceSummaries(mid)
+      .filter((slice) => slice.done)
+      .map((slice) => slice.id);
 
     for (const sliceId of closedSliceIds) {
       const result = await readUatGateVerdict(basePath, mid, sliceId);

@@ -13,6 +13,11 @@ import type {
   MilestoneRegistryEntry,
 } from './types.js';
 
+// Pre-migration fallback ONLY (ADR-017): deriveState must work on projects
+// whose DB does not exist yet (before md-importer runs), so it parses markdown
+// projections when `isDbAvailable()` is false or the DB has no rows. Once the
+// DB is populated, decision reads go through gsd-db queries — these parsers
+// must never be consulted when DB data is present.
 import {
   parseRoadmap,
   parsePlan,
