@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { minimatch } from "minimatch";
 
 import { GSD_PHASE_SCOPE_DISPLAY_REASON, shouldBlockAutoUnitToolCall } from "../auto-unit-tool-scope.js";
-import { stripMcpToolPrefix } from "../mcp-tool-name.js";
+import { canonicalToolName } from "../engine-hook-contract.js";
 import { getIsolationMode } from "../preferences.js";
 import { compileSubagentPermissionContract, type ToolsPolicy } from "../unit-context-manifest.js";
 import { logWarning } from "../workflow-logger.js";
@@ -126,10 +126,6 @@ const GATE_QUESTION_PATTERNS = [
 const GATE_SAFE_TOOLS = new Set([
   "ask_user_questions",
 ]);
-
-export function canonicalToolName(toolName: string): string {
-  return stripMcpToolPrefix(toolName);
-}
 
 /**
  * Which process wrote a snapshot. Two processes share the snapshot file:

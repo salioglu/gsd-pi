@@ -5,10 +5,10 @@ import {
 } from "./unit-tool-contracts.js";
 import {
   WORKFLOW_TOOL_ALIAS_PAIRS,
-  canonicalWorkflowSurfaceToolName,
   isWorkflowSurfaceAliasTool,
   stripMcpToolPrefix,
 } from "./workflow-tool-surface.js";
+import { canonicalWorkflowToolName } from "./engine-hook-contract.js";
 
 export {
   AUTO_UNIT_SCOPED_TOOLS,
@@ -51,9 +51,9 @@ type AutoUnitToolScopeResult = {
   displayReason?: string;
 };
 
-export function canonicalWorkflowToolName(toolName: string): string {
-  return canonicalWorkflowSurfaceToolName(toolName);
-}
+// Normalizer seam lives in engine-hook-contract.ts; re-exported here for
+// existing scope importers.
+export { canonicalWorkflowToolName };
 
 export function isWorkflowAliasTool(toolName: string): boolean {
   return isWorkflowSurfaceAliasTool(toolName);

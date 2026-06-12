@@ -17,6 +17,7 @@ import {
   isPauseNotice,
   isTerminalNotice,
 } from './resources/extensions/gsd/stop-notice.js'
+import { canonicalToolName } from './resources/extensions/gsd/engine-hook-contract.js'
 
 // ---------------------------------------------------------------------------
 // Exit Code Constants
@@ -88,11 +89,13 @@ export const IDLE_TIMEOUT_MS = 15_000
 export const NEW_MILESTONE_IDLE_TIMEOUT_MS = 120_000
 const INTERACTIVE_HEADLESS_TOOLS = new Set(['ask_user_questions', 'secure_env_collect'])
 
+// Delegates to the shared normalizer seam (engine-hook-contract.ts) instead of
+// a hand-rolled parser. Behavior differs from the old parser only on malformed
+// MCP names: `mcp____tool` (empty server) and `mcp__server__` (empty tool) are
+// now returned unchanged rather than partially stripped — neither can match a
+// real tool name, so detection behavior is unaffected.
 export function canonicalHeadlessToolName(toolName: string | undefined): string {
-  const name = String(toolName ?? '')
-  if (!name.startsWith('mcp__')) return name
-  const toolSeparator = name.indexOf('__', 'mcp__'.length)
-  return toolSeparator >= 0 ? name.slice(toolSeparator + 2) : name
+  return canonicalToolName(String(toolName ?? ''))
 }
 
 function getCommandBlockContent(event: Record<string, unknown>): string | null {

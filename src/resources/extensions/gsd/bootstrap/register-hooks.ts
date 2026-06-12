@@ -13,7 +13,8 @@ import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-exten
 import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
 
 import { buildMilestoneFileName, clearPathCache, milestonesDir, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
-import { applyAskUserQuestionsGateResult, canonicalToolName, clearDiscussionFlowState, formatPendingAskUserQuestionsGateMessage, hostWriteGateAdapter, isApprovalGateVerifiedInSnapshot, isDepthConfirmationAnswer, isMilestoneDepthVerified, isMilestoneDepthVerifiedInSnapshot, isQueuePhaseActive, markApprovalGateVerified, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeWrite, isGateQuestionId, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { applyAskUserQuestionsGateResult, clearDiscussionFlowState, formatPendingAskUserQuestionsGateMessage, hostWriteGateAdapter, isApprovalGateVerifiedInSnapshot, isDepthConfirmationAnswer, isMilestoneDepthVerified, isMilestoneDepthVerifiedInSnapshot, isQueuePhaseActive, markApprovalGateVerified, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeWrite, isGateQuestionId, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { canonicalToolName } from "../engine-hook-contract.js";
 import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
@@ -1204,6 +1205,13 @@ export function registerHooks(
     }
   });
 
+  // Engine hook contract (../engine-hook-contract.ts): tool_call is
+  // NATIVE_ONLY_TOOL_HOOKS — it never fires under external engines
+  // (claude-code-cli pre-executes tools). The guards below (loop guard,
+  // pending/deferred gate blocks, queue guard, planning-unit tools policy,
+  // worktree write gate, STATE.md single-writer, context-write depth gate)
+  // are therefore native-engine enforcement only. The write-gate arming
+  // concern has a universal mirror at tool_execution_start below.
   pi.on("tool_call", async (event, ctx) => {
     const discussionBasePath = contextBasePath(ctx);
     const toolName = canonicalToolName(event.toolName);
@@ -1391,6 +1399,11 @@ export function registerHooks(
   });
 
   // ── Safety harness: evidence collection + destructive command blocking ──
+  // Engine hook contract: tool_call is NATIVE_ONLY_TOOL_HOOKS. Evidence
+  // collection here is mirrored universally at tool_execution_start
+  // (safetyRecordToolCall dedupes by toolCallId); the destructive-command
+  // hard gate has NO universal mirror — blocking is impossible once an
+  // external engine has already executed the command.
   pi.on("tool_call", async (event, ctx) => {
     markToolStart(event.toolCallId, event.toolName);
     safetyRecordToolCall(event.toolCallId, event.toolName, event.input as Record<string, unknown>);
@@ -1450,6 +1463,11 @@ export function registerHooks(
     }
   });
 
+  // Engine hook contract: tool_result is NATIVE_ONLY_TOOL_HOOKS — external
+  // engines skip it. Error classification and markToolEnd are mirrored
+  // universally at tool_execution_end; the ask_user_questions gate lifecycle
+  // here is paired with the tool_execution_start arming path, which external
+  // engines do reach.
   pi.on("tool_result", async (event, ctx) => {
     if (isAutoActive() && typeof event.toolCallId === "string") {
       markToolEnd(event.toolCallId);
@@ -1589,6 +1607,9 @@ export function registerHooks(
     await saveDiscussionQuestionRound(basePath, milestoneId, questions, details);
   });
 
+  // Engine hook contract: tool_execution_start is UNIVERSAL_TOOL_HOOKS — the
+  // only pre-execution event that fires for every tool call on every engine.
+  // Universal mirrors live here: write-gate arming and evidence collection.
   pi.on("tool_execution_start", async (event, ctx) => {
     const basePath = contextBasePath(ctx);
     const toolName = canonicalToolName(event.toolName);
@@ -1610,11 +1631,10 @@ export function registerHooks(
       }
     }
 
-    // Safety harness: record evidence here, not only in tool_call. External
-    // engines (claude-code-cli) pre-execute tools, so the agent loop skips
-    // beforeToolCall/tool_call for them — tool_execution_start is the only
-    // event that fires for every tool call. recordToolCall dedupes by
-    // toolCallId, so native tools (which hit both events) record once.
+    // Safety harness: record evidence here, not only in tool_call — see
+    // ../engine-hook-contract.ts for why tool_call never fires under external
+    // engines. recordToolCall dedupes by toolCallId, so native tools (which
+    // hit both events) record once.
     safetyRecordToolCall(event.toolCallId, event.toolName, (event.args ?? {}) as Record<string, unknown>);
     const execDash = getAutoRuntimeSnapshot();
     if (execDash.basePath && execDash.currentUnit?.type === "execute-task") {
@@ -1628,6 +1648,9 @@ export function registerHooks(
     markToolStart(event.toolCallId, event.toolName);
   });
 
+  // Engine hook contract: tool_execution_end is UNIVERSAL_TOOL_HOOKS — fires
+  // for every finalized tool call on every engine, so error classification
+  // and evidence persistence here cover external engines that skip tool_result.
   pi.on("tool_execution_end", async (event) => {
     markToolEnd(event.toolCallId);
     // #2883/#4974: Capture deterministic invocation/policy errors

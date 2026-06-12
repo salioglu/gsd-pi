@@ -10,7 +10,7 @@ import {
 import { parseMcpToolName, toMcpToolName } from "./mcp-tool-name.js";
 import { createToolSurfaceSnapshot, type ToolSurfaceSnapshot } from "./tool-surface-snapshot.js";
 import { uatTypeIncludesBrowser } from "./uat-policy.js";
-import { canonicalWorkflowSurfaceToolName } from "./workflow-tool-surface.js";
+import { canonicalWorkflowToolName } from "./engine-hook-contract.js";
 
 export {
   RUN_UAT_BROWSER_TOOL_NAMES,
@@ -66,9 +66,9 @@ export const RUN_UAT_CLAUDE_NATIVE_TOOL_NAMES = [
   "Grep",
 ] as const;
 
-export function canonicalWorkflowToolName(toolName: string): string {
-  return canonicalWorkflowSurfaceToolName(toolName);
-}
+// Normalizer seam lives in engine-hook-contract.ts; re-exported here for
+// existing presentation importers (uat-run.ts).
+export { canonicalWorkflowToolName };
 
 export { parseMcpToolName } from "./mcp-tool-name.js";
 
