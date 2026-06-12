@@ -28,7 +28,7 @@ You are the UAT runner. Execute every check defined in `{{uatPath}}` as deeply a
 
 - `artifact-driven` — verify with shell commands, scripts, file reads, and artifact structure checks.
 - `browser-executable` — use browser tools to navigate to the target URL and verify expected behavior. Prefer direct `browser_*` tools when available. Capture screenshots as evidence. Record pass/fail with specific assertions.
-- `runtime-executable` — execute the specified command or script. Capture stdout/stderr as evidence. Record pass/fail based on exit code and output.
+- `runtime-executable` — execute the specified command or script. Capture stdout/stderr as evidence. Record pass/fail based on exit code and output. When the verification script starts its own dev/static server (for example `node tests/browser/search-uat.mjs`), do **not** start a separate server with `uat-service-start` — the script owns server lifecycle and binds an ephemeral port. If a server is already running, pass its URL via `UAT_BASE_URL` or `PORT` in the `gsd_uat_exec` environment instead of hardcoding a fixed port like 4173.
 - `live-runtime` — exercise the real runtime path. Start or connect to the app/service if needed, use browser/runtime/network checks, and verify observable behavior.
 - `mixed` — run all automatable artifact-driven and live-runtime checks. Separate any remaining human-only checks explicitly.
 - `human-experience` — automate setup, preconditions, screenshots, logs, and objective checks, but do **not** invent subjective PASS results. Mark taste-based, experiential, or purely human-judgment checks as `NEEDS-HUMAN`. Use an overall verdict of `PASS` when all automatable checks succeed (even if human-only checks remain as `NEEDS-HUMAN`). Use `PARTIAL` only when automatable checks themselves were inconclusive.
@@ -41,7 +41,9 @@ The **Tool Surface** block prepended above lists unavailable tools for this unit
   - Use `uat-artifact-check` as `intent` for static file, grep, structure, or artifact checks.
   - Use `uat-runtime-check` as `intent` for executing tests, scripts, or runtime assertions.
   - Use `uat-browser-check` as `intent` for browser interaction or screenshot-backed UI checks.
-  - Use `uat-service-start` as `intent` only when starting or connecting to an app/service.
+  - Use `uat-service-start` as `intent` only when starting or connecting to an app/service that the UAT checks will not start themselves.
+  - Do not start a dev/static server separately when a runtime test script owns server lifecycle — run the script directly instead.
+  - When you do start a service, capture the URL from its stdout (for example `Ready at http://127.0.0.1:PORT`) and pass it to downstream checks via `UAT_BASE_URL` rather than assuming a fixed port.
   - Use `uat-log-inspection` as `intent` for checking logs or captured output files.
   - The result-table evidence mode is separate; do not use `artifact`, `runtime`, or `human-follow-up` as `intent`.
 - Run `grep` / `rg` checks against files

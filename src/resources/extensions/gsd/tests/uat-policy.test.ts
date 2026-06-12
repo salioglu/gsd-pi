@@ -32,7 +32,7 @@ describe("uat-policy", () => {
       "browser-executable",
       "",
       "## Preconditions",
-      "- Open the app at http://127.0.0.1:4173.",
+      "- Run `node tests/browser/search-uat.mjs` (it starts its own server on an ephemeral port; do not start serve-static separately).",
     ].join("\n");
     assert.equal(getDeclaredUatType(content), "browser-executable");
     assert.equal(shouldEscalateArtifactUatToBrowser(content), false);
