@@ -228,6 +228,10 @@ export function resolveGsdBrowserMcpLaunchConfig(
   // profile/cookies persist across pi sessions for the same project. gsd-browser
   // rejects --identity-scope unless --identity-key is also supplied.
   const identityKey = env.GSD_BROWSER_IDENTITY_KEY?.trim() || buildGsdBrowserSessionName(resolvedProjectRoot);
+  // identity-project must be a safe identifier (no path separators); full paths
+  // cause daemon startup to fail with "invalid name".
+  const identityProject =
+    env.GSD_BROWSER_IDENTITY_PROJECT?.trim() || buildGsdBrowserSessionName(resolvedProjectRoot);
   const command =
     explicitCommand
     || explicitCliPath
@@ -246,7 +250,7 @@ export function resolveGsdBrowserMcpLaunchConfig(
         "--identity-key",
         identityKey,
         "--identity-project",
-        resolvedProjectRoot,
+        identityProject,
       ];
   const cwd = env.GSD_BROWSER_MCP_CWD?.trim() || resolvedProjectRoot;
 
@@ -258,5 +262,31 @@ export function resolveGsdBrowserMcpLaunchConfig(
     ...(explicitEnv ? { env: explicitEnv } : {}),
     projectRoot: resolvedProjectRoot,
     sessionName,
+  };
+}
+
+/**
+ * CLI invocation that starts the gsd-browser session daemon with the same
+ * session and identity flags as {@link resolveGsdBrowserMcpLaunchConfig}, so
+ * browser UAT can warm Chrome/CDP before the first MCP navigation.
+ */
+export function resolveGsdBrowserDaemonStartInvocation(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv = process.env,
+  options: GsdBrowserMcpLaunchOptions = {},
+): Pick<GsdBrowserMcpLaunchConfig, "command" | "args" | "cwd" | "env"> {
+  const launch = resolveGsdBrowserMcpLaunchConfig(projectRoot, env, options);
+  const mcpIndex = launch.args.indexOf("mcp");
+  if (mcpIndex < 0) {
+    throw new Error("gsd-browser launch config is missing mcp subcommand");
+  }
+
+  const prefix = launch.args.slice(0, mcpIndex);
+  const sessionFlags = launch.args.slice(mcpIndex + 1);
+  return {
+    command: launch.command,
+    args: [...prefix, "daemon", "start", ...sessionFlags],
+    cwd: launch.cwd,
+    ...(launch.env ? { env: launch.env } : {}),
   };
 }

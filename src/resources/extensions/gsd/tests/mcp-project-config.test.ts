@@ -60,7 +60,9 @@ test("ensureProjectWorkflowMcpConfig creates .mcp.json with workflow and browser
     assert.equal(typeof browserArgs[mcpArgIndex + 6], "string");
     assert.ok((browserArgs[mcpArgIndex + 6] ?? "").length > 0, "identity-key must be non-empty");
     assert.equal(browserArgs[mcpArgIndex + 7], "--identity-project");
-    assert.equal(browserArgs[mcpArgIndex + 8], projectRoot);
+    assert.equal(typeof browserArgs[mcpArgIndex + 8], "string");
+    assert.ok((browserArgs[mcpArgIndex + 8] ?? "").length > 0, "identity-project must be non-empty");
+    assert.doesNotMatch(browserArgs[mcpArgIndex + 8] ?? "", /[\\/]/, "identity-project must not be a filesystem path");
     assert.equal((browserServer as { cwd?: string })?.cwd, projectRoot);
 
     const settings = JSON.parse(readFileSync(join(projectRoot, ".claude", "settings.local.json"), "utf-8")) as {

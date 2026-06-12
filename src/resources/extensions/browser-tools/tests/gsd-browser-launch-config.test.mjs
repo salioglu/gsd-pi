@@ -1,7 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-const { resolveGsdBrowserMcpLaunchConfig } = await import("../../shared/gsd-browser-cli.ts");
+const {
+  resolveGsdBrowserDaemonStartInvocation,
+  resolveGsdBrowserMcpLaunchConfig,
+} = await import("../../shared/gsd-browser-cli.ts");
 
 describe("resolveGsdBrowserMcpLaunchConfig identity flags", () => {
   it("emits a non-empty --identity-key alongside --identity-scope", () => {
@@ -33,5 +36,30 @@ describe("resolveGsdBrowserMcpLaunchConfig identity flags", () => {
       GSD_BROWSER_IDENTITY_KEY: "custom-key",
     });
     assert.equal(args[args.indexOf("--identity-key") + 1], "custom-key");
+  });
+
+  it("uses a path-safe identity-project identifier", () => {
+    const { args } = resolveGsdBrowserMcpLaunchConfig("/tmp/example/project", {});
+    const projectId = args[args.indexOf("--identity-project") + 1];
+    assert.equal(typeof projectId, "string");
+    assert.doesNotMatch(projectId, /[\\/]/);
+  });
+});
+
+describe("resolveGsdBrowserDaemonStartInvocation", () => {
+  it("mirrors MCP session and identity flags with daemon start", () => {
+    const launch = resolveGsdBrowserMcpLaunchConfig("/tmp/example-project", {});
+    const daemon = resolveGsdBrowserDaemonStartInvocation("/tmp/example-project", {});
+
+    assert.equal(daemon.command, launch.command);
+    assert.equal(daemon.cwd, launch.cwd);
+    assert.deepEqual(
+      daemon.args.slice(daemon.args.indexOf("--session")),
+      launch.args.slice(launch.args.indexOf("--session")),
+    );
+    assert.deepEqual(
+      daemon.args.slice(0, daemon.args.indexOf("--session")),
+      [...launch.args.slice(0, launch.args.indexOf("mcp")), "daemon", "start"],
+    );
   });
 });

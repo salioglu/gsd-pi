@@ -90,7 +90,9 @@ import { MILESTONE_ID_RE } from "./milestone-ids.js";
 import {
   getWorkflowTransportSupportError,
   getRequiredWorkflowToolsForAutoUnit,
+  resolveWorkflowMcpProjectRoot,
 } from "./workflow-mcp.js";
+import { prepareBrowserDaemonForUat } from "./browser-daemon-auto-prep.js";
 import {
   PROJECT_RESEARCH_INFLIGHT_MARKER,
 } from "./project-research-policy.js";
@@ -771,6 +773,16 @@ export const DISPATCH_RULES: DispatchRule[] = [
       });
       if (browserToolError) {
         return { action: "stop" as const, reason: browserToolError, level: "warning" as const };
+      }
+      const browserDaemonError = prepareBrowserDaemonForUat({
+        uatType,
+        sessionProvider,
+        sessionAuthMode,
+        sessionBaseUrl,
+        projectRoot: resolveWorkflowMcpProjectRoot(basePath),
+      });
+      if (browserDaemonError) {
+        return { action: "stop" as const, reason: browserDaemonError, level: "warning" as const };
       }
 
       // Cap run-uat dispatch attempts to prevent infinite replay (#3624).
