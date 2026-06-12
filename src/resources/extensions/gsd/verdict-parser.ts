@@ -137,7 +137,7 @@ export function isValidMilestoneVerdict(verdict: string): verdict is ValidationV
  * Extract the UAT type from content, defaulting to `"artifact-driven"`.
  *
  * The `"artifact-driven"` fallback is the original default used throughout
- * the codebase when a UAT file lacks an explicit `## UAT Type` section.
+ * the codebase when a UAT file has no parseable UAT mode declaration.
  */
 export function getUatType(content: string): UatType {
   return getDeclaredUatType(content);
