@@ -10,6 +10,8 @@ import {
   recoveryRemediation,
   needsAttentionBlockerGuidance,
   needsRemediationBlockerGuidance,
+  uatSignoffBlockerGuidance,
+  worktreeCreationFailedGuidance,
   crashResumeHint,
   doctorFixHint,
   type RecoveryGuidanceKey,
@@ -94,6 +96,27 @@ describe("milestone blocker guidance", () => {
     assert.match(text, /M007/);
     assert.match(text, /\/gsd status/);
     assert.match(text, /\/gsd validate-milestone/);
+  });
+
+  test("UAT sign-off guidance explains direct dispatch target", () => {
+    const missing = uatSignoffBlockerGuidance("M007", "S02");
+    const failing = uatSignoffBlockerGuidance("M007", "S02", "FAIL");
+
+    for (const text of [missing, failing]) {
+      assert.match(text, /Manual UAT sign-off \(PASS\) is required before milestone closure/);
+      assert.match(text, /\/gsd dispatch uat/);
+      assert.match(text, /most recently completed slice/);
+      assert.match(text, /re-run UAT for S02/);
+      assert.match(text, /gsd_uat_result_save/);
+    }
+  });
+
+  test("worktree creation failure guidance does not claim bootstrap continues", () => {
+    const text = worktreeCreationFailedGuidance("M007", "boom");
+
+    assert.match(text, /Auto-worktree creation for M007 failed: boom\. Continuing in project root\./);
+    assert.match(text, /Worktree isolation is degraded for this session\./);
+    assert.doesNotMatch(text, /work continues in the project root/i);
   });
 });
 

@@ -102,18 +102,22 @@ export function uatSignoffBlockerGuidance(
     verdict === undefined
       ? `missing UAT PASS verdict for ${sliceId}`
       : `UAT verdict for ${sliceId} is "${verdict}"`;
+  const sliceSpecificRerunStep =
+    `If ${sliceId} is not the most recently completed slice, type a chat request to re-run UAT for ${sliceId}; run-uat will record the verdict through \`gsd_uat_result_save\`.`;
   const steps =
     verdict === undefined
       ? [
-          `1. Run UAT for the slice to record a verdict: \`/gsd dispatch uat\``,
-          `2. Review the UAT criteria and progress: \`/gsd status\``,
-          `3. After UAT records PASS, run \`/gsd auto\` to complete the milestone.`,
+          `1. Run UAT for the most recently completed slice to record a verdict: \`/gsd dispatch uat\``,
+          `2. ${sliceSpecificRerunStep}`,
+          `3. Review the UAT criteria and progress: \`/gsd status\``,
+          `4. After UAT records PASS, run \`/gsd auto\` to complete the milestone.`,
         ]
       : [
           `1. Review the failing UAT findings: \`/gsd status\` (the ${sliceId} ASSESSMENT records what failed)`,
-          `2. Fix the issue, then re-run UAT to record a fresh verdict: \`/gsd dispatch uat\``,
-          `3. If the fix needs new implementation work, add remediation slices: \`/gsd dispatch reassess\``,
-          `4. After UAT records PASS, run \`/gsd auto\` to complete the milestone.`,
+          `2. Fix the issue, then re-run UAT for the most recently completed slice to record a fresh verdict: \`/gsd dispatch uat\``,
+          `3. ${sliceSpecificRerunStep}`,
+          `4. If the fix needs new implementation work, add remediation slices: \`/gsd dispatch reassess\``,
+          `5. After UAT records PASS, run \`/gsd auto\` to complete the milestone.`,
         ];
   return [
     `Cannot complete milestone ${milestoneId}: ${finding}. Manual UAT sign-off (PASS) is required before milestone closure.`,
@@ -133,7 +137,7 @@ function restoreIsolationHint(milestoneId: string): string {
 export function worktreeCreationFailedGuidance(milestoneId: string, error: string): string {
   return [
     `Auto-worktree creation for ${milestoneId} failed: ${error}. Continuing in project root.`,
-    `Worktree isolation is degraded for this session — work continues in the project root.`,
+    `Worktree isolation is degraded for this session.`,
     restoreIsolationHint(milestoneId),
   ].join("\n");
 }
