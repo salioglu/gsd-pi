@@ -501,6 +501,19 @@ describe("AuthStorage", () => {
 			expect(apiKey).toBe("oauth-access-token");
 		});
 
+		test("resolves legacy GitHub Copilot OAuth apiKey credentials", async () => {
+			authStorage = AuthStorage.inMemory({
+				"github-copilot": {
+					type: "oauth",
+					apiKey: "ghu-copilot-token",
+					expires: Date.now() + 60_000,
+				} as never,
+			});
+
+			const apiKey = await authStorage.getApiKey("github-copilot");
+			expect(apiKey).toBe("ghu-copilot-token");
+		});
+
 		test("falls back to stored API key when OAuth refresh fails", async () => {
 			const providerId = `test-oauth-api-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 			registerOAuthProvider({
