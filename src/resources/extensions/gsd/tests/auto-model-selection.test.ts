@@ -857,3 +857,25 @@ test("resolveModelId: claude-code wins when session is claude-code regardless of
   assert.ok(result, "should resolve a model");
   assert.equal(result.provider, "claude-code", "claude-code must win when it is the session provider");
 });
+
+test("resolveModelId: openai-codex wins over openai for bare GPT IDs when both are available", () => {
+  const availableModels = [
+    { id: "gpt-5.5", provider: "openai" },
+    { id: "gpt-5.5", provider: "openai-codex" },
+  ];
+
+  const result = resolveModelId("gpt-5.5", availableModels, undefined);
+  assert.ok(result, "should resolve a model");
+  assert.equal(result.provider, "openai-codex", "ChatGPT OAuth must win over platform API for bare IDs");
+});
+
+test("resolveModelId: github-copilot wins over openai when both offer the same GPT model", () => {
+  const availableModels = [
+    { id: "gpt-5.5", provider: "openai" },
+    { id: "gpt-5.5", provider: "github-copilot" },
+  ];
+
+  const result = resolveModelId("gpt-5.5", availableModels, undefined);
+  assert.ok(result);
+  assert.equal(result.provider, "github-copilot");
+});

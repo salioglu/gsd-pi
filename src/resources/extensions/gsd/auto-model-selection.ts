@@ -1041,15 +1041,35 @@ export function resolveModelId<T extends { id: string; provider: string }>(
     if (providerMatch) return providerMatch;
   }
 
-  // Prefer "anthropic" as the canonical provider for Anthropic models.
-  // Transport-specific tiebreaker (ADR-012): intentionally keys on provider,
-  // not api — we want the plain Anthropic transport when multiple are available.
-  const anthropicMatch = candidates.find(m => m.provider === "anthropic");
-  if (anthropicMatch) return anthropicMatch;
+  // Subscription/OAuth routes beat pay-per-token API when the same model ID
+  // exists on multiple providers. Order matters — first match wins.
+  for (const provider of BARE_ID_SUBSCRIPTION_PROVIDER_PRECEDENCE) {
+    const match = candidates.find(m => m.provider === provider);
+    if (match) return match;
+  }
 
   // Fall back to first non-extension candidate, or any candidate
   return candidates.find(m => !EXTENSION_PROVIDERS.has(m.provider)) ?? candidates[0];
 }
+
+/**
+ * When a bare model ID exists on multiple providers, prefer subscription/OAuth
+ * routes over pay-per-token API keys. Matches PROVIDER_ROUTES in doctor-providers
+ * but applies when *both* sides are authenticated.
+ *
+ * Order rationale:
+ * - openai-codex before github-copilot: ChatGPT-native for shared GPT IDs
+ * - google-gemini-cli before github-copilot: first-party Gemini CLI
+ * - anthropic before github-copilot: first-party Claude API/OAuth over Copilot
+ * - github-copilot before openai/google: Copilot OAuth over platform API keys
+ */
+export const BARE_ID_SUBSCRIPTION_PROVIDER_PRECEDENCE = [
+  "openai-codex",
+  "google-gemini-cli",
+  "anthropic",
+  "github-copilot",
+  "google-antigravity",
+] as const;
 
 /**
  * Flat-rate providers charge the same per request regardless of model.

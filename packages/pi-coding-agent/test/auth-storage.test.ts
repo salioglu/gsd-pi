@@ -483,6 +483,87 @@ describe("AuthStorage", () => {
 			expect(authStorage.hasAuth("custom-provider")).toBe(false);
 			expect(authStorage.getAuthStatus("custom-provider")).toEqual({ configured: false });
 		});
+
+		test("prefers OAuth over stored API key for OAuth-capable providers", async () => {
+			authStorage = AuthStorage.inMemory({
+				anthropic: [
+					{ type: "api_key", key: "sk-ant-stored-api-key" },
+					{
+						type: "oauth",
+						access: "oauth-access-token",
+						refresh: "oauth-refresh-token",
+						expires: Date.now() + 60_000,
+					},
+				],
+			});
+
+			const apiKey = await authStorage.getApiKey("anthropic");
+			expect(apiKey).toBe("oauth-access-token");
+		});
+
+		test("falls back to stored API key when OAuth refresh fails", async () => {
+			const providerId = `test-oauth-api-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+			registerOAuthProvider({
+				id: providerId,
+				name: "Test OAuth API Fallback",
+				async login() {
+					throw new Error("Not used in this test");
+				},
+				async refreshToken() {
+					throw new Error("refresh failed");
+				},
+				getApiKey(credentials) {
+					return credentials.access;
+				},
+			});
+
+			authStorage = AuthStorage.inMemory({
+				[providerId]: [
+					{ type: "api_key", key: "sk-fallback-api-key" },
+					{
+						type: "oauth",
+						access: "expired-access-token",
+						refresh: "refresh-token",
+						expires: Date.now() - 10_000,
+					},
+				],
+			});
+
+			const apiKey = await authStorage.getApiKey(providerId);
+			expect(apiKey).toBe("sk-fallback-api-key");
+		});
+
+		test("falls back to stored API key when OAuth refresh returns nothing", async () => {
+			const providerId = `test-oauth-null-refresh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+			registerOAuthProvider({
+				id: providerId,
+				name: "Test OAuth Null Refresh",
+				async login() {
+					throw new Error("Not used in this test");
+				},
+				async refreshToken() {
+					return null as never;
+				},
+				getApiKey(credentials) {
+					return credentials.access;
+				},
+			});
+
+			authStorage = AuthStorage.inMemory({
+				[providerId]: [
+					{ type: "api_key", key: "sk-null-refresh-fallback" },
+					{
+						type: "oauth",
+						access: "expired-access-token",
+						refresh: "refresh-token",
+						expires: Date.now() - 10_000,
+					},
+				],
+			});
+
+			const apiKey = await authStorage.getApiKey(providerId);
+			expect(apiKey).toBe("sk-null-refresh-fallback");
+		});
 	});
 
 	describe("runtime overrides", () => {
