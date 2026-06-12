@@ -1,13 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
-import { resolveBrowserEngineResolution } from "../browser-tools/engine/selection.js";
+import {
+  resolveAmbientBrowserEngineResolution,
+  resolveBrowserEngineResolution,
+  type BrowserEngineMode,
+} from "../browser-tools/engine/selection.js";
 import {
   resolveGsdBrowserCliAvailability,
   resolveGsdBrowserDaemonStartInvocation,
 } from "../shared/gsd-browser-cli.js";
 import { uatTypeIncludesBrowser, type UatType } from "./uat-policy.js";
-import { usesWorkflowMcpTransport } from "./workflow-mcp.js";
 
 const DEFAULT_DAEMON_START_TIMEOUT_MS = 30_000;
 
@@ -31,6 +34,14 @@ export interface BrowserDaemonWarmContext {
   env?: NodeJS.ProcessEnv;
 }
 
+/** Active engine for warm-up: explicit env override, else session-committed ambient resolution. */
+function resolveActiveBrowserEngine(projectRoot: string, env: NodeJS.ProcessEnv): BrowserEngineMode {
+  if (env.GSD_BROWSER_ENGINE?.trim()) {
+    return resolveBrowserEngineResolution(env, projectRoot).engine;
+  }
+  return resolveAmbientBrowserEngineResolution(projectRoot).engine;
+}
+
 export function shouldWarmBrowserDaemonForUat(ctx: BrowserDaemonWarmContext): boolean {
   if (!uatTypeIncludesBrowser(ctx.uatType)) return false;
 
@@ -42,14 +53,7 @@ export function shouldWarmBrowserDaemonForUat(ctx: BrowserDaemonWarmContext): bo
   if (!availability.available) return false;
 
   const projectRoot = resolve(ctx.projectRoot);
-
-  if (ctx.sessionProvider === "claude-code") {
-    if (ctx.sessionAuthMode === undefined) return true;
-    return usesWorkflowMcpTransport(ctx.sessionAuthMode, ctx.sessionBaseUrl)
-      || ctx.sessionAuthMode === "externalCli";
-  }
-
-  return resolveBrowserEngineResolution(env, projectRoot).engine === "gsd-browser";
+  return resolveActiveBrowserEngine(projectRoot, env) === "gsd-browser";
 }
 
 export function ensureBrowserDaemonStarted(

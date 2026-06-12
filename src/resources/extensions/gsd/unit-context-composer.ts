@@ -231,12 +231,14 @@ function guidanceForToolsPolicy(policy: ToolsPolicy): string | null {
   }
 }
 
-function formatForbiddenWorkflowToolsLine(unitType: string): string | null {
+function formatForbiddenWorkflowToolsLine(
+  unitType: string,
+  unitGuidance: string | undefined,
+): string | null {
   const forbidden = getUnitToolSurfaceContract(unitType)?.forbiddenGsdTools;
   if (!forbidden) return null;
-  const names = Object.keys(forbidden);
+  const names = Object.keys(forbidden).filter((name) => !unitGuidance?.includes(`\`${name}\``));
   if (names.length === 0) return null;
-  if (TOOL_SURFACE_GUIDANCE_BY_UNIT[unitType]) return null;
   return `Do not call ${names.map((name) => `\`${name}\``).join(", ")} in this unit.`;
 }
 
@@ -254,7 +256,7 @@ export function composeToolSurfaceInstructions(
 
   const unitGuidance = TOOL_SURFACE_GUIDANCE_BY_UNIT[unitType];
   const policyGuidance = unitGuidance ? null : guidanceForToolsPolicy(manifest.tools);
-  const forbiddenLine = formatForbiddenWorkflowToolsLine(unitType);
+  const forbiddenLine = formatForbiddenWorkflowToolsLine(unitType, unitGuidance);
   const parts = [unitGuidance, policyGuidance, forbiddenLine].filter(
     (part): part is string => typeof part === "string" && part.length > 0,
   );

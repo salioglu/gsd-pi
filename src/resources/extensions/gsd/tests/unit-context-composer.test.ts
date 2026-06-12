@@ -210,6 +210,8 @@ test("Tool Surface composer: run-uat forbids gsd_exec and Bash", () => {
   assert.match(out, /Do not call `gsd_exec`/);
   assert.match(out, /`Bash`/);
   assert.match(out, /`gsd_uat_exec`/);
+  assert.match(out, /`gsd_save_gate_result`/);
+  assert.match(out, /`gsd_summary_save`/);
 });
 
 test("Tool Surface composer: complete-slice steers verification to gsd_exec", () => {
