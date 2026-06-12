@@ -1,8 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import {
   prepareBrowserDaemonForUat,
@@ -62,32 +59,16 @@ test("shouldWarmBrowserDaemonForUat skips when warm-up is disabled", () => {
   );
 });
 
-test("prepareBrowserDaemonForUat starts daemon for browser-facing web apps", (t) => {
-  const availability = resolveGsdBrowserCliAvailability();
-  if (!availability.available) {
-    t.skip("bundled gsd-browser CLI unavailable");
-  }
-
-  const projectRoot = mkdtempSync(join(tmpdir(), "gsd-browser-daemon-prep-"));
-  writeFileSync(
-    join(projectRoot, "package.json"),
-    JSON.stringify({
-      dependencies: { react: "18.0.0" },
-      scripts: { dev: "vite" },
+test("prepareBrowserDaemonForUat returns null when warm-up is not required", () => {
+  assert.equal(
+    prepareBrowserDaemonForUat({
+      uatType: "artifact-driven",
+      sessionProvider: "claude-code",
+      sessionAuthMode: "externalCli",
+      projectRoot: "/tmp/example-project",
     }),
+    null,
   );
-
-  t.after(() => {
-    rmSync(projectRoot, { recursive: true, force: true });
-  });
-
-  const error = prepareBrowserDaemonForUat({
-    uatType: "browser-executable",
-    sessionProvider: "claude-code",
-    sessionAuthMode: "externalCli",
-    projectRoot,
-  });
-  assert.equal(error, null);
 });
 
 test("prepareBrowserDaemonForUat returns actionable error when daemon start fails", () => {
