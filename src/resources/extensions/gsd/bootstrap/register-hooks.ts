@@ -59,6 +59,10 @@ import {
   messageHasPendingAskUserQuestionsTool,
   shouldPauseForUserApprovalQuestion,
 } from "../user-input-boundary.js";
+import {
+  evaluateAskUserQuestionsRound,
+  formatUnansweredConsentQuestionMessage,
+} from "../consent-question.js";
 import { resolveSkillManifest } from "../skill-manifest.js";
 import { applyUnitSkillVisibility, unitHasSkillManifest } from "../skill-scope.js";
 import { getGuidedUnitContext } from "../guided-unit-context.js";
@@ -1162,7 +1166,7 @@ export function registerHooks(
 
     approvalQuestionAbortInFlight = true;
     ctx.ui.notify(
-      `${unitType}${unitId ? ` ${unitId}` : ""} is waiting for your approval - pausing before more tool calls run.`,
+      `${unitType ?? "The discussion"}${unitId ? ` ${unitId}` : ""} is waiting for your approval - pausing before more tool calls run.`,
       "info",
     );
     // The durable pending gate is activated at agent_end so same-turn
@@ -1514,6 +1518,42 @@ export function registerHooks(
     }
     if (gateResult.status === "verified") {
       clearDeferredApprovalGate(basePath);
+    }
+
+    // ── Consent Question policy (consent-question.ts): one home for the
+    // answer lifecycle of every ask_user_questions round. Gate persistence is
+    // handled by applyAskUserQuestionsGateResult above; this evaluates the
+    // round's fail policy so empty answers on fail-closed kinds never pass as
+    // real answers (#528) and cancellations get one unified handler.
+    const roundOutcome = evaluateAskUserQuestionsRound(questions, details ?? {});
+    if (roundOutcome === "cancelled") {
+      resetToolCallLoopGuard();
+      if (ctx) {
+        await maybePauseAutoForApprovalGate(
+          ctx,
+          pi,
+          true,
+          "ask_user_questions was cancelled before receiving a response — pausing auto-mode until you respond.",
+        );
+      }
+      return;
+    }
+    if (roundOutcome === "waiting") {
+      resetToolCallLoopGuard();
+      if (ctx) {
+        await maybePauseAutoForApprovalGate(
+          ctx,
+          pi,
+          true,
+          "A user question received no answer — pausing auto-mode until you respond.",
+        );
+      }
+      return {
+        content: [{
+          type: "text" as const,
+          text: formatUnansweredConsentQuestionMessage(questions),
+        }],
+      };
     }
 
     if (details?.cancelled || !details?.response) return;
