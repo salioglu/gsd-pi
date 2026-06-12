@@ -207,6 +207,26 @@ test("resolveInstallCommand returns npm command when not running under Bun (#414
   }
 });
 
+test("resolveInstallCommand pins Windows npm updates to the running global prefix (#490)", async () => {
+  const { resolveInstallCommand } = await import("../update-check.js");
+  const orig = (process.versions as Record<string, string | undefined>).bun;
+  try {
+    delete (process.versions as Record<string, string | undefined>).bun;
+    assert.equal(
+      resolveInstallCommand("@opengsd/gsd-pi@latest", {
+        argv1: "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@opengsd\\gsd-pi\\dist\\loader.js",
+        env: {} as any,
+        platform: "win32",
+      }),
+      'npm --prefix "C:\\Users\\me\\AppData\\Roaming\\npm" install -g @opengsd/gsd-pi@latest',
+    );
+  } finally {
+    if (orig !== undefined) {
+      (process.versions as Record<string, string | undefined>).bun = orig;
+    }
+  }
+});
+
 test("resolveInstallCommand returns pnpm command when installed via pnpm", async () => {
   const { resolveInstallCommand } = await import("../update-check.js");
   const orig = (process.versions as Record<string, string | undefined>).bun;

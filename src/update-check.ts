@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { execSync, execFileSync } from 'node:child_process'
-import { dirname, join, resolve as resolvePath, sep } from 'node:path'
+import { dirname, join, resolve as resolvePath, sep, win32 as pathWin32 } from 'node:path'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
 import chalk from 'chalk'
@@ -152,11 +152,28 @@ export function isBunInstall(argv1: string | undefined = process.argv[1]): boole
 
 export function resolveInstallCommand(
   pkg: string,
-  options: { argv1?: string; env?: NodeJS.ProcessEnv } = {},
+  options: { argv1?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
 ): string {
   if (isBunInstall(options.argv1)) return `bun add -g ${pkg}`
   if (isPnpmInstall(options.argv1, options.env)) return `pnpm add -g ${pkg}`
+  const npmPrefix = resolveWindowsNpmGlobalPrefix(options.argv1, options.platform)
+  if (npmPrefix) return `npm --prefix ${quoteWindowsArg(npmPrefix)} install -g ${pkg}`
   return `npm install -g ${pkg}`
+}
+
+function resolveWindowsNpmGlobalPrefix(
+  argv1: string | undefined = process.argv[1],
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  if (platform !== 'win32' || !argv1) return null
+  const normalized = pathWin32.normalize(argv1)
+  const marker = `${pathWin32.sep}node_modules${pathWin32.sep}`
+  const index = normalized.toLowerCase().lastIndexOf(marker)
+  return index > 0 ? normalized.slice(0, index) : null
+}
+
+function quoteWindowsArg(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`
 }
 
 function printUpdateBanner(current: string, latest: string, packageName: string = GSD_PI_PACKAGE_NAME): void {
