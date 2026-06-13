@@ -176,6 +176,26 @@ test("evaluateCompleteMilestoneDispatch repairs missing SUMMARY when DB is close
   );
 });
 
+test("repairMissingMilestoneSummaryProjection succeeds when milestone dir does not exist yet", async () => {
+  // Regression: resolveExpectedArtifactPath returns null before the milestone
+  // directory exists. The post-write success check must use the handler's
+  // returned summaryPath (the absolute path it just created), not the
+  // pre-write resolver result, otherwise repair always reports failure and
+  // dispatch falls back to re-dispatching complete-milestone.
+  const base = mkdtempSync(join(tmpdir(), "gsd-repair-summary-new-dir-"));
+  tmpDirs.push(base);
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M042", title: "Done", status: "complete" });
+
+  const repair = await repairMissingMilestoneSummaryProjection(base, "M042");
+  assert.equal(repair.ok, true, "repair should report success when handler creates the SUMMARY");
+  assert.ok(
+    existsSync(join(base, ".gsd", "milestones", "M042", "M042-SUMMARY.md")),
+    "repair should write the SUMMARY artifact to the canonical projection path",
+  );
+});
+
 test("repairMissingMilestoneSummaryProjection is idempotent when SUMMARY exists", async () => {
   const base = mkdtempSync(join(tmpdir(), "gsd-repair-summary-idempotent-"));
   tmpDirs.push(base);
