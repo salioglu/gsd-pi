@@ -54,7 +54,7 @@ export interface McpToolDef {
 // `any` and skips static checking.
 const MCP_PKG = '@modelcontextprotocol/sdk'
 
-export { sanitizeSchemaForMoonshot } from '@gsd/pi-ai'
+import { sanitizeSchemaForMoonshot } from '@gsd/pi-ai'
 
 export function mcpSdkSpecifier(subpath: 'server/index' | 'server/stdio' | 'types'): string {
   return `${MCP_PKG}/${subpath}.js`
