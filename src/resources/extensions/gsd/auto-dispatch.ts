@@ -20,6 +20,8 @@ import { getUatBrowserToolSupportError, type UatType } from "./uat-policy.js";
 import {
   isDbAvailable,
   getMilestoneSlices,
+  getMilestoneSliceSummaries,
+  getClosedSliceIds,
   getPendingGatesForTurn,
   markPendingGatesOmittedForTurn,
   getMilestone,
@@ -47,7 +49,6 @@ import {
   buildTaskFileName,
   gsdProjectionRoot,
 } from "./paths.js";
-import { parseRoadmap } from "./parsers-legacy.js";
 import { validateArtifact } from "./schemas/validate.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { logWarning, logError } from "./workflow-logger.js";
@@ -84,7 +85,10 @@ import { selectReactiveDispatchBatch } from "./uok/execution-graph.js";
 import { getMilestonePipelineVariant } from "./milestone-scope-classifier.js";
 import { EXECUTION_ENTRY_PHASES, hasFinalizedMilestoneContext } from "./uok/plan-v2.js";
 import { isAutoActive } from "./auto.js";
-import { markDepthVerified } from "./bootstrap/write-gate.js";
+// Host adapter explicitly: auto-dispatch runs in the extension host, and the
+// ambient write-gate exports env-sniff the adapter per call (they are reserved
+// for the workflow MCP child's dynamic-import surface).
+import { hostWriteGateAdapter } from "./bootstrap/write-gate.js";
 import { ensureWorkflowPreferencesCaptured } from "./planning-depth.js";
 import { MILESTONE_ID_RE } from "./milestone-ids.js";
 import {
@@ -492,27 +496,12 @@ function persistSliceAssessmentBackfill(
 }
 
 function backfillMissingAssessmentsFromSummaries(basePath: string, mid: string): void {
-  const completedSliceIds = new Set<string>();
-  if (isDbAvailable()) {
-    for (const slice of getMilestoneSlices(mid)) {
-      if (slice.status === "complete" || slice.status === "done") {
-        completedSliceIds.add(slice.id);
-      }
-    }
-  } else {
-    const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
-    if (!roadmapFile) return;
-    try {
-      const roadmap = parseRoadmap(readFileSync(roadmapFile, "utf-8"));
-      for (const slice of roadmap.slices) {
-        if (slice.done) completedSliceIds.add(slice.id);
-      }
-    } catch {
-      return;
-    }
-  }
-
-  for (const sliceId of completedSliceIds) {
+  // DB-authoritative (ADR-017): no markdown fallback. Without DB rows there
+  // is nothing to backfill.
+  if (!isDbAvailable()) return;
+  // Canonical closed vocabulary (complete/done/skipped/closed) — a skipped or
+  // closed slice with a SUMMARY gets the same assessment backfill treatment.
+  for (const sliceId of getClosedSliceIds(mid)) {
     const summaryPath = resolveSliceFile(basePath, mid, sliceId, "SUMMARY");
     if (!summaryPath || !existsSync(summaryPath)) continue;
 
@@ -698,7 +687,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // deadlock. Deep planning is still user-driven even inside auto-mode,
       // so it must wait for explicit approval instead of taking this bypass.
       if (shouldBypassMilestoneDepthGateInAuto(prefs)) {
-        markDepthVerified(mid, basePath);
+        hostWriteGateAdapter.markDepthVerified(mid, basePath);
       }
       return {
         action: "dispatch",
@@ -820,23 +809,10 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // Only applies when UAT dispatch is enabled
       if (!prefs?.uat_dispatch) return null;
 
-      // DB-first: prefer closed slices from DB; fall back to ROADMAP on disk.
-      let closedSliceIds: string[];
-      if (isDbAvailable()) {
-        closedSliceIds = getMilestoneSlices(mid)
-          .filter(s => isClosedStatus(s.status))
-          .map(s => s.id);
-      } else {
-        // Filesystem fallback for degraded / unmigrated projects.
-        // `slice.done` in the parsed ROADMAP is the disk-level closed signal.
-        const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
-        const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
-        if (!roadmapContent) return null;
-        const roadmap = parseRoadmap(roadmapContent);
-        closedSliceIds = roadmap.slices.filter(s => s.done).map(s => s.id);
-      }
-
-      for (const sliceId of closedSliceIds) {
+      // DB-authoritative (ADR-017): closed slices come from the DB only; the
+      // ROADMAP projection is never parsed for gate decisions.
+      if (!isDbAvailable()) return null;
+      for (const sliceId of getClosedSliceIds(mid)) {
         const result = await readUatGateVerdict(basePath, mid, sliceId);
         if (!result) continue;
         const { verdict, uatType } = result;
@@ -891,7 +867,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // H6 fix (#4973): keep the non-deep auto-mode bypass, but do not
       // pre-verify deep planning's user-facing milestone approval gate.
       if (shouldBypassMilestoneDepthGateInAuto(prefs)) {
-        markDepthVerified(mid, basePath);
+        hostWriteGateAdapter.markDepthVerified(mid, basePath);
       }
       return {
         action: "dispatch",
@@ -1062,7 +1038,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // H6 fix (#4973): keep the non-deep auto-mode bypass, but do not
       // pre-verify deep planning's user-facing milestone approval gate.
       if (shouldBypassMilestoneDepthGateInAuto(prefs)) {
-        markDepthVerified(mid, basePath);
+        hostWriteGateAdapter.markDepthVerified(mid, basePath);
       }
       return {
         action: "dispatch",
@@ -1140,13 +1116,11 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // behavior.
       if (await getMilestonePipelineVariant(mid) === "trivial") return null;
 
-      // Load roadmap to find all slices
-      const roadmapFile =
-        resolveExistingExpectedArtifact("plan-milestone", mid, basePath) ??
-        resolveMilestoneFile(basePath, mid, "ROADMAP");
-      const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
-      if (!roadmapContent) return null;
-      const roadmap = parseRoadmap(roadmapContent);
+      // DB-authoritative slice list (ADR-017): the ROADMAP projection is
+      // never parsed for dispatch decisions. No DB / no rows → skip this rule.
+      if (!isDbAvailable()) return null;
+      const dbSlices = getMilestoneSliceSummaries(mid);
+      if (dbSlices.length === 0) return null;
 
       // Find slices that need research (no RESEARCH file, dependencies done)
       const milestoneResearchFile =
@@ -1154,14 +1128,14 @@ export const DISPATCH_RULES: DispatchRule[] = [
         resolveMilestoneFile(basePath, mid, "RESEARCH");
       const researchReadySlices: Array<{ id: string; title: string }> = [];
 
-      for (const slice of roadmap.slices) {
+      for (const slice of dbSlices) {
         if (slice.done) continue;
         // Skip S01 when milestone research exists
         if (milestoneResearchFile && slice.id === "S01") continue;
         // Skip if already has research
         if (resolveExistingExpectedArtifact("research-slice", `${mid}/${slice.id}`, basePath)) continue;
         // Skip if dependencies aren't done (check for SUMMARY files)
-        const depsComplete = (slice.depends ?? []).every((depId) =>
+        const depsComplete = slice.depends.every((depId) =>
           !!resolveExistingExpectedArtifact("complete-slice", `${mid}/${depId}`, basePath),
         );
         if (!depsComplete) continue;

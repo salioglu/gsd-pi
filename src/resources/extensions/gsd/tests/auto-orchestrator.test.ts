@@ -22,8 +22,8 @@ import {
   createAutoOrchestrator,
   decideOrchestratorDispatch,
   resolveLiveOrchestratorBasePath,
-  STUCK_WINDOW_SIZE,
 } from "../auto/orchestrator.js";
+import { STUCK_WINDOW_SIZE } from "../auto/dispatch-history.js";
 import type { OrchestratorContext } from "../auto/orchestrator.js";
 import type { AutoOrchestrationModule, AutoSessionContext } from "../auto/contracts.js";
 import type { GSDState } from "../types.js";
@@ -41,6 +41,10 @@ import {
   openDatabase,
 } from "../gsd-db.js";
 import { AutoSession } from "../auto/session.js";
+import { registerAutoWorker } from "../db/auto-workers.js";
+import { claimMilestoneLease } from "../db/milestone-leases.js";
+import { recordDispatchClaim, markFailed } from "../db/unit-dispatches.js";
+import { normalizeRealPath } from "../paths.js";
 import { acquireSessionLock, releaseSessionLock } from "../session-lock.js";
 import { queryJournal } from "../journal.js";
 import { invalidateAllCaches } from "../cache.js";
@@ -720,10 +724,6 @@ test("idempotent path journals advance-skipped and records a health snapshot", a
 
 // ─── Stuck-loop ring buffer (issue #5787) ──────────────────────────────────
 
-test("STUCK_WINDOW_SIZE matches the legacy auto/phases.ts constant", () => {
-  assert.equal(STUCK_WINDOW_SIZE, 6);
-});
-
 test("stuck-loop: empty ring on a freshly constructed orchestrator advances normally", async (t) => {
   const f = makeFixture();
   t.after(() => f.cleanup());
@@ -767,12 +767,16 @@ test("stuck-loop: ring saturated with same unit blocks with action 'stop' and st
     assert.equal(r.reason, "idempotent advance: unit already active");
   }
 
-  // The final call (ring now holds STUCK_WINDOW_SIZE copies) returns stuck-loop.
+  // The final call (ring now holds STUCK_WINDOW_SIZE copies) returns stuck-loop
+  // with the detect-stuck rule verdict in the reason.
   const last = results[STUCK_WINDOW_SIZE - 1];
   assert.equal(last.kind, "blocked");
   if (last.kind !== "blocked") return;
   assert.equal(last.action, "stop");
-  assert.equal(last.reason, `stuck-loop: execute-task:M001/S01/T01 picked ${STUCK_WINDOW_SIZE} times`);
+  assert.ok(
+    last.reason.startsWith("stuck-loop: execute-task:M001/S01/T01 derived"),
+    `expected detect-stuck verdict reason, got: ${last.reason}`,
+  );
 });
 
 test("stuck-loop: start() resets the ring so a fresh saturation cycle is required", async (t) => {
@@ -850,6 +854,80 @@ test("stuck-loop: stop('user-request') resets the ring (hard stop)", async (t) =
   // Hard stop clears the ring, so the next advance dispatches fresh.
   const next = await f.orchestrator.advance();
   assert.equal(next.kind, "advanced");
+});
+
+test("stuck-loop #482 regression: start() rehydrates the window from the dispatch ledger so cross-session re-dispatch loops are detected", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  // Simulate a PRIOR session: the dispatch ledger recorded the same unit
+  // being re-dispatched repeatedly without progress. The orchestrator under test is a
+  // fresh instance (as it would be after a session restart) — before the
+  // Dispatch History module, start() reset the window to [] and the loop
+  // would silently re-dispatch the unit forever (#482: 146 re-dispatches).
+  const worker = registerAutoWorker({ projectRootRealpath: normalizeRealPath(f.base) });
+  const lease = claimMilestoneLease(worker, "M001");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) return;
+  for (let i = 0; i < STUCK_WINDOW_SIZE - 1; i++) {
+    const claim = recordDispatchClaim({
+      traceId: `prior-session-${i}`,
+      workerId: worker,
+      milestoneLeaseToken: lease.token,
+      milestoneId: "M001",
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+    });
+    assert.equal(claim.ok, true);
+    if (!claim.ok) return;
+    markFailed(claim.dispatchId, { errorSummary: "" });
+  }
+
+  const started = await f.orchestrator.start(SESSION_CONTEXT);
+  assert.equal(started.kind, "started");
+
+  // The very next decision for the same unit must trip the stuck verdict
+  // instead of advancing.
+  const result = await f.orchestrator.advance();
+  assert.equal(result.kind, "blocked");
+  if (result.kind !== "blocked") return;
+  assert.equal(result.action, "stop");
+  assert.ok(result.reason.startsWith("stuck-loop:"), `expected stuck-loop reason, got: ${result.reason}`);
+});
+
+test("stuck-loop #482: resume() with an empty window rehydrates from the dispatch ledger", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  const worker = registerAutoWorker({ projectRootRealpath: normalizeRealPath(f.base) });
+  const lease = claimMilestoneLease(worker, "M001");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) return;
+  for (let i = 0; i < STUCK_WINDOW_SIZE - 1; i++) {
+    const claim = recordDispatchClaim({
+      traceId: `prior-session-resume-${i}`,
+      workerId: worker,
+      milestoneLeaseToken: lease.token,
+      milestoneId: "M001",
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+    });
+    assert.equal(claim.ok, true);
+    if (!claim.ok) return;
+    markFailed(claim.dispatchId, { errorSummary: "" });
+  }
+
+  // Fresh orchestrator resuming a prior session: window starts empty, so
+  // resume() must rehydrate (while in-process resume keeps the live window —
+  // see the #572 preservation tests above).
+  const resumed = await f.orchestrator.resume();
+  assert.equal(resumed.kind, "resumed");
+
+  const result = await f.orchestrator.advance();
+  assert.equal(result.kind, "blocked");
+  if (result.kind !== "blocked") return;
+  assert.equal(result.action, "stop");
+  assert.ok(result.reason.startsWith("stuck-loop:"), `expected stuck-loop reason, got: ${result.reason}`);
 });
 
 test("stuck-loop: journal records the stuck-loop reason on advance-blocked", async (t) => {

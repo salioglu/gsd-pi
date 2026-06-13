@@ -64,6 +64,13 @@ import {
 import { refreshWorkflowDatabaseFromDisk } from "../db-workspace.js";
 import { getErrorMessage } from "../error-utils.js";
 import { logWarning } from "../workflow-logger.js";
+import { normalizeRealPath } from "../paths.js";
+import {
+  buildDispatchKey,
+  createDispatchHistory,
+  STUCK_WINDOW_SIZE,
+  type DispatchHistory,
+} from "./dispatch-history.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { evaluateAllCompleteSettlement } from "../milestone-settlement.js";
@@ -71,16 +78,6 @@ import { evaluateAllCompleteSettlement } from "../milestone-settlement.js";
 function now(): number {
   return Date.now();
 }
-
-/**
- * Size of the dispatch-decision ring buffer used by the Auto Orchestration
- * module's stuck-loop detector. When the same `${unitType}:${unitId}` key
- * fills the window, advance() blocks with `action: "stop"`.
- *
- * Mirrors the legacy `STUCK_WINDOW_SIZE` in auto/phases.ts so behaviour is
- * preserved across the eventual cutover (issue #5791).
- */
-export const STUCK_WINDOW_SIZE = 6;
 
 function noRemainingUnitsOutcome(stateSnapshot: GSDState): AutoTerminalOutcome {
   if (stateSnapshot.phase === "complete") {
@@ -330,7 +327,9 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   private seq = 0;
   private lastAdvanceKey: string | null = null;
   private lastFinalizedUnitKey: string | null = null;
-  private dispatchKeyWindow: string[] = [];
+  // Dispatch History module (#482): the dispatch-decision window with
+  // cross-session DB rehydration and full detect-stuck rules.
+  private readonly dispatchHistory: DispatchHistory;
   // ADR-030 Phase Transition Invariant: the prior advance's reconciled Phase,
   // the "from" endpoint of the edge check. In-memory; reset on start/resume/stop
   // so the first advance of a session has no edge to assert.
@@ -347,6 +346,16 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     this.runtimeBasePath = context.runtimeBasePath;
     this.s = context.session;
     this.flowId = `auto-orchestrator-${Date.now()}`;
+    this.dispatchHistory = createDispatchHistory({
+      windowSize: STUCK_WINDOW_SIZE,
+      // Same stable scope the auto-loop uses for stuck-state persistence so
+      // rehydration reads the rows the dispatch ledger wrote for this project.
+      resolveScopeId: () =>
+        normalizeRealPath(
+          this.s.scope?.workspace.projectRoot ??
+            (this.s.originalBasePath || this.s.basePath || this.runtimeBasePath),
+        ) || null,
+    });
   }
 
   // ── Live base-path resolution (was the wiring factory's getLiveDispatchBasePath) ──
@@ -765,7 +774,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
    * skipped result) instead of stopping.
    */
   private tryStuckArtifactRecovery(unitType: string, unitId: string): boolean {
-    const key = `${unitType}:${unitId}`;
+    const key = buildDispatchKey(unitType, unitId);
     if (this.lastStuckRecoveryKey === key) return false; // already tried this episode
     const basePath = this.getLiveDispatchBasePath();
     if (!verifyExpectedArtifact(unitType, unitId, basePath)) return false;
@@ -777,7 +786,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     if (!refreshed.ok && refreshed.fatal) return false;
     this.lastStuckRecoveryKey = key;
     invalidateAllCaches();
-    this.dispatchKeyWindow = [];
+    this.dispatchHistory.clearOnRecovery();
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
     return true;
@@ -808,7 +817,12 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   public async start(_sessionContext: AutoSessionContext): Promise<AutoAdvanceResult> {
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
-    this.dispatchKeyWindow = [];
+    // #482: the DB dispatch ledger is the source of truth across sessions.
+    // Discard any in-memory window and rebuild it from the ledger so a unit
+    // that was re-dispatched in previous sessions is detected as stuck here
+    // instead of silently re-dispatching forever.
+    this.dispatchHistory.clearOnRecovery();
+    this.dispatchHistory.rehydrate();
     this.lastStuckRecoveryKey = null;
     this.lastDerivedPhase = null;
     this.status.phase = "running";
@@ -913,7 +927,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           this.status.phase = "paused";
           this.status.activeUnit = undefined;
           this.lastAdvanceKey = null;
-          this.dispatchKeyWindow = [];
+          this.dispatchHistory.clearOnRecovery();
           this.bumpTransition();
           this.journalTransition({ name: "advance-blocked", reason: settlementBlock.reason });
           this.postAdvanceRecord(settlementBlock);
@@ -929,7 +943,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         this.status.phase = "stopped";
         this.status.activeUnit = undefined;
         this.lastAdvanceKey = null;
-        this.dispatchKeyWindow = [];
+        this.dispatchHistory.clearOnRecovery();
         this.bumpTransition();
         this.journalTransition({ name: "advance-stopped", reason: stopped.reason });
         this.postAdvanceRecord(stopped);
@@ -979,18 +993,13 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         return blocked;
       }
 
-      const nextKey = `${decision.unitType}:${decision.unitId}`;
-
-      // Record every dispatch decision in the ring buffer before pre-flight
+      // Record every dispatch decision in the history window before pre-flight
       // checks so the stuck-loop detector observes the full decision history
       // (including decisions that idempotency would otherwise short-circuit).
-      // The ring is capped at STUCK_WINDOW_SIZE and evicts oldest-first.
-      this.dispatchKeyWindow.push(nextKey);
-      if (this.dispatchKeyWindow.length > STUCK_WINDOW_SIZE) {
-        this.dispatchKeyWindow.shift();
-      }
+      // The window is capped at STUCK_WINDOW_SIZE and evicts oldest-first.
+      const nextKey = this.dispatchHistory.recordDispatch(decision.unitType, decision.unitId);
 
-      const matchingCount = this.dispatchKeyWindow.filter((k) => k === nextKey).length;
+      const matchingCount = this.dispatchHistory.countMatching(nextKey);
       if (this.lastFinalizedUnitKey === nextKey) {
         // #442: the unit re-dispatched immediately after finalizing may have
         // actually completed on disk with a stale DB. Verify + recover before
@@ -1037,11 +1046,18 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         return skipped;
       }
 
-      // Stuck-loop detection: when the ring is saturated with copies of
-      // `nextKey` (count >= STUCK_WINDOW_SIZE), the orchestrator has been
-      // picking the same unit across the whole window and must hard-stop with
-      // a diagnosable reason.
-      if (matchingCount >= STUCK_WINDOW_SIZE) {
+      // Stuck-loop detection: when the window is saturated with copies of
+      // `nextKey` (count >= STUCK_WINDOW_SIZE), consult the Dispatch History
+      // module's full detect-stuck rule set for the verdict instead of the old
+      // bare saturation count. This keeps the saturation threshold (the window
+      // deliberately records benign idempotent repeats, so earlier-firing
+      // rules would false-positive on pause/resume re-advances) while gaining
+      // retry-budget suppression and diagnosable rule reasons. A saturated
+      // window with no verdict means the dispatch ledger says we are inside
+      // the unit's retry-backoff budget — let the retry proceed.
+      const stuckVerdict =
+        matchingCount >= STUCK_WINDOW_SIZE ? this.dispatchHistory.detectStuck() : null;
+      if (stuckVerdict) {
         // #442: before declaring a stuck loop, verify the unit didn't actually
         // complete on disk (stale DB) and recover if so — legacy graduated
         // stuck-recovery parity. Otherwise hard-stop with a diagnosable reason.
@@ -1052,7 +1068,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         this.clearPendingDispatch();
         const blocked: AutoAdvanceResult = {
           kind: "blocked",
-          reason: `stuck-loop: ${nextKey} picked ${matchingCount} times`,
+          reason: `stuck-loop: ${stuckVerdict.reason}`,
           action: "stop",
         };
         this.journalTransition({
@@ -1146,7 +1162,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       if (result.kind === "stopped") {
         this.lastAdvanceKey = null;
         this.lastFinalizedUnitKey = null;
-        this.dispatchKeyWindow = [];
+        this.dispatchHistory.clearOnRecovery();
         this.status.activeUnit = undefined;
       }
       this.bumpTransition();
@@ -1175,8 +1191,14 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   public async resume(): Promise<AutoAdvanceResult> {
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
-    // Preserve dispatchKeyWindow across resume so stuck-loop detection
-    // accumulates across pause/resume cycles rather than resetting each time.
+    // Preserve the dispatch-history window across an in-process resume so
+    // stuck-loop detection accumulates across pause/resume cycles rather than
+    // resetting each time (#572 regression). When the window is empty (fresh
+    // orchestrator resuming a prior session), rehydrate it from the DB
+    // dispatch ledger so cross-session re-dispatch loops are detected (#482).
+    if (this.dispatchHistory.getRecentWindow().length === 0) {
+      this.dispatchHistory.rehydrate();
+    }
     this.lastStuckRecoveryKey = null;
     // ADR-030: drop the prior "from" — the first advance after resume has no
     // edge to assert (avoids a false illegal-edge across the pause boundary).
@@ -1198,10 +1220,10 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
     this.lastDerivedPhase = null;
-    // Preserve dispatchKeyWindow on pause so stuck-loop detection accumulates
-    // across pause/resume cycles. Only clear on a hard stop.
+    // Preserve the dispatch-history window on pause so stuck-loop detection
+    // accumulates across pause/resume cycles. Only clear on a hard stop.
     if (reason !== "pause") {
-      this.dispatchKeyWindow = [];
+      this.dispatchHistory.clearOnRecovery();
     }
     this.lastStuckRecoveryKey = null;
     this.bumpTransition();
@@ -1215,9 +1237,9 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   }
 
   public async completeActiveUnit(unit: { unitType: string; unitId: string }): Promise<void> {
-    const unitKey = `${unit.unitType}:${unit.unitId}`;
+    const unitKey = buildDispatchKey(unit.unitType, unit.unitId);
     const activeUnitKey = this.status.activeUnit
-      ? `${this.status.activeUnit.unitType}:${this.status.activeUnit.unitId}`
+      ? buildDispatchKey(this.status.activeUnit.unitType, this.status.activeUnit.unitId)
       : null;
     if (activeUnitKey !== unitKey) return;
 
@@ -1235,9 +1257,9 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   }
 
   public async retryActiveUnit(unit: { unitType: string; unitId: string }): Promise<void> {
-    const unitKey = `${unit.unitType}:${unit.unitId}`;
+    const unitKey = buildDispatchKey(unit.unitType, unit.unitId);
     const activeUnitKey = this.status.activeUnit
-      ? `${this.status.activeUnit.unitType}:${this.status.activeUnit.unitId}`
+      ? buildDispatchKey(this.status.activeUnit.unitType, this.status.activeUnit.unitId)
       : null;
     if (activeUnitKey !== unitKey && this.lastFinalizedUnitKey !== unitKey) return;
 

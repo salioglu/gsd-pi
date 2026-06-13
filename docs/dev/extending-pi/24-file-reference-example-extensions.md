@@ -98,7 +98,7 @@ All paths relative to `<pi-install-dir>/examples/extensions/`.
 
 | Goal | Approach | Key API | Example File |
 |------|----------|---------|-------------|
-| Block dangerous commands | Listen to `tool_call`, return `{ block: true }` | `pi.on("tool_call", ...)` | `protected-paths.ts` |
+| Block dangerous commands in native execution | Listen to `tool_call`, return `{ block: true }` | `pi.on("tool_call", ...)` | `protected-paths.ts` |
 | Add a tool the LLM can use | Register a tool with schema and execute | `pi.registerTool({...})` | `todo.ts` |
 | Add a slash command | Register a command with handler | `pi.registerCommand(...)` | `commands.ts` |
 | Ask the user a question | Use dialog methods | `ctx.ui.select()`, `ctx.ui.confirm()` | `question.ts` |

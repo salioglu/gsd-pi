@@ -28,8 +28,7 @@ import { checkOwnership, sliceUnitKey } from "../unit-ownership.js";
 import { saveFile, clearParseCache } from "../files.js";
 import { classifyUatContent, escalatesArtifactUatToBrowser } from "../uat-policy.js";
 import { invalidateStateCache } from "../state.js";
-import { renderRoadmapFromDb } from "../markdown-renderer.js";
-import { parseRoadmap } from "../parsers-legacy.js";
+import { renderRoadmapFromDb, roadmapRenderMarksSliceDone } from "../markdown-renderer.js";
 import { isStaleWrite } from "../auto/turn-epoch.js";
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
@@ -91,9 +90,11 @@ function hasCompleteSliceArtifactContract(basePath: string, milestoneId: string,
     join(gsdProjectionRoot(basePath), "milestones", milestoneId, `${milestoneId}-ROADMAP.md`);
   if (!existsSync(roadmapPath)) return false;
 
+  // Projection-completeness check (ADR-017): the DB has already recorded the
+  // duplicate completion; this only verifies the rendered markdown artifacts
+  // exist and reflect it, deciding whether re-rendering is needed.
   try {
-    const roadmap = parseRoadmap(readFileSync(roadmapPath, "utf-8"));
-    return roadmap.slices.some((slice) => slice.id === sliceId && slice.done);
+    return roadmapRenderMarksSliceDone(readFileSync(roadmapPath, "utf-8"), sliceId);
   } catch {
     return false;
   }
@@ -478,8 +479,9 @@ export async function handleCompleteSlice(
 
     const roadmap = await renderRoadmapFromDb(artifactBasePath, params.milestoneId);
     clearParseCache();
-    const roadmapSlice = parseRoadmap(roadmap.content).slices.find((slice) => slice.id === params.sliceId);
-    if (!roadmapSlice?.done) {
+    // Render verification (ADR-017): confirms the just-written projection
+    // reflects the DB completion; the DB row is already committed.
+    if (!roadmapRenderMarksSliceDone(roadmap.content, params.sliceId)) {
       throw new Error(`roadmap render did not mark ${params.milestoneId}/${params.sliceId} complete`);
     }
   } catch (renderErr) {

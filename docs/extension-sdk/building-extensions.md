@@ -280,9 +280,9 @@ User types a prompt
   │   │ turn_start
   │   │ context (can modify messages sent to LLM)
   │   │ LLM responds → may call tools:
-  │   │   tool_call (can BLOCK)
-  │   │   tool_execution_start/update/end
-  │   │   tool_result (can MODIFY)
+  │   │   tool_call (native tools only; can BLOCK)
+  │   │   tool_execution_start/end (all engines)
+  │   │   tool_result (native tools only; can MODIFY)
   │   │ turn_end
   │   └──
   └── agent_end
@@ -309,6 +309,8 @@ pi.on("session_tree", async (event, ctx) => {
 
 ### Blocking Tool Calls
 
+`tool_call` is a native-engine interception hook. External engines can pre-execute tools and report an `externalResult`, so cross-engine policy should remove tools from the active set or use an engine-supported pre-execution guard instead of relying only on this hook.
+
 ```typescript
 pi.on("tool_call", async (event, ctx) => {
   if (event.toolName === "bash" && event.input.command?.includes("rm -rf /")) {
@@ -318,6 +320,8 @@ pi.on("tool_call", async (event, ctx) => {
 ```
 
 ### Modifying Tool Results
+
+`tool_result` has the same native-engine boundary as `tool_call`. Use it when you need to rewrite results from tools the Pi loop executes itself.
 
 ```typescript
 pi.on("tool_result", async (event, ctx) => {

@@ -13,7 +13,8 @@ import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-exten
 import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
 
 import { buildMilestoneFileName, clearPathCache, milestonesDir, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
-import { applyAskUserQuestionsGateResult, canonicalToolName, clearDiscussionFlowState, formatPendingAskUserQuestionsGateMessage, isApprovalGateVerifiedInSnapshot, isDepthConfirmationAnswer, isMilestoneDepthVerified, isMilestoneDepthVerifiedInSnapshot, isQueuePhaseActive, loadWriteGateSnapshot, markApprovalGateVerified, markDepthVerified, refreshWriteGateStateFromDisk, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeWrite, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { applyAskUserQuestionsGateResult, clearDiscussionFlowState, formatPendingAskUserQuestionsGateMessage, hostWriteGateAdapter, isApprovalGateVerifiedInSnapshot, isDepthConfirmationAnswer, isMilestoneDepthVerified, isMilestoneDepthVerifiedInSnapshot, isQueuePhaseActive, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeWrite, isGateQuestionId, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { canonicalToolName } from "../engine-hook-contract.js";
 import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
@@ -55,10 +56,12 @@ import { resolveWorktreeProjectRoot } from "../worktree-root.js";
 import { extractSubagentAgentClasses } from "./subagent-input.js";
 import {
   approvalGateIdForUnit,
+  evaluateAskUserQuestionsRound,
+  formatUnansweredConsentQuestionMessage,
   isExplicitApprovalResponse,
   messageHasPendingAskUserQuestionsTool,
-  shouldPauseForUserApprovalQuestion,
-} from "../user-input-boundary.js";
+  shouldPauseForQuestion,
+} from "../consent-question.js";
 import { resolveSkillManifest } from "../skill-manifest.js";
 import { applyUnitSkillVisibility, unitHasSkillManifest } from "../skill-scope.js";
 import { getGuidedUnitContext } from "../guided-unit-context.js";
@@ -74,11 +77,6 @@ import { resolveWorkflowToolBasePath } from "./dynamic-tools.js";
 import { getRequiredWorkflowToolsForUnit } from "../unit-tool-contracts.js";
 
 let approvalQuestionAbortInFlight = false;
-
-interface DeferredApprovalGate {
-  gateId: string;
-  basePath: string;
-}
 
 type WelcomeScreenModule = {
   buildWelcomeScreenLines(opts: { version: string; remoteChannel?: string; width?: number }): string[];
@@ -150,7 +148,13 @@ async function installWelcomeHeader(ctx: ExtensionContext): Promise<void> {
   }
 }
 
-let deferredApprovalGate: DeferredApprovalGate | null = null;
+/**
+ * Approval gates whose durable arming is deferred until tool execution /
+ * agent end, keyed by basePath. A Map (not a single slot) so concurrent
+ * projects in one process cannot lose each other's deferred gate; entries
+ * are bounded — cleared on activation, session boundaries, and verification.
+ */
+const deferredApprovalGates = new Map<string, string>();
 
 export const MINIMAL_GSD_TOOL_NAMES = [
   "gsd_exec",
@@ -558,13 +562,22 @@ async function applyCompactionThresholdOverride(ctx: ExtensionContext): Promise<
 }
 
 function clearDeferredApprovalGate(basePath?: string): void {
-  if (!basePath || deferredApprovalGate?.basePath === basePath) {
-    deferredApprovalGate = null;
+  if (!basePath) {
+    deferredApprovalGates.clear();
+  } else {
+    deferredApprovalGates.delete(basePath);
   }
 }
 
 function deferApprovalGate(gateId: string, basePath: string): void {
-  deferredApprovalGate = { gateId, basePath };
+  // Verified-on-disk wins (same adapter policy as activation/re-arm): if the
+  // workflow MCP child already verified this gate, deferring would block
+  // tools for a gate that can never legitimately arm.
+  const snapshot = hostWriteGateAdapter.readState(basePath);
+  if (isApprovalGateVerifiedInSnapshot(snapshot, gateId)) return;
+  const milestoneId = extractDepthVerificationMilestoneId(gateId);
+  if (milestoneId && isMilestoneDepthVerifiedInSnapshot(snapshot, milestoneId)) return;
+  deferredApprovalGates.set(basePath, gateId);
 }
 
 function contextBasePath(ctx?: { cwd?: string }): string {
@@ -621,14 +634,13 @@ function isShellExecutionTool(canonicalName: string): boolean {
 }
 
 function activateDeferredApprovalGate(basePath: string): void {
-  if (deferredApprovalGate?.basePath !== basePath) return;
-  const gateId = deferredApprovalGate.gateId;
-  deferredApprovalGate = null;
-  const snapshot = refreshWriteGateStateFromDisk(basePath);
-  const milestoneId = extractDepthVerificationMilestoneId(gateId);
-  if (isApprovalGateVerifiedInSnapshot(snapshot, gateId)) return;
-  if (milestoneId && isMilestoneDepthVerifiedInSnapshot(snapshot, milestoneId)) return;
-  setPendingGate(gateId, basePath);
+  const gateId = deferredApprovalGates.get(basePath);
+  if (gateId === undefined) return;
+  deferredApprovalGates.delete(basePath);
+  // hostWriteGateAdapter.setPending applies the verified-on-disk-wins merge
+  // policy: it refuses to arm (and thereby clobber) a gate the workflow MCP
+  // child already verified on disk.
+  hostWriteGateAdapter.setPending(gateId, basePath);
 }
 
 function extractGateQuestionId(input: unknown): string | undefined {
@@ -639,7 +651,7 @@ function extractGateQuestionId(input: unknown): string | undefined {
 
 function isApprovalGateBlocking(basePath: string): boolean {
   return Boolean(getPendingGate(basePath))
-    || (deferredApprovalGate?.basePath === basePath);
+    || deferredApprovalGates.has(basePath);
 }
 
 function isContextDraftSummarySave(toolName: string, input: unknown): boolean {
@@ -784,13 +796,14 @@ function shouldBlockDeferredApprovalTool(
   input: unknown,
   basePath: string,
 ): { block: boolean; reason?: string; displayReason?: string } {
-  if (deferredApprovalGate?.basePath !== basePath) return { block: false };
+  const deferredGateId = deferredApprovalGates.get(basePath);
+  if (deferredGateId === undefined) return { block: false };
   if (toolName === "ask_user_questions") return { block: false };
   if (isContextDraftSummarySave(toolName, input)) return { block: false };
   return withDepthGateDisplayReason({
     block: true,
     reason: [
-      `HARD BLOCK: Approval question "${deferredApprovalGate.gateId}" has been shown to the user.`,
+      `HARD BLOCK: Approval question "${deferredGateId}" has been shown to the user.`,
       `Only CONTEXT-DRAFT persistence may finish in this same assistant turn.`,
       `Wait for the user's answer before calling additional tools.`,
     ].join(" "),
@@ -920,10 +933,12 @@ export function registerHooks(
     const beforeAgentBasePath = contextBasePath(ctx);
     const pendingApprovalGate = getPendingGate(beforeAgentBasePath);
     if (pendingApprovalGate && isExplicitApprovalResponse(event.prompt, pendingApprovalGate)) {
-      markApprovalGateVerified(pendingApprovalGate, beforeAgentBasePath);
+      // Host adapter explicitly: the ambient write-gate exports env-sniff the
+      // adapter per call and are reserved for the MCP child's import surface.
+      hostWriteGateAdapter.markApprovalGateVerified(pendingApprovalGate, beforeAgentBasePath);
       const milestoneId = extractDepthVerificationMilestoneId(pendingApprovalGate);
-      if (milestoneId) markDepthVerified(milestoneId, beforeAgentBasePath);
-      clearPendingGate(beforeAgentBasePath);
+      if (milestoneId) hostWriteGateAdapter.markDepthVerified(milestoneId, beforeAgentBasePath);
+      hostWriteGateAdapter.clearPending(beforeAgentBasePath);
       if (isAutoPaused() && !isAutoActive()) {
         const { resumeAutoAfterProviderDelay } = await import("./provider-error-resume.js");
         void resumeAutoAfterProviderDelay(pi, ctx).catch((err) => {
@@ -1147,7 +1162,7 @@ export function registerHooks(
       }
     }
 
-    if (!shouldPauseForUserApprovalQuestion(unitType, [event.message])) return;
+    if (!shouldPauseForQuestion(unitType, [event.message])) return;
 
     const gateId = approvalGateIdForUnit(unitType, unitId);
     if (gateId) {
@@ -1162,7 +1177,7 @@ export function registerHooks(
 
     approvalQuestionAbortInFlight = true;
     ctx.ui.notify(
-      `${unitType}${unitId ? ` ${unitId}` : ""} is waiting for your approval - pausing before more tool calls run.`,
+      `${unitType ?? "The discussion"}${unitId ? ` ${unitId}` : ""} is waiting for your approval - pausing before more tool calls run.`,
       "info",
     );
     // The durable pending gate is activated at agent_end so same-turn
@@ -1190,6 +1205,13 @@ export function registerHooks(
     }
   });
 
+  // Engine hook contract (../engine-hook-contract.ts): tool_call is
+  // NATIVE_ONLY_TOOL_HOOKS — it never fires under external engines
+  // (claude-code-cli pre-executes tools). The guards below (loop guard,
+  // pending/deferred gate blocks, queue guard, planning-unit tools policy,
+  // worktree write gate, STATE.md single-writer, context-write depth gate)
+  // are therefore native-engine enforcement only. The write-gate arming
+  // concern has a universal mirror at tool_execution_start below.
   pi.on("tool_call", async (event, ctx) => {
     const discussionBasePath = contextBasePath(ctx);
     const toolName = canonicalToolName(event.toolName);
@@ -1377,6 +1399,11 @@ export function registerHooks(
   });
 
   // ── Safety harness: evidence collection + destructive command blocking ──
+  // Engine hook contract: tool_call is NATIVE_ONLY_TOOL_HOOKS. Evidence
+  // collection here is mirrored universally at tool_execution_start
+  // (safetyRecordToolCall dedupes by toolCallId); the destructive-command
+  // hard gate has NO universal mirror — blocking is impossible once an
+  // external engine has already executed the command.
   pi.on("tool_call", async (event, ctx) => {
     markToolStart(event.toolCallId, event.toolName);
     safetyRecordToolCall(event.toolCallId, event.toolName, event.input as Record<string, unknown>);
@@ -1436,6 +1463,11 @@ export function registerHooks(
     }
   });
 
+  // Engine hook contract: tool_result is NATIVE_ONLY_TOOL_HOOKS — external
+  // engines skip it. Error classification and markToolEnd are mirrored
+  // universally at tool_execution_end; the ask_user_questions gate lifecycle
+  // here is paired with the tool_execution_start arming path, which external
+  // engines do reach.
   pi.on("tool_result", async (event, ctx) => {
     if (isAutoActive() && typeof event.toolCallId === "string") {
       markToolEnd(event.toolCallId);
@@ -1516,7 +1548,45 @@ export function registerHooks(
       clearDeferredApprovalGate(basePath);
     }
 
-    if (details?.cancelled || !details?.response) return;
+    // ── Consent Question policy (consent-question.ts): one home for the
+    // answer lifecycle of every ask_user_questions round. Per-question
+    // verdicts come from the consent-verdict leaf — the same engine
+    // applyAskUserQuestionsGateResult consumed above for gate persistence —
+    // so empty answers on fail-closed kinds never pass as real answers (#528)
+    // and cancellations get one unified handler.
+    const roundOutcome = evaluateAskUserQuestionsRound(questions, details ?? {});
+    if (roundOutcome === "cancelled") {
+      resetToolCallLoopGuard();
+      if (ctx) {
+        await maybePauseAutoForApprovalGate(
+          ctx,
+          pi,
+          true,
+          "ask_user_questions was cancelled before receiving a response — pausing auto-mode until you respond.",
+        );
+      }
+      return;
+    }
+    if (roundOutcome === "waiting") {
+      resetToolCallLoopGuard();
+      if (ctx) {
+        await maybePauseAutoForApprovalGate(
+          ctx,
+          pi,
+          true,
+          "A user question received no answer — pausing auto-mode until you respond.",
+        );
+      }
+      return {
+        content: [{
+          type: "text" as const,
+          text: formatUnansweredConsentQuestionMessage(questions),
+        }],
+      };
+    }
+
+    // Cancelled rounds already returned via roundOutcome === "cancelled".
+    if (!details?.response) return;
 
     // Destructive-command confirmation: an affirmative answer to a
     // destructive_confirm gate promotes the pending blocked command to a
@@ -1539,6 +1609,9 @@ export function registerHooks(
     await saveDiscussionQuestionRound(basePath, milestoneId, questions, details);
   });
 
+  // Engine hook contract: tool_execution_start is UNIVERSAL_TOOL_HOOKS — the
+  // only pre-execution event that fires for every tool call on every engine.
+  // Universal mirrors live here: write-gate arming and evidence collection.
   pi.on("tool_execution_start", async (event, ctx) => {
     const basePath = contextBasePath(ctx);
     const toolName = canonicalToolName(event.toolName);
@@ -1547,31 +1620,23 @@ export function registerHooks(
       if (typeof questionId === "string") {
         // External engines (claude-code-cli) ingest the SDK turn's tool blocks
         // post-hoc, so this event can fire AFTER the workflow MCP child already
-        // verified this gate and allowed the CONTEXT save. setPendingGate also
-        // revokes verifiedDepthMilestones/verifiedApprovalGates, so an
-        // unconditional re-arm here wipes the child's verification and leaves
-        // the discuss→auto handoff permanently blocked. Skip the re-arm when
-        // the snapshot already records this exact gate as verified — mirrors
-        // activateDeferredApprovalGate's guard. Stale verified state cannot
-        // leak into a later re-discussion: a successful handoff deletes the
-        // snapshot via clearDiscussionFlowState.
-        const snapshot = refreshWriteGateStateFromDisk(basePath);
-        const gateMilestoneId = extractDepthVerificationMilestoneId(questionId);
-        const alreadyVerified =
-          isApprovalGateVerifiedInSnapshot(snapshot, questionId) ||
-          isMilestoneDepthVerifiedInSnapshot(snapshot, gateMilestoneId);
-        if (!alreadyVerified) {
-          setPendingGate(questionId, basePath);
-        }
+        // verified this gate and allowed the CONTEXT save. Arming also revokes
+        // verifiedDepthMilestones/verifiedApprovalGates, so an unconditional
+        // re-arm here would wipe the child's verification and leave the
+        // discuss→auto handoff permanently blocked. hostWriteGateAdapter
+        // .setPending applies the verified-on-disk-wins policy and skips the
+        // re-arm in that case. Stale verified state cannot leak into a later
+        // re-discussion: a successful handoff deletes the snapshot via
+        // clearDiscussionFlowState.
+        hostWriteGateAdapter.setPending(questionId, basePath);
         clearDeferredApprovalGate(basePath);
       }
     }
 
-    // Safety harness: record evidence here, not only in tool_call. External
-    // engines (claude-code-cli) pre-execute tools, so the agent loop skips
-    // beforeToolCall/tool_call for them — tool_execution_start is the only
-    // event that fires for every tool call. recordToolCall dedupes by
-    // toolCallId, so native tools (which hit both events) record once.
+    // Safety harness: record evidence here, not only in tool_call — see
+    // ../engine-hook-contract.ts for why tool_call never fires under external
+    // engines. recordToolCall dedupes by toolCallId, so native tools (which
+    // hit both events) record once.
     safetyRecordToolCall(event.toolCallId, event.toolName, (event.args ?? {}) as Record<string, unknown>);
     const execDash = getAutoRuntimeSnapshot();
     if (execDash.basePath && execDash.currentUnit?.type === "execute-task") {
@@ -1585,6 +1650,9 @@ export function registerHooks(
     markToolStart(event.toolCallId, event.toolName);
   });
 
+  // Engine hook contract: tool_execution_end is UNIVERSAL_TOOL_HOOKS — fires
+  // for every finalized tool call on every engine, so error classification
+  // and evidence persistence here cover external engines that skip tool_result.
   pi.on("tool_execution_end", async (event) => {
     markToolEnd(event.toolCallId);
     // #2883/#4974: Capture deterministic invocation/policy errors

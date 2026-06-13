@@ -19,7 +19,7 @@ import {
   type PostUnitContext,
   type PreVerificationOpts,
 } from "../auto-post-unit.js";
-import { lastAssistantText } from "../user-input-boundary.js";
+import { lastAssistantText } from "../consent-question.js";
 import { resolveEffectiveUnitIsolationMode } from "../preferences.js";
 import type { Phase } from "../types.js";
 import {
@@ -33,6 +33,7 @@ import {
   type IterationData,
 } from "./types.js";
 import { detectStuck } from "./detect-stuck.js";
+import { STUCK_WINDOW_SIZE } from "./dispatch-history.js";
 import { runUnit } from "./run-unit.js";
 import { debugLog } from "../debug-logger.js";
 import { resolveWorktreeProjectRoot, normalizeWorktreePathForCompare } from "../worktree-root.js";
@@ -107,7 +108,6 @@ import {
 } from "../root-write-leak-guard.js";
 import { classifyError, isTransient } from "../error-classifier.js";
 
-export const STUCK_WINDOW_SIZE = 6;
 const STUCK_RECOVERY_ATTEMPTS_KEY = "stuck_recovery_attempts";
 const ZERO_TOOL_PROVIDER_ERROR_PREFIX_RE =
   /^(?:api error(?::|$|\s*\()|provider error(?::|$|\s*\()|request failed\b|(?:http\s*)?(?:429|500|502|503)\b|\b(?:econnreset|etimedout|econnrefused|epipe)\b|socket hang up\b|fetch failed\b|(?:network|connection|server) error(?::|$)|connection (?:reset|refused)(?::|$|\s+by\b)|dns\b.*(?:fail|error|timeout)|unexpected eof\b|stream idle timeout\b|partial response received\b|stream_exhausted\b|terminated(?::|$)|(?:connection|stream|request)\b.{0,40}\bterminated\b|other side closed\b|rate.?limit(?:ed| exceeded| reached| error)|too many requests\b|you(?:'ve| have) (?:hit|reached) your (?:\w+ )?limit\b|.*\b(?:usage|session|weekly|daily|monthly|quota) limit\b|limit\b.{0,40}\bresets?\b|out of extra usage\b|service.?unavailable\b|internal(?: server)? error(?::|$)|internal(?:[_-]server)?[_-]error\b|server[_-]error\b|(?:provider|server|api|model|codex|claude|openai|anthropic|gemini)\b.{0,80}\boverloaded\b|overloaded\b.{0,80}\b(?:provider|server|api|model)\b|context (?:window|length) exceed|context window exceed)/i;

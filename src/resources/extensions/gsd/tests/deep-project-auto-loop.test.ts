@@ -15,7 +15,7 @@ import { resolveDispatch, setResearchProjectPromptBuilderForTest } from "../auto
 import { resolveExpectedArtifactPath, verifyExpectedArtifact, writeBlockerPlaceholder } from "../auto-recovery.ts";
 import { finalizeProjectResearchTimeout } from "../project-research-policy.ts";
 import { resetRegistry } from "../rule-registry.ts";
-import { approvalGateIdForUnit, isAwaitingUserInput, isExplicitApprovalResponse, shouldPauseForUserApprovalQuestion } from "../user-input-boundary.ts";
+import { approvalGateIdForUnit, isAwaitingUserInput, isExplicitApprovalResponse, shouldPauseForQuestion } from "../consent-question.ts";
 import {
   clearPendingAutoStart,
   checkDeepProjectSetupAfterTurn,
@@ -1402,7 +1402,7 @@ test("deep project setup: user-quoted remote question failure does not pause aut
   ];
 
   assert.equal(isAwaitingUserInput(messages), false);
-  assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
+  assert.equal(shouldPauseForQuestion("discuss-project", messages), false);
 });
 
 test("deep project setup: plain-text approval wait is treated as waiting for user input", () => {
@@ -1426,7 +1426,7 @@ test("deep project setup: opening interview question does not trigger approval a
   ];
 
   assert.equal(isAwaitingUserInput(messages), true);
-  assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
+  assert.equal(shouldPauseForQuestion("discuss-project", messages), false);
 });
 
 test("deep project setup: grounding interview question with requirements context does not trigger approval abort", () => {
@@ -1441,7 +1441,7 @@ test("deep project setup: grounding interview question with requirements context
   ];
 
   assert.equal(isAwaitingUserInput(messages), true);
-  assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
+  assert.equal(shouldPauseForQuestion("discuss-project", messages), false);
 });
 
 test("deep project setup: persistence and anti-goals interview prompt does not trigger approval abort", () => {
@@ -1460,7 +1460,7 @@ test("deep project setup: persistence and anti-goals interview prompt does not t
   ];
 
   assert.equal(isAwaitingUserInput(messages), true);
-  assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
+  assert.equal(shouldPauseForQuestion("discuss-project", messages), false);
 });
 
 test("deep project setup: discovery questions before writing PROJECT do not trigger approval abort", () => {
@@ -1479,7 +1479,7 @@ test("deep project setup: discovery questions before writing PROJECT do not trig
   ];
 
   assert.equal(isAwaitingUserInput(messages), true);
-  assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
+  assert.equal(shouldPauseForQuestion("discuss-project", messages), false);
 });
 
 test("deep project setup: discovery question mentioning write intent does not trigger approval abort", () => {
@@ -1491,7 +1491,7 @@ test("deep project setup: discovery question mentioning write intent does not tr
   ];
 
   assert.equal(isAwaitingUserInput(messages), true);
-  assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
+  assert.equal(shouldPauseForQuestion("discuss-project", messages), false);
 });
 
 test("deep project setup: scope discovery question mentioning add does not trigger approval abort", () => {
@@ -1503,7 +1503,7 @@ test("deep project setup: scope discovery question mentioning add does not trigg
   ];
 
   assert.equal(isAwaitingUserInput(messages), true);
-  assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
+  assert.equal(shouldPauseForQuestion("discuss-project", messages), false);
 });
 
 test("deep project setup: requirements preview question from screenshot is treated as waiting", () => {
@@ -1523,12 +1523,12 @@ test("deep project setup: requirements preview question from screenshot is treat
   ];
 
   assert.equal(isAwaitingUserInput(messages), true);
-  assert.equal(shouldPauseForUserApprovalQuestion("discuss-requirements", messages), true);
+  assert.equal(shouldPauseForQuestion("discuss-requirements", messages), true);
 });
 
 test("deep project setup: research decision question triggers approval boundary pause", () => {
   assert.equal(
-    shouldPauseForUserApprovalQuestion("research-decision", [
+    shouldPauseForQuestion("research-decision", [
       {
         role: "assistant",
         content: "Run domain research now? (y/n)",

@@ -15,7 +15,7 @@
 
 import type { ExtensionContext, ExtensionAPI } from "@gsd/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { gsdProjectionRoot, resolveSliceFile, resolveSlicePath, resolveMilestoneFile } from "./paths.js";
+import { gsdProjectionRoot, resolveSliceFile, resolveSlicePath } from "./paths.js";
 import { resolveMilestoneValidationVerdict } from "./milestone-validation-verdict.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { parseUnitId } from "./unit-id.js";
@@ -25,8 +25,6 @@ import { loadEffectiveGSDPreferences } from "./preferences.js";
 import type { GSDPreferences } from "./preferences-types.js";
 import { isClosedStatus } from "./status-guards.js";
 import { loadFile } from "./files.js";
-import { parseRoadmap } from "./parsers-legacy.js";
-import { isMilestoneComplete } from "./state.js";
 import {
   runVerificationGate,
   runVerificationGateForTargets,
@@ -373,29 +371,13 @@ async function runValidateMilestonePostCheck(
  * DB-backed projects are authoritative (#4094 peer review); falls back to
  * roadmap parsing only when the DB is unavailable.
  */
-async function countIncompleteSlices(basePath: string, milestoneId: string): Promise<number> {
-  if (isDbAvailable()) {
-    const slices = getMilestoneSlices(milestoneId);
-    if (slices.length === 0) {
-      // No DB rows — treat as "unknown", do not pause.
-      return 1;
-    }
-    return slices.filter((slice) => !isClosedStatus(slice.status)).length;
-  }
-
-  // Filesystem fallback: parse the roadmap markdown.
-  try {
-    const roadmapFile = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
-    if (!roadmapFile) return 1;
-    const roadmapContent = await loadFile(roadmapFile);
-    if (!roadmapContent) return 1;
-    const roadmap = parseRoadmap(roadmapContent);
-    if (roadmap.slices.length === 0) return 1;
-    return isMilestoneComplete(roadmap) ? 0 : 1;
-  } catch {
-    // Parsing failures should not cause false-positive pauses.
-    return 1;
-  }
+async function countIncompleteSlices(_basePath: string, milestoneId: string): Promise<number> {
+  // DB-authoritative (ADR-017): no markdown fallback. DB unavailable or no
+  // rows means "unknown" — do not pause.
+  if (!isDbAvailable()) return 1;
+  const slices = getMilestoneSlices(milestoneId);
+  if (slices.length === 0) return 1;
+  return slices.filter((slice) => !isClosedStatus(slice.status)).length;
 }
 
 /**
