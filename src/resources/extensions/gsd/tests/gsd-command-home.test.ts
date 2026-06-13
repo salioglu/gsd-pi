@@ -4,10 +4,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { buildGsdHomeModel, showGsdHome } from "../gsd-command-home.ts";
+import { detectIdleMilestoneResidueHint } from "../closeout-wizard.ts";
 import type { GSDState } from "../types.ts";
 
 function baseState(overrides: Partial<GSDState> = {}): GSDState {
@@ -116,6 +118,42 @@ test("/gsd home recommends start or configure after all milestones complete", ()
   assert.equal(action(model, "continue_step").enabled, false);
   assert.equal(action(model, "run_auto").enabled, false);
   assert.match(model.summary.join("\n"), /All milestones complete/);
+});
+
+test("/gsd home recommends fix or recover when milestone git residue is stranded", () => {
+  const model = buildGsdHomeModel(baseState({
+    activeMilestone: null,
+    activeSlice: null,
+    activeTask: null,
+    phase: "complete",
+    nextAction: "All milestones complete.",
+  }), {
+    strandedQuick: null,
+    unmergedMilestones: [],
+    idleResidueHint: {
+      milestoneIds: ["M008"],
+      message:
+        "Stranded milestone git residue detected (M008: worktree dir and/or milestone/* branch). " +
+        "Run /gsd dispatch complete-milestone M008 or /gsd status to recover closeout before starting new work.",
+    },
+  });
+
+  assert.equal(action(model, "fix_recover").recommended, true);
+  assert.equal(action(model, "fix_recover").enabled, true);
+  assert.match(model.summary[0], /Stranded milestone git residue/);
+  assert.equal(action(model, "continue_step").enabled, false);
+});
+
+test("detectIdleMilestoneResidueHint reports missing workflow database in a git repo", () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-home-residue-"));
+  try {
+    execFileSync("git", ["init", "-b", "main"], { cwd: base, stdio: "ignore" });
+    const hint = detectIdleMilestoneResidueHint(base);
+    assert.ok(hint);
+    assert.match(hint!.message, /\.gsd\/gsd\.db/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("showGsdHome renders the five-slot home text without an interactive TUI", async () => {
