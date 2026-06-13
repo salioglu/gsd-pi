@@ -601,13 +601,20 @@ export async function handleUpdate(ctx: ExtensionCommandContext, args = ""): Pro
     execSync(installCmd, {
       stdio: ["ignore", "pipe", "ignore"],
     });
-    const reconcile = browserUpdate
-      ? reconcileGsdBrowserPathAfterInstall({
+    let reconcile: ReturnType<typeof reconcileGsdBrowserPathAfterInstall> | null = null;
+    if (browserUpdate) {
+      try {
+        reconcile = reconcileGsdBrowserPathAfterInstall({
           latestVersion: latest,
           compareSemver: compareSemverLocal,
           resolvePathVersion: resolveGsdBrowserPathVersionForCommand,
-        })
-      : null;
+        });
+      } catch {
+        // Reconciliation is best-effort: the install above already succeeded,
+        // so a reconcile failure must not flip the result to "Update failed".
+        reconcile = null;
+      }
+    }
     const newPathVersion = browserUpdate ? resolveGsdBrowserPathVersionForCommand() : null;
     const pathNote = browserUpdate && !(newPathVersion && compareSemverLocal(newPathVersion, latest) >= 0)
       ? (reconcile?.message

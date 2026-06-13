@@ -853,3 +853,113 @@ test("reconcileGsdBrowserPathAfterInstall reports shadowing for non-home targets
   assert.equal(resolveGsdBrowserPathVersionFromEnv(env), "1.0.0");
   assert.match(result.message ?? "", /Move your package manager global bin directory ahead/);
 });
+
+test("reconcileGsdBrowserPathAfterInstall reports synced when copy succeeds even if PATH version probe is inconclusive", (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX symlink PATH shadowing scenario");
+  }
+
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-browser-path-sync-unverified-"));
+  const homeDir = join(tmp, "home");
+  const managedBinDir = join(homeDir, ".gsd-browser", "bin");
+  const pathBinDir = join(tmp, "path-bin");
+  const globalBinDir = join(tmp, "global-bin");
+  const fakeNpmDir = join(tmp, "fake-npm");
+
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const managedCli = writeFakeGsdBrowser(managedBinDir, "1.0.0");
+  writeFakeGsdBrowser(globalBinDir, "2.0.0");
+  mkdirSync(pathBinDir, { recursive: true });
+  symlinkSync(managedCli, join(pathBinDir, "gsd-browser"));
+  writeFakeNpmGlobalBin(fakeNpmDir, globalBinDir);
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: homeDir,
+    PATH: `${pathBinDir}${delimiter}${fakeNpmDir}`,
+    npm_config_user_agent: undefined,
+    npm_execpath: undefined,
+    PNPM_HOME: undefined,
+  };
+
+  // Pretend the post-sync version probe cannot read the new version (timeout,
+  // shell cache, etc.) by returning null on the second call. The first call —
+  // before sync — sees the old binary; the second — after sync — returns null.
+  let probeCalls = 0;
+  const flakyResolvePathVersion = (probeEnv: NodeJS.ProcessEnv): string | null => {
+    probeCalls += 1;
+    return probeCalls === 1 ? resolveGsdBrowserPathVersionFromEnv(probeEnv) : null;
+  };
+
+  const result = reconcileGsdBrowserPathAfterInstall({
+    latestVersion: "2.0.0",
+    compareSemver,
+    resolvePathVersion: flakyResolvePathVersion,
+    env,
+    argv1: "/usr/local/lib/node_modules/@opengsd/gsd-pi/dist/loader.js",
+  });
+
+  // The copy actually succeeded — the post-sync probe being inconclusive
+  // must not flip the result to "shadowed".
+  assert.equal(result.action, "synced");
+  assert.equal(resolveGsdBrowserPathVersionFromEnv(env), "2.0.0");
+  assert.match(result.message ?? "", /Synced PATH-resolved gsd-browser/);
+});
+
+test("reconcileGsdBrowserPathAfterInstall does not throw when PATH entry vanishes between resolve and sync", (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX symlink PATH shadowing scenario");
+  }
+
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-browser-path-vanish-"));
+  const homeDir = join(tmp, "home");
+  const pathBinDir = join(tmp, "path-bin");
+  const globalBinDir = join(tmp, "global-bin");
+  const fakeNpmDir = join(tmp, "fake-npm");
+
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  writeFakeGsdBrowser(globalBinDir, "2.0.0");
+  mkdirSync(pathBinDir, { recursive: true });
+  // Write a stale binary on PATH so resolvePathBinary finds it, then delete it
+  // before reconciliation reads it via lstatSync. resolvePathBinary uses
+  // existsSync which can race with deletion in real systems; simulate that
+  // here by leaving an entry that disappears between the two reads.
+  writeFakeGsdBrowser(pathBinDir, "1.0.0");
+  writeFakeNpmGlobalBin(fakeNpmDir, globalBinDir);
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: homeDir,
+    PATH: `${pathBinDir}${delimiter}${fakeNpmDir}`,
+    npm_config_user_agent: undefined,
+    npm_execpath: undefined,
+    PNPM_HOME: undefined,
+  };
+
+  // Patch resolvePathVersion to remove the PATH binary the moment it is first
+  // queried — that mimics the entry vanishing between resolution and the
+  // lstatSync call inside reconcileGsdBrowserPathAfterInstall.
+  let firstCall = true;
+  const racyResolvePathVersion = (probeEnv: NodeJS.ProcessEnv): string | null => {
+    if (firstCall) {
+      firstCall = false;
+      const version = resolveGsdBrowserPathVersionFromEnv(probeEnv);
+      rmSync(join(pathBinDir, "gsd-browser"), { force: true });
+      return version;
+    }
+    return resolveGsdBrowserPathVersionFromEnv(probeEnv);
+  };
+
+  // The reconciliation must not throw even if the PATH entry disappears.
+  assert.doesNotThrow(() => {
+    reconcileGsdBrowserPathAfterInstall({
+      latestVersion: "2.0.0",
+      compareSemver,
+      resolvePathVersion: racyResolvePathVersion,
+      env,
+      argv1: "/usr/local/lib/node_modules/@opengsd/gsd-pi/dist/loader.js",
+    });
+  });
+});

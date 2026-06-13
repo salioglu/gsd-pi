@@ -108,11 +108,18 @@ function resolveRealPath(pathValue: string): string {
 }
 
 function resolveSymlinkTarget(pathCli: string): string {
-  const stat = lstatSync(pathCli)
-  if (!stat.isSymbolicLink()) return pathCli
+  try {
+    const stat = lstatSync(pathCli)
+    if (!stat.isSymbolicLink()) return pathCli
 
-  const target = readlinkSync(pathCli)
-  return isAbsolute(target) ? target : resolvePath(dirname(pathCli), target)
+    const target = readlinkSync(pathCli)
+    return isAbsolute(target) ? target : resolvePath(dirname(pathCli), target)
+  } catch {
+    // PATH entry vanished or is inaccessible between resolution and sync.
+    // Fall back to the original path; subsequent sync will surface a useful
+    // error rather than escaping as an unhandled throw.
+    return pathCli
+  }
 }
 
 function resolveHomeDir(env: NodeJS.ProcessEnv): string {
@@ -231,20 +238,27 @@ export function reconcileGsdBrowserPathAfterInstall(
     }
   }
 
+  let syncSucceeded = false
   try {
     syncBinary(installedCli, syncTarget, platform)
-    const refreshedVersion = options.resolvePathVersion(env)
-    if (refreshedVersion && options.compareSemver(refreshedVersion, options.latestVersion) >= 0) {
-      return {
-        action: 'synced',
-        pathCli,
-        installedCli,
-        syncTarget,
-        message: `Synced PATH-resolved gsd-browser at ${syncTarget} to the updated global install.`,
-      }
-    }
+    syncSucceeded = true
   } catch {
     // Fall through to shadowed guidance.
+  }
+
+  if (syncSucceeded) {
+    const refreshedVersion = options.resolvePathVersion(env)
+    const verified = refreshedVersion !== null
+      && options.compareSemver(refreshedVersion, options.latestVersion) >= 0
+    return {
+      action: 'synced',
+      pathCli,
+      installedCli,
+      syncTarget,
+      message: verified
+        ? `Synced PATH-resolved gsd-browser at ${syncTarget} to the updated global install.`
+        : `Synced PATH-resolved gsd-browser at ${syncTarget} to the updated global install. Could not verify the new version on PATH; restart your shell or rerun if it still reports the old version.`,
+    }
   }
 
   return {

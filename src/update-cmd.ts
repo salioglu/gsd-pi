@@ -78,18 +78,25 @@ async function runBrowserUpdate(): Promise<void> {
     })
     process.stdout.write(`\n${green}${bold}Updated gsd-browser to v${latest}${reset}\n`)
 
-    const reconcile = reconcileGsdBrowserPathAfterInstall({
-      latestVersion: latest,
-      compareSemver,
-      resolvePathVersion: resolveGsdBrowserPathVersion,
-    })
-    if (reconcile.action === 'synced' && reconcile.message) {
+    let reconcile: ReturnType<typeof reconcileGsdBrowserPathAfterInstall> | null = null
+    try {
+      reconcile = reconcileGsdBrowserPathAfterInstall({
+        latestVersion: latest,
+        compareSemver,
+        resolvePathVersion: resolveGsdBrowserPathVersion,
+      })
+    } catch {
+      // Reconciliation is best-effort: the install above already succeeded,
+      // so a reconcile failure must not flip the result to "Update failed".
+      reconcile = null
+    }
+    if (reconcile?.action === 'synced' && reconcile.message) {
       process.stdout.write(`${green}${reconcile.message}${reset}\n`)
     }
 
     const newPathVersion = resolveGsdBrowserPathVersion()
     if (!newPathVersion || compareSemver(newPathVersion, latest) < 0) {
-      const guidance = reconcile.message
+      const guidance = reconcile?.message
         ?? `${dim}Ensure the npm global bin directory is on your PATH so MCP automation uses the updated binary.${reset}`
       process.stdout.write(`${yellow}Note:${reset} ${guidance}\n`)
     }
