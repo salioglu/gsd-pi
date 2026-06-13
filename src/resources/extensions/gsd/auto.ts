@@ -924,6 +924,14 @@ export function setCurrentDispatchedModelId(model: { provider: string; id: strin
   s.currentDispatchedModelId = model ? `${model.provider}/${model.id}` : null;
 }
 
+/**
+ * Update the active unit model after runtime recovery switches models mid-unit.
+ * The next session restore path reads this field before dispatching again.
+ */
+export function setCurrentUnitModelForRecovery(model: any | null): void {
+  s.currentUnitModel = model;
+}
+
 // Tool tracking — delegates to auto-tool-tracking.ts
 export function markToolStart(toolCallId: string, toolName?: string): void {
   _markToolStart(toolCallId, s.active, toolName);

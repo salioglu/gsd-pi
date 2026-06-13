@@ -19,6 +19,7 @@ import {
   isAutoCompletionStopInProgress,
   pauseAuto,
   setCurrentDispatchedModelId,
+  setCurrentUnitModelForRecovery,
 } from "../auto.js";
 import { getNextFallbackModel, resolveModelWithFallbacksForUnit } from "../preferences.js";
 import { pauseAutoForProviderError } from "../provider-error-pause.js";
@@ -41,7 +42,7 @@ import {
   isTransient,
   type ErrorClass,
 } from "../error-classifier.js";
-import { blockModel, isModelBlocked } from "../blocked-models.js";
+import { blockModel, blockModelUntil, isModelBlocked, isModelTemporarilyUnavailable } from "../blocked-models.js";
 import { getProjectGSDPreferencesPath } from "../preferences.js";
 import { resolveProviderErrorGuidance } from "../provider-error-guidance.js";
 import { formatGuidance } from "../guidance.js";
@@ -143,9 +144,14 @@ async function tryProviderModelFallback(params: ProviderModelFallbackParams): Pr
       const nextModelId = getNextFallbackModel(cursorModelId, modelConfig);
       if (!nextModelId) break;
       const candidate = resolveModelId(nextModelId, availableModels, rejectedProvider);
-      if (candidate && !isModelBlocked(basePath, candidate.provider, candidate.id)) {
+      if (
+        candidate &&
+        !isModelBlocked(basePath, candidate.provider, candidate.id) &&
+        !isModelTemporarilyUnavailable(basePath, candidate.provider, candidate.id)
+      ) {
         const ok = await pi.setModel(candidate, { persist: false });
         if (ok) {
+          setCurrentUnitModelForRecovery(candidate);
           setCurrentDispatchedModelId({ provider: candidate.provider, id: candidate.id });
           switchedNotify(`${candidate.provider}/${candidate.id}`);
           pi.sendMessage(
@@ -163,7 +169,8 @@ async function tryProviderModelFallback(params: ProviderModelFallbackParams): Pr
   if (
     sessionModel &&
     !(sessionModel.provider === rejectedProvider && sessionModel.id === rejectedId) &&
-    !isModelBlocked(basePath, sessionModel.provider, sessionModel.id)
+    !isModelBlocked(basePath, sessionModel.provider, sessionModel.id) &&
+    !isModelTemporarilyUnavailable(basePath, sessionModel.provider, sessionModel.id)
   ) {
     const startModel = availableModels.find(
       (m) => m.provider === sessionModel.provider && m.id === sessionModel.id,
@@ -171,6 +178,7 @@ async function tryProviderModelFallback(params: ProviderModelFallbackParams): Pr
     if (startModel) {
       const ok = await pi.setModel(startModel, { persist: false });
       if (ok) {
+        setCurrentUnitModelForRecovery(startModel);
         setCurrentDispatchedModelId({ provider: startModel.provider, id: startModel.id });
         switchedNotify(`${startModel.provider}/${startModel.id}`);
         pi.sendMessage(
@@ -676,6 +684,16 @@ export async function handleAgentEnd(
       if (currentProvider === "openai-codex" || currentProvider === "google-gemini-cli") {
         cls.retryAfterMs = Math.min(cls.retryAfterMs, 30_000);
       }
+      const dash = getAutoDashboardData();
+      if (dash.basePath && ctx.model?.provider && ctx.model?.id) {
+        blockModelUntil(
+          dash.basePath,
+          ctx.model.provider,
+          ctx.model.id,
+          Date.now() + cls.retryAfterMs,
+          rawErrorMsg || displayMsg || "rate limit",
+        );
+      }
     }
 
     // ── 2. Decide & Act ──────────────────────────────────────────────────
@@ -721,9 +739,14 @@ export async function handleAgentEnd(
             retryState.networkRetryCount = 0;
             retryState.currentRetryModelId = undefined;
             const modelToSet = resolveModelId(nextModelId, availableModels, ctx.model?.provider);
-            if (modelToSet) {
+            const modelUnavailable = dash.basePath && modelToSet
+              ? isModelBlocked(dash.basePath, modelToSet.provider, modelToSet.id) ||
+                isModelTemporarilyUnavailable(dash.basePath, modelToSet.provider, modelToSet.id)
+              : false;
+            if (modelToSet && !modelUnavailable) {
               const ok = await pi.setModel(modelToSet, { persist: false });
               if (ok) {
+                setCurrentUnitModelForRecovery(modelToSet);
                 setCurrentDispatchedModelId({ provider: modelToSet.provider, id: modelToSet.id });
                 ctx.ui.notify(`Model error${errorDetail}. Switched to fallback: ${nextModelId} and resuming.`, "warning");
                 pi.sendMessage({ customType: "gsd-auto-timeout-recovery", content: "Continue execution.", display: false }, { triggerTurn: true });
@@ -737,11 +760,17 @@ export async function handleAgentEnd(
       // Try restoring session model
       const sessionModel = getAutoModeStartModel();
       if (sessionModel) {
-        if (ctx.model?.id !== sessionModel.id || ctx.model?.provider !== sessionModel.provider) {
+        const dash = getAutoDashboardData();
+        const sessionModelUnavailable = dash.basePath
+          ? isModelBlocked(dash.basePath, sessionModel.provider, sessionModel.id) ||
+            isModelTemporarilyUnavailable(dash.basePath, sessionModel.provider, sessionModel.id)
+          : false;
+        if (!sessionModelUnavailable && (ctx.model?.id !== sessionModel.id || ctx.model?.provider !== sessionModel.provider)) {
           const startModel = ctx.modelRegistry.getAvailable().find((m) => m.provider === sessionModel.provider && m.id === sessionModel.id);
           if (startModel) {
             const ok = await pi.setModel(startModel, { persist: false });
             if (ok) {
+              setCurrentUnitModelForRecovery(startModel);
               setCurrentDispatchedModelId({ provider: startModel.provider, id: startModel.id });
               retryState.networkRetryCount = 0;
               retryState.currentRetryModelId = undefined;
