@@ -243,8 +243,15 @@ export async function decideOrchestratorDispatch(
         ? "true"
         : "false");
 
+  // Only replay a milestone-scoped verification retry when a milestone is
+  // active. Pre-PR (#712 fix), `!active` returned null before reaching this
+  // block, so the retry was preserved for a future tick. The new
+  // pre-planning + deep-pending fall-through must keep that contract:
+  // otherwise a stale execute-task / complete-slice / complete-milestone
+  // retry whose target milestone has since been parked would preempt
+  // project-level deep rules like `discuss-project`.
   const pendingRetry = session?.pendingVerificationRetryDispatch;
-  if (session && pendingRetry) {
+  if (session && pendingRetry && active) {
     session.pendingVerificationRetryDispatch = null;
     const alreadyClosedReason = getAlreadyClosedDispatchReason(
       pendingRetry.unitType,
