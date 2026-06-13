@@ -156,19 +156,25 @@ function parseTableSlices(section: string): RoadmapSliceEntry[] {
 
 function looksLikeTable(section: string): boolean {
   const lines = section.split("\n");
-  const firstContentLineIndex = lines.findIndex(line => line.trim() !== "");
-  if (firstContentLineIndex < 0 || !/^\s*\|/.test(lines[firstContentLineIndex]!)) {
+
+  // Checkbox format takes precedence — embedded demo tables must not switch mode (#721).
+  if (lines.some(line => /^\s*-\s+\[[ xX]\]/.test(line))) {
     return false;
   }
 
-  const firstPipeLineIndex = lines.findIndex(line => /^\s*\|/.test(line));
-  if (firstPipeLineIndex < 0) return false;
+  const pipeLines = lines.filter(line => /^\s*\|/.test(line));
+  if (pipeLines.length < 2) return false;
 
-  const separatorLine = lines.slice(firstPipeLineIndex + 1).find(line => /^\s*\|/.test(line));
-  if (!separatorLine) return false;
+  const hasSeparatorRow = pipeLines.some((line, index) => {
+    if (index === 0) return false;
+    const cells = line.split("|").map(c => c.trim()).filter(Boolean);
+    return /^\s*\|[\s:-]+\|/.test(line) && cells.length >= 2 && cells.every(c => /^[\s:-]+$/.test(c));
+  });
 
-  const cells = separatorLine.split("|").map(c => c.trim()).filter(Boolean);
-  return /^\s*\|[\s:-]+\|/.test(separatorLine) && cells.length >= 2 && cells.every(c => /^[\s:-]+$/.test(c));
+  if (hasSeparatorRow) return true;
+
+  // Tables without a separator row still expose slice IDs in data rows.
+  return pipeLines.some(line => /\bS\d+\b/.test(line));
 }
 
 export function parseRoadmapSlices(content: string): RoadmapSliceEntry[] {
