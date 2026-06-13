@@ -53,7 +53,7 @@ export async function isCompletedMilestoneTerminal(
     const milestone = getMilestone(milestoneId);
     if (!milestone) return false;
 
-    if (milestone.status === "complete") {
+    if (isClosedStatus(milestone.status)) {
       return true;
     }
 
@@ -109,6 +109,10 @@ export async function repairMissingMilestoneSummaryProjection(
 
   if ("error" in result) {
     return { ok: false, error: result.error };
+  }
+  const writtenSummaryPath = result.summaryPath;
+  if (result.stale || !writtenSummaryPath || !existsSync(writtenSummaryPath)) {
+    return { ok: false, error: "milestone SUMMARY projection write failed" };
   }
   return { ok: true };
 }
