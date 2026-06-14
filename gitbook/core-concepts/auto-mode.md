@@ -28,6 +28,12 @@ Plan → Execute (per task) → Complete → Reassess Roadmap → Next Slice
 
 Before milestone closeout, every slice must have a UAT assessment with verdict `PASS`. If a slice is missing a PASS verdict, auto mode stops with guidance to run `/gsd dispatch uat`, request a slice-specific UAT rerun when needed, inspect `/gsd status`, or add remediation slices with `/gsd dispatch reassess`.
 
+## Idempotent Milestone Completion
+
+Milestone completion is safe to retry. If a `complete-milestone` unit is redispatched after the database already marks the milestone as closed, GSD treats the call as successful instead of returning an error. The existing summary projection is left intact, no duplicate completion event is appended, and the tool response includes `alreadyComplete: true` in its details so operators and integrations can distinguish a retry from the first completion.
+
+The auto loop applies the same idempotency at terminal closeout: if another session is already stopping for completion, or the database already shows the milestone closed, the loop exits as complete without replaying merge, desktop notification, cmux notification, or stop side effects.
+
 ## State Authority
 
 The GSD database is the runtime source of truth for milestones, slices, tasks, requirements, summaries, and completion status. Durable decisions and project knowledge use the same database through the `memories` table: decisions are stored as `architecture` memories, and KNOWLEDGE patterns/lessons are stored as `pattern`/`gotcha` memories.

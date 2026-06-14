@@ -20,8 +20,8 @@ import {
   type PreVerificationOpts,
 } from "../auto-post-unit.js";
 import { lastAssistantText } from "../consent-question.js";
-import { resolveEffectiveUnitIsolationMode } from "../preferences.js";
-import type { Phase } from "../types.js";
+import { resolveEffectiveUnitIsolationMode, getIsolationMode } from "../preferences.js";
+import type { GSDState, Phase } from "../types.js";
 import {
   MAX_RECOVERY_CHARS,
   BUDGET_THRESHOLDS,
@@ -62,9 +62,10 @@ import { writeUnitRuntimeRecord } from "../unit-runtime.js";
 import { withTimeout, FINALIZE_PRE_TIMEOUT_MS, FINALIZE_POST_TIMEOUT_MS } from "./finalize-timeout.js";
 import { getEligibleSlices } from "../slice-parallel-eligibility.js";
 import { isSliceParallelActive, startSliceParallel } from "../slice-parallel-orchestrator.js";
-import { isDbAvailable, getMilestoneSlices, getSlice, getTask } from "../gsd-db.js";
+import { isDbAvailable, getMilestone, getMilestoneSlices, getSlice, getTask } from "../gsd-db.js";
 import { refreshWorkflowDatabaseFromDisk } from "../db-workspace.js";
 import { isClosedStatus } from "../status-guards.js";
+import { findUnmergedCompletedMilestones } from "../unmerged-milestone-guard.js";
 import { setRuntimeKv } from "../db/runtime-kv.js";
 import { getLatestForUnit } from "../db/unit-dispatches.js";
 import { reconcileBeforeSpawn } from "../state-reconciliation.js";
@@ -835,6 +836,39 @@ async function failClosedOnFinalizeTimeout(
   return { action: "break", reason: progressKind };
 }
 
+export async function shouldSkipTerminalMilestoneCloseout(
+  s: AutoSession,
+  state: Pick<GSDState, "phase" | "lastCompletedMilestone" | "activeMilestone">,
+  mid?: string | null,
+): Promise<{ skip: boolean; milestoneId?: string }> {
+  const closeoutMilestoneId = mid ?? s.currentMilestoneId ?? state.lastCompletedMilestone?.id;
+  if (s.completionStopInProgress) {
+    return { skip: true, milestoneId: closeoutMilestoneId };
+  }
+  if (!closeoutMilestoneId) {
+    return { skip: false };
+  }
+  if (isDbAvailable()) refreshWorkflowDatabaseFromDisk();
+  const closeoutBasePath = s.originalBasePath || s.canonicalProjectRoot || s.basePath;
+  let closeoutMergePending = false;
+  if (getIsolationMode(closeoutBasePath) !== "none") {
+    try {
+      const blockers = await findUnmergedCompletedMilestones(closeoutBasePath);
+      closeoutMergePending = blockers.some((blocker) => blocker.milestoneId === closeoutMilestoneId);
+    } catch {
+      // Fail open: without git/DB inspection we cannot safely treat closeout as done.
+      closeoutMergePending = true;
+    }
+  }
+  const milestoneAlreadyClosedOut = isDbAvailable()
+    && isClosedStatus(getMilestone(closeoutMilestoneId)?.status ?? "")
+    && !closeoutMergePending;
+  if (milestoneAlreadyClosedOut) {
+    return { skip: true, milestoneId: closeoutMilestoneId };
+  }
+  return { skip: false, milestoneId: closeoutMilestoneId };
+}
+
 // ─── runPreDispatch ───────────────────────────────────────────────────────────
 
 /**
@@ -1275,6 +1309,14 @@ export async function runPreDispatch(
   }
 
   // ── Terminal conditions ──────────────────────────────────────────────
+
+  if (state.phase === "complete") {
+    const closeoutSkip = await shouldSkipTerminalMilestoneCloseout(s, state, mid);
+    if (closeoutSkip.skip) {
+      debugLog("autoLoop", { phase: "complete", reason: "milestone-already-closed", milestoneId: closeoutSkip.milestoneId });
+      return { action: "break", reason: "milestone-complete" };
+    }
+  }
 
   if (!mid) {
     if (s.currentUnit) {
