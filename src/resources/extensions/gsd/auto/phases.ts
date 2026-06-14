@@ -20,7 +20,7 @@ import {
   type PreVerificationOpts,
 } from "../auto-post-unit.js";
 import { lastAssistantText } from "../consent-question.js";
-import { resolveEffectiveUnitIsolationMode } from "../preferences.js";
+import { resolveEffectiveUnitIsolationMode, getIsolationMode } from "../preferences.js";
 import type { Phase } from "../types.js";
 import {
   MAX_RECOVERY_CHARS,
@@ -65,6 +65,7 @@ import { isSliceParallelActive, startSliceParallel } from "../slice-parallel-orc
 import { isDbAvailable, getMilestone, getMilestoneSlices, getSlice, getTask } from "../gsd-db.js";
 import { refreshWorkflowDatabaseFromDisk } from "../db-workspace.js";
 import { isClosedStatus } from "../status-guards.js";
+import { findUnmergedCompletedMilestones } from "../unmerged-milestone-guard.js";
 import { setRuntimeKv } from "../db/runtime-kv.js";
 import { getLatestForUnit } from "../db/unit-dispatches.js";
 import { reconcileBeforeSpawn } from "../state-reconciliation.js";
@@ -1284,7 +1285,22 @@ export async function runPreDispatch(
     // first closeout path should replay merge and notification side effects.
     const closeoutMilestoneId = mid ?? s.currentMilestoneId ?? state.lastCompletedMilestone?.id;
     if (isDbAvailable() && closeoutMilestoneId) refreshWorkflowDatabaseFromDisk();
-    if (s.completionStopInProgress || (closeoutMilestoneId && isDbAvailable() && isClosedStatus(getMilestone(closeoutMilestoneId)?.status ?? ""))) {
+    const closeoutBasePath = s.originalBasePath || s.canonicalProjectRoot || s.basePath;
+    let closeoutMergePending = false;
+    if (closeoutMilestoneId && getIsolationMode(closeoutBasePath) !== "none") {
+      try {
+        const blockers = await findUnmergedCompletedMilestones(closeoutBasePath);
+        closeoutMergePending = blockers.some((blocker) => blocker.milestoneId === closeoutMilestoneId);
+      } catch {
+        // Fail open: if git/DB inspection fails, allow the terminal closeout path.
+        closeoutMergePending = true;
+      }
+    }
+    const milestoneAlreadyClosedOut = closeoutMilestoneId
+      && isDbAvailable()
+      && isClosedStatus(getMilestone(closeoutMilestoneId)?.status ?? "")
+      && !closeoutMergePending;
+    if (s.completionStopInProgress || milestoneAlreadyClosedOut) {
       debugLog("autoLoop", { phase: "complete", reason: "milestone-already-closed", milestoneId: closeoutMilestoneId });
       return { action: "break", reason: "milestone-complete" };
     }
