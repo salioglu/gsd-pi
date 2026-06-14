@@ -788,7 +788,12 @@ export async function runPostUnitVerification(
       s.verificationRetryFailureHashes.delete(retryKey);
       s.pendingVerificationRetry = null;
       return "continue";
-    } else if (verdict.reason === "no-host-checks" && taskAlreadyComplete && detectWebApp(s.basePath)) {
+    } else if (
+      verdict.reason === "no-host-checks" &&
+      taskAlreadyComplete &&
+      detectWebApp(s.basePath) &&
+      !result.runtimeErrors?.some((e) => e.blocking)
+    ) {
       s.verificationRetryCount.delete(retryKey);
       s.verificationRetryFailureHashes.delete(retryKey);
       s.pendingVerificationRetry = null;
