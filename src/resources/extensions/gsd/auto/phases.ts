@@ -1399,7 +1399,8 @@ export async function runPreDispatch(
 
   // Terminal: complete
   if (state.phase === "complete") {
-    // ponytail: skip notifications if milestone already closed (double-session race)
+    // Completion may be observed by more than one auto session; only the
+    // first closeout path should replay merge and notification side effects.
     if (s.completionStopInProgress || (mid && isDbAvailable() && isClosedStatus(getMilestone(mid)?.status ?? ""))) {
       debugLog("autoLoop", { phase: "complete", reason: "milestone-already-closed", milestoneId: mid });
       return { action: "break", reason: "milestone-complete" };
