@@ -1292,8 +1292,12 @@ export async function runPreDispatch(
         const blockers = await findUnmergedCompletedMilestones(closeoutBasePath);
         closeoutMergePending = blockers.some((blocker) => blocker.milestoneId === closeoutMilestoneId);
       } catch {
-        // Fail open: if git/DB inspection fails, allow the terminal closeout path.
-        closeoutMergePending = true;
+        // Fail open toward merge only when the DB does not already show this milestone closed.
+        const dbAlreadyClosed = isDbAvailable()
+          && isClosedStatus(getMilestone(closeoutMilestoneId)?.status ?? "");
+        if (!dbAlreadyClosed) {
+          closeoutMergePending = true;
+        }
       }
     }
     const milestoneAlreadyClosedOut = closeoutMilestoneId
