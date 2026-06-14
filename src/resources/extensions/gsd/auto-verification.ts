@@ -50,6 +50,7 @@ import { getSlice } from "./gsd-db.js";
 import { getLedger } from "./metrics.js";
 import { getUnitCostSpikeAction, resolveUnitCostSpikeMultiplier } from "./auto-budget.js";
 import { formatPostUnitStatusCard } from "./auto-status-message.js";
+import { detectWebApp } from "./web-app-uat.js";
 
 export interface VerificationContext {
   s: AutoSession;
@@ -787,17 +788,27 @@ export async function runPostUnitVerification(
       s.verificationRetryFailureHashes.delete(retryKey);
       s.pendingVerificationRetry = null;
       return "continue";
-    } else if (verdict.reason === "no-host-checks") {
+    } else if (verdict.reason === "no-host-checks" && taskAlreadyComplete && detectWebApp(s.basePath)) {
       s.verificationRetryCount.delete(retryKey);
       s.verificationRetryFailureHashes.delete(retryKey);
       s.pendingVerificationRetry = null;
       ctx.ui.notify(
-        "Verification gate FAILED — no runnable host-owned verification checks were discovered. Pausing for human review.",
+        "No task-level host verification command was found for a completed browser-facing task; continuing so slice UAT can verify the UI with browser tools.",
+        "warning",
+      );
+      return "continue";
+    } else if (verdict.reason === "no-host-checks") {
+      s.verificationRetryCount.delete(retryKey);
+      s.verificationRetryFailureHashes.delete(retryKey);
+      s.pendingVerificationRetry = null;
+      const pauseMessage = `Verification failed: ${verdict.failureContext}`;
+      ctx.ui.notify(
+        `Verification gate FAILED — ${verdict.failureContext}`,
         "error",
       );
       process.stderr.write(`verification-gate: ${verdict.failureContext}\n`);
       await pauseAuto(ctx, pi, {
-        message: "Verification failed: no runnable host-owned verification checks were discovered.",
+        message: pauseMessage,
         category: "unknown",
       });
       return "pause";
