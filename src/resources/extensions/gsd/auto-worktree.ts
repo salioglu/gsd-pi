@@ -972,6 +972,14 @@ function _resolveIntegrationBranchForReuse(
   }
 }
 
+function safeCwd(fallback: string): string {
+  try {
+    return process.cwd();
+  } catch {
+    return fallback;
+  }
+}
+
 /**
  * When reusing an existing milestone branch, fast-forward it onto the
  * integration branch when that's safe (branch is a strict ancestor of
@@ -1155,7 +1163,7 @@ export function teardownAutoWorktree(
 
   const branch = autoWorktreeBranch(milestoneId);
   const { preserveBranch = false, preserveWorktree = false } = opts;
-  const previousCwd = process.cwd();
+  const previousCwd = safeCwd(originalBasePath);
 
   // Wrap the entire teardown body in a single try/finally so activeWorkspace
   // is ALWAYS cleared — even if process.chdir throws (e.g. originalBasePath
@@ -2229,6 +2237,11 @@ export function mergeMilestoneToMain(
       process.chdir(originalBasePath_);
     } catch (err) {
       logWarning("worktree", `chdir to project root after merge failed: ${err instanceof Error ? err.message : String(err)}`);
+      debugLog("mergeMilestoneToMain", {
+        phase: "post-merge-chdir-failed",
+        target: originalBasePath_,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   };
 

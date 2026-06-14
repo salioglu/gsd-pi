@@ -656,7 +656,12 @@ export function removeWorktree(
   const resolvedPathSafe = isInsideWorktreesDir(basePath, resolvedWtPath);
 
   // If we're inside the worktree, move out first — git can't remove an in-use directory
-  const cwd = process.cwd();
+  let cwd: string;
+  try {
+    cwd = process.cwd();
+  } catch {
+    cwd = basePath;
+  }
   const resolvedCwd = existsSync(cwd) ? realpathSync(cwd) : cwd;
   if (resolvedCwd === resolvedWtPath || resolvedCwd.startsWith(resolvedWtPath + sep)) {
     process.chdir(basePath);
