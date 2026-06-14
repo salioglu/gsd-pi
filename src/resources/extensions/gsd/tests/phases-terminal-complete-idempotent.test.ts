@@ -1,21 +1,32 @@
 /**
  * phases-terminal-complete-idempotent.test.ts — Regression test for the
- * milestone-completion double-closeout guard introduced in
- * fix/transport-gate-double-complete.
+ * milestone-completion double-closeout guard in `runPreDispatch`.
  *
- * When `runPreDispatch` reaches the terminal `complete` phase, more than one
- * auto session may observe the same completion (one is already running the
- * stop, or the milestone is already closed in the DB). Only the first
- * closeout path should replay merge, desktop / cmux notifications, unit
- * closeout, and stopAuto. Subsequent observers must return
- * `{ action: "break", reason: "milestone-complete" }` immediately, without
- * replaying any of those side effects.
+ * When `runPreDispatch` observes that the active milestone (or the last one
+ * the session was working on) has already been closed by another session,
+ * the loop must exit cleanly with `{ action: "break", reason:
+ * "milestone-complete" }` and must NOT replay merge, desktop / cmux
+ * notifications, unit closeout, or `stopAuto`.
  *
- * This test exercises both fire-paths of the guard:
- *   1. `s.completionStopInProgress` is true (a sibling session is already
- *      stopping for completion in the current process).
- *   2. The milestone's DB status is closed (`complete`), regardless of the
- *      in-memory completionStopInProgress flag.
+ * There are two `deriveState` shapes the guard must cover, and both are
+ * exercised below because the canonical one is easy to miss:
+ *
+ *   1. `state.phase === "complete"` with `activeMilestone` set, so the
+ *      loop computes a non-null `mid` from `state.activeMilestone.id`.
+ *
+ *   2. `state.phase === "complete"` with `activeMilestone: null` — the
+ *      canonical "all milestones complete" return from `deriveState`
+ *      (state.ts:613, state.ts:1293). `mid` is undefined here, so the
+ *      guard must consult `s.currentMilestoneId` (the milestone this
+ *      session was working on) instead. Without coverage for this case,
+ *      a guard that only inspects `mid` is unreachable in production and
+ *      the loop replays `_runMilestoneMergeOnceWithStashRestore`,
+ *      `sendDesktopNotification("All milestones complete!")`,
+ *      `logCmuxEvent`, and `stopAuto` — exactly the duplicate side
+ *      effects this fix exists to prevent.
+ *
+ * Both fire-paths of the guard (`completionStopInProgress` and a
+ * DB-already-closed milestone) are exercised against each shape.
  */
 
 import { createTestContext } from "./test-helpers.ts";
@@ -31,11 +42,16 @@ const { assertTrue, report } = createTestContext();
 
 type SideEffect = string;
 
-function makeIterationContext(overrides: {
+interface ScenarioOverrides {
   completionStopInProgress: boolean;
   sideEffects: SideEffect[];
   notifications: Array<{ message: string; level?: string }>;
-}): any {
+  // When `null`, deriveState returns activeMilestone: null (canonical
+  // all-complete path). Otherwise, returns an activeMilestone with this id.
+  activeMilestone: { id: string; title: string } | null;
+}
+
+function makeIterationContext(overrides: ScenarioOverrides): any {
   const basePath = "/tmp/gsd-test-terminal-complete";
   const recordSideEffect = (label: string) => {
     overrides.sideEffects.push(label);
@@ -54,6 +70,9 @@ function makeIterationContext(overrides: {
       originalBasePath: basePath,
       canonicalProjectRoot: basePath,
       resourceVersionOnStart: "test",
+      // Critical for the `!mid` canonical path: even when deriveState returns
+      // activeMilestone: null, the session still remembers the milestone it
+      // was working on, and we use that to look up DB status.
       currentMilestoneId: "M001",
       currentUnit: null,
       milestoneMergedInPhases: false,
@@ -74,9 +93,12 @@ function makeIterationContext(overrides: {
       async deriveState() {
         return {
           phase: "complete",
-          activeMilestone: { id: "M001", title: "Milestone one" },
+          activeMilestone: overrides.activeMilestone,
           activeSlice: null,
           activeTask: null,
+          // Registry says M001 is complete and no other milestones exist, so
+          // `incomplete.length === 0 && state.registry.length > 0` evaluates
+          // true in the `!mid` branch.
           registry: [{ id: "M001", status: "complete" }],
           nextAction: "complete",
         };
@@ -86,6 +108,7 @@ function makeIterationContext(overrides: {
       reconcileMergeState() {
         return "clean";
       },
+      // Anything below this point MUST NOT be reached when the guard fires.
       preflightCleanRoot() {
         recordSideEffect("preflight");
         return { ok: true, stashPushed: false, stashMarker: null };
@@ -125,63 +148,30 @@ function makeIterationContext(overrides: {
   };
 }
 
-console.log("\n=== Terminal complete is idempotent when a sibling session already closed it ===");
-
-// ── Scenario 1: completionStopInProgress is true ─────────────────────────────
-{
-  const sideEffects: SideEffect[] = [];
-  const notifications: Array<{ message: string; level?: string }> = [];
-  const ic = makeIterationContext({
-    completionStopInProgress: true,
-    sideEffects,
-    notifications,
-  });
-
-  const result = await runPreDispatch(ic, {
-    recentUnits: [],
-    stuckRecoveryAttempts: 0,
-    consecutiveFinalizeTimeouts: 0,
-  });
-
-  assertTrue(
-    result.action === "break",
-    "completionStopInProgress: returns break instead of next",
-  );
-  if (result.action === "break") {
-    assertTrue(
-      result.reason === "milestone-complete",
-      `completionStopInProgress: reason is milestone-complete (got "${result.reason}")`,
-    );
-  }
-  assertTrue(
-    sideEffects.length === 0,
-    `completionStopInProgress: no closeout side effects replayed (saw [${sideEffects.join(", ")}])`,
-  );
-  assertTrue(
-    notifications.length === 0,
-    `completionStopInProgress: no user notifications emitted (saw ${notifications.length})`,
-  );
-}
-
-// ── Scenario 2: DB milestone is already closed ──────────────────────────────
-{
+async function runScenario(opts: {
+  label: string;
+  completionStopInProgress: boolean;
+  activeMilestone: { id: string; title: string } | null;
+  // When true, the test opens an in-memory DB and inserts M001 with status
+  // "complete" so the DB-closed branch of the guard can fire.
+  dbAlreadyClosed: boolean;
+}): Promise<void> {
   if (isDbAvailable()) {
     closeDatabase();
   }
-  openDatabase(":memory:");
-  insertMilestone({
-    id: "M001",
-    title: "Milestone one",
-    status: "complete",
-  });
+  if (opts.dbAlreadyClosed) {
+    openDatabase(":memory:");
+    insertMilestone({ id: "M001", title: "Milestone one", status: "complete" });
+  }
 
   try {
     const sideEffects: SideEffect[] = [];
     const notifications: Array<{ message: string; level?: string }> = [];
     const ic = makeIterationContext({
-      completionStopInProgress: false,
+      completionStopInProgress: opts.completionStopInProgress,
       sideEffects,
       notifications,
+      activeMilestone: opts.activeMilestone,
     });
 
     const result = await runPreDispatch(ic, {
@@ -192,25 +182,61 @@ console.log("\n=== Terminal complete is idempotent when a sibling session alread
 
     assertTrue(
       result.action === "break",
-      "db-closed: returns break instead of next",
+      `${opts.label}: returns break instead of next`,
     );
     if (result.action === "break") {
       assertTrue(
         result.reason === "milestone-complete",
-        `db-closed: reason is milestone-complete (got "${result.reason}")`,
+        `${opts.label}: reason is milestone-complete (got "${result.reason}")`,
       );
     }
     assertTrue(
       sideEffects.length === 0,
-      `db-closed: no closeout side effects replayed (saw [${sideEffects.join(", ")}])`,
+      `${opts.label}: no closeout side effects replayed (saw [${sideEffects.join(", ")}])`,
     );
     assertTrue(
       notifications.length === 0,
-      `db-closed: no user notifications emitted (saw ${notifications.length})`,
+      `${opts.label}: no user notifications emitted (saw ${notifications.length})`,
     );
   } finally {
-    closeDatabase();
+    if (isDbAvailable()) {
+      closeDatabase();
+    }
   }
 }
+
+console.log("\n=== Terminal complete is idempotent across both observer paths ===");
+
+// ── state.phase === "complete" branch (activeMilestone non-null) ────────────
+await runScenario({
+  label: "phase=complete + mid set + completionStopInProgress",
+  completionStopInProgress: true,
+  activeMilestone: { id: "M001", title: "Milestone one" },
+  dbAlreadyClosed: false,
+});
+
+await runScenario({
+  label: "phase=complete + mid set + DB closed",
+  completionStopInProgress: false,
+  activeMilestone: { id: "M001", title: "Milestone one" },
+  dbAlreadyClosed: true,
+});
+
+// ── Canonical !mid "all milestones complete" sub-branch ────────────────────
+// deriveState returns phase: "complete" with activeMilestone: null. The
+// session's s.currentMilestoneId (M001) is what the guard consults.
+await runScenario({
+  label: "phase=complete + activeMilestone=null + completionStopInProgress",
+  completionStopInProgress: true,
+  activeMilestone: null,
+  dbAlreadyClosed: false,
+});
+
+await runScenario({
+  label: "phase=complete + activeMilestone=null + DB closed",
+  completionStopInProgress: false,
+  activeMilestone: null,
+  dbAlreadyClosed: true,
+});
 
 report();
