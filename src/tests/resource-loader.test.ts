@@ -341,17 +341,34 @@ test("bundled skill frontmatter is valid YAML", () => {
 
   assert.ok(skillNames.length > 0, "expected bundled skills to be present");
 
+  const skillSources: Array<{ label: string; content: string }> = [];
+
   for (const skillName of skillNames) {
     const skillPath = join(skillsDir, skillName, "SKILL.md");
     if (!existsSync(skillPath)) continue;
+    skillSources.push({
+      label: `${skillName}/SKILL.md`,
+      content: readFileSync(skillPath, "utf-8"),
+    });
+  }
 
-    const content = readFileSync(skillPath, "utf-8");
+  // The managed gsd-browser skill is sourced from @opengsd/gsd-browser at
+  // install time rather than the bundled `src/resources/skills` tree, so the
+  // bundled-only walk above would let an invalid SKILL.md in the package
+  // through. Include it here so a future regression in the published package
+  // fails this guard before being copied to ~/.gsd/agent/skills/gsd-browser.
+  skillSources.push({
+    label: "@opengsd/gsd-browser/SKILL.md",
+    content: packagedGsdBrowserSkill(),
+  });
+
+  for (const { label, content } of skillSources) {
     const frontmatter = content.match(/^---\n([\s\S]*?)\n---/);
 
-    assert.ok(frontmatter, `${skillName}/SKILL.md should include YAML frontmatter`);
+    assert.ok(frontmatter, `${label} should include YAML frontmatter`);
     assert.doesNotThrow(
       () => parseYaml(frontmatter[1]),
-      `${skillName}/SKILL.md frontmatter should parse as YAML`,
+      `${label} frontmatter should parse as YAML`,
     );
   }
 });
