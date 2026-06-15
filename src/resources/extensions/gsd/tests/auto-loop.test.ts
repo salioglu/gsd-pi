@@ -3,6 +3,7 @@
 
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
+import { execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +25,9 @@ import { runUnit, shouldDeferUnitFailsafeTimeout } from "../auto/run-unit.js";
 import { scheduleAutoWakeup, _resetAutoWakeupsForTest } from "../auto/schedule-wakeup.js";
 import { writeUnitRuntimeRecord, readUnitRuntimeRecord } from "../unit-runtime.js";
 import { autoLoop as rawAutoLoop } from "../auto/loop.js";
-import { runPreDispatch, runDispatch, runUnitPhase } from "../auto/phases.js";
+import { runPreDispatch } from "../auto/pre-dispatch.js";
+import { runDispatch } from "../auto/dispatch.js";
+import { runUnitPhase, resetSessionTimeoutState } from "../auto/unit-phase.js";
 import { detectStuck } from "../auto/detect-stuck.js";
 import type { UnitResult, AgentEndEvent, LoopState } from "../auto/types.js";
 import type { LoopDeps } from "../auto/loop-deps.js";
@@ -531,7 +534,7 @@ test("runUnit failsafe defers cancellation while timeout recovery is making fres
     const ctx = makeMockCtx();
     const pi = makeMockPi();
     const s = makeMockSession();
-    s.basePath = mkdtempSync(join(tmpdir(), "gsd-rununit-recovery-"));
+    s.basePath = makeLoopTestBase("gsd-rununit-recovery-");
     s.currentUnit = { type: "task", id: "T01", startedAt: 1234 };
 
     const resultPromise = runUnit(ctx, pi, s, "task", "T01", "prompt");
@@ -1366,12 +1369,19 @@ function makeMockDeps(
  * runUnit mock (dispatch counters, milestone state, etc.).
  */
 function makeLoopSession(overrides?: Partial<Record<string, unknown>>) {
+  const basePath = mkdtempSync(join(tmpdir(), "gsd-auto-loop-"));
+  // Plan 001 enforces worktree safety for all isolation modes. Loop-mechanics
+  // tests run with getIsolationMode: () => "none", so the project root itself
+  // must be a valid git working tree for source-writing Units to dispatch.
+  execSync("git init --initial-branch=main", { cwd: basePath, stdio: "ignore" });
+  execSync("git config user.email test@test.com", { cwd: basePath, stdio: "ignore" });
+  execSync("git config user.name Test", { cwd: basePath, stdio: "ignore" });
   return {
     active: true,
     verbose: false,
     stepMode: false,
     paused: false,
-    basePath: mkdtempSync(join(tmpdir(), "gsd-auto-loop-")),
+    basePath,
     originalBasePath: "",
     currentMilestoneId: "M001",
     currentUnit: null,
@@ -1417,6 +1427,15 @@ function makeLoopSession(overrides?: Partial<Record<string, unknown>>) {
     clearTimers: () => {},
     ...overrides,
   } as any;
+}
+
+/** Create a temp project root suitable for loop-mechanics tests. */
+function makeLoopTestBase(prefix: string): string {
+  const base = mkdtempSync(join(tmpdir(), prefix));
+  execSync("git init --initial-branch=main", { cwd: base, stdio: "ignore" });
+  execSync("git config user.email test@test.com", { cwd: base, stdio: "ignore" });
+  execSync("git config user.name Test", { cwd: base, stdio: "ignore" });
+  return base;
 }
 
 test("autoLoop exits when s.active is set to false", async (t) => {
@@ -1506,7 +1525,7 @@ test("autoLoop preserves stuck recovery counter when dispatch recovery continues
 
   const ctx = makeMockCtx();
   const pi = makeMockPi();
-  const basePath = realpathSync(mkdtempSync(join(tmpdir(), "gsd-stuck-counter-reset-")));
+  const basePath = realpathSync(makeLoopTestBase("gsd-stuck-counter-reset-"));
   mkdirSync(join(basePath, ".gsd"), { recursive: true });
   mkdirSync(join(basePath, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
   writeFileSync(
@@ -1581,7 +1600,7 @@ test("autoLoop skips provider dispatch when execute-task is already complete in 
   ctx.ui.setStatus = () => {};
   ctx.ui.setWidget = () => {};
   const pi = makeMockPi();
-  const basePath = realpathSync(mkdtempSync(join(tmpdir(), "gsd-already-complete-dispatch-")));
+  const basePath = realpathSync(makeLoopTestBase("gsd-already-complete-dispatch-"));
   mkdirSync(join(basePath, ".gsd"), { recursive: true });
 
   try {
@@ -3992,7 +4011,7 @@ test("resolveAgentEndCancelled with errorContext passes it through to resolved p
 test("runUnitPhase pauses transient aborted cancellations instead of hard-stopping", async (t) => {
   _resetPendingResolve();
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-aborted-cancel-"));
+  const basePath = makeLoopTestBase("gsd-aborted-cancel-");
   t.after(() => {
     rmSync(basePath, { recursive: true, force: true });
   });
@@ -4064,10 +4083,157 @@ test("runUnitPhase pauses transient aborted cancellations instead of hard-stoppi
   assert.equal(deps.callLog.includes("stopAuto"), false);
 });
 
+test("resetSessionTimeoutState gives a new auto session a fresh session-creation timeout budget", async (t) => {
+  _resetPendingResolve();
+
+  // runUnitPhase schedules an auto-resume setTimeout on transient session
+  // timeouts. Capture and clear those timers so the test process can exit
+  // promptly while still exercising the real production path.
+  const originalSetTimeout = globalThis.setTimeout;
+  const timerHandles: ReturnType<typeof originalSetTimeout>[] = [];
+  globalThis.setTimeout = ((callback: any, delay?: number, ...args: any[]) => {
+    const handle = originalSetTimeout(callback, delay ?? 0, ...args);
+    timerHandles.push(handle);
+    return handle;
+  }) as any;
+
+  const basePath = makeLoopTestBase("gsd-session-timeout-reset-");
+  execSync("git init", { cwd: basePath });
+  execSync('git -c user.email=test@test.com -c user.name=Test commit --allow-empty -m init', { cwd: basePath });
+
+  t.after(() => {
+    for (const handle of timerHandles) clearTimeout(handle);
+    globalThis.setTimeout = originalSetTimeout;
+    rmSync(basePath, { recursive: true, force: true });
+  });
+
+  const ctx = {
+    ...makeMockCtx(),
+    ui: {
+      notify: () => {},
+      setStatus: () => {},
+      setWorkingMessage: () => {},
+    },
+    sessionManager: {
+      getEntries: () => [],
+    },
+    modelRegistry: {
+      getProviderAuthMode: () => undefined,
+      isProviderRequestReady: () => true,
+    },
+  } as any;
+  const notifications: Array<{ message: string; level?: string }> = [];
+  ctx.ui.notify = (message: string, level?: string) => {
+    notifications.push({ message, level });
+  };
+  const pi = makeMockPi();
+  const s = makeLoopSession({
+    basePath,
+    canonicalProjectRoot: basePath,
+    originalBasePath: basePath,
+  });
+  const deps = makeMockDeps();
+
+  async function runTimeoutUnit(iteration: number): Promise<string | undefined> {
+    notifications.length = 0;
+    const callsBefore = pi.calls.length;
+    let seq = 0;
+    const phasePromise = runUnitPhase(
+      { ctx, pi, s, deps, prefs: undefined, iteration, flowId: `flow-${iteration}`, nextSeq: () => ++seq },
+      {
+        unitType: "plan-slice",
+        unitId: "M001/S01",
+        prompt: "plan the slice",
+        finalPrompt: "plan the slice",
+        pauseAfterUatDispatch: false,
+        state: {
+          phase: "planning",
+          activeMilestone: { id: "M001", title: "Milestone" },
+          activeSlice: { id: "S01", title: "Slice" },
+          activeTask: null,
+          registry: [{ id: "M001", title: "Milestone", status: "active" }],
+          recentDecisions: [],
+          blockers: [],
+          nextAction: "",
+          progress: { milestones: { done: 0, total: 1 } },
+          requirements: { active: 0, validated: 0, deferred: 0, outOfScope: 0, blocked: 0, total: 0 },
+        } as any,
+        mid: "M001",
+        midTitle: "Milestone",
+        isRetry: false,
+        previousTier: undefined,
+      },
+      makeLoopState(),
+    );
+
+    // Wait until runUnit has dispatched the prompt, then resolve the unit
+    // as a session-creation timeout. This avoids the 120s real timeout and
+    // the mock-timer interaction that runUnitPhase's pre-flight setup makes
+    // fragile.
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (pi.calls.length > callsBefore) return resolve();
+        setTimeout(check, 5);
+      };
+      check();
+    });
+    resolveAgentEndCancelled({
+      message: "Session creation timed out",
+      category: "timeout",
+      isTransient: true,
+    });
+
+    const result = await phasePromise;
+    return (result as any).reason;
+  }
+
+  // Start from a known state in case a previous test left the counter raised.
+  resetSessionTimeoutState();
+
+  // Exhaust the per-process timeout budget in the first "session".
+  for (let i = 1; i <= 4; i++) {
+    const reason = await runTimeoutUnit(i);
+    assert.equal(reason, "session-timeout");
+  }
+  const lastBudgetNotification = notifications.find((n) =>
+    n.message.includes("Session creation timed out")
+  );
+  assert.ok(lastBudgetNotification, "expected a session-creation timeout notification");
+  assert.match(
+    lastBudgetNotification.message,
+    /Pausing for manual review/,
+    "fourth consecutive timeout should exhaust the auto-resume budget",
+  );
+
+  // Simulate a new auto-mode session starting. autoLoop() must reset the
+  // module-level counter so the next timeout is treated as the first in the
+  // new session rather than inheriting the exhausted budget.
+  const freshSession = makeLoopSession({
+    basePath,
+    canonicalProjectRoot: basePath,
+    originalBasePath: basePath,
+    active: false,
+  });
+  freshSession.orchestration = createLoopTestOrchestration(ctx, pi, freshSession, deps);
+  await rawAutoLoop(ctx, pi, freshSession, deps);
+
+  const reasonAfterReset = await runTimeoutUnit(5);
+  assert.equal(reasonAfterReset, "session-timeout");
+  const notificationAfterReset = notifications.find((n) =>
+    n.message.includes("Auto-resuming")
+  );
+  assert.ok(notificationAfterReset, "expected an auto-resume notification after reset");
+  assert.match(
+    notificationAfterReset.message,
+    /Auto-resuming/,
+    "after autoLoop entry the timeout budget should be fresh so the first timeout auto-resumes",
+  );
+});
+
 test("runUnitPhase treats setup-race cancellations as pause-induced when session is already paused", async (t) => {
   _resetPendingResolve();
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-paused-setup-race-"));
+  const basePath = makeLoopTestBase("gsd-paused-setup-race-");
   t.after(() => {
     rmSync(basePath, { recursive: true, force: true });
   });
@@ -4142,7 +4308,7 @@ test("runUnitPhase treats setup-race cancellations as pause-induced when session
 test("runUnitPhase remembers aborted milestone closeout for same-unit resume", async (t) => {
   _resetPendingResolve();
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-aborted-closeout-"));
+  const basePath = makeLoopTestBase("gsd-aborted-closeout-");
   t.after(() => {
     rmSync(basePath, { recursive: true, force: true });
   });
@@ -4222,7 +4388,7 @@ test("runUnitPhase remembers aborted milestone closeout for same-unit resume", a
 test("runUnitPhase schedules default auto-resume for transient provider cancellations", async (t) => {
   _resetPendingResolve();
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-provider-resume-"));
+  const basePath = makeLoopTestBase("gsd-provider-resume-");
   t.after(() => {
     _resetPendingResolve();
     rmSync(basePath, { recursive: true, force: true });
@@ -4319,7 +4485,7 @@ test("runUnitPhase schedules default auto-resume for transient provider cancella
 test("runUnitPhase pauses ghost completions before closeout and finalize side effects", async (t) => {
   _resetPendingResolve();
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-ghost-completion-"));
+  const basePath = makeLoopTestBase("gsd-ghost-completion-");
   t.after(() => {
     _resetPendingResolve();
     rmSync(basePath, { recursive: true, force: true });
@@ -4421,7 +4587,7 @@ test("runUnitPhase pauses ghost completions before closeout and finalize side ef
 test("runUnitPhase records failed routing outcome when expected artifact is missing", async (t) => {
   _resetPendingResolve();
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-routing-artifact-missing-"));
+  const basePath = makeLoopTestBase("gsd-routing-artifact-missing-");
   t.after(() => {
     _resetPendingResolve();
     rmSync(basePath, { recursive: true, force: true });
@@ -4504,7 +4670,7 @@ test("runUnitPhase records failed routing outcome when expected artifact is miss
 test("runUnitPhase execute-task retry prompt instructs gsd_task_complete instead of manual summary writes", async (t) => {
   _resetPendingResolve();
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-execute-task-retry-prompt-"));
+  const basePath = makeLoopTestBase("gsd-execute-task-retry-prompt-");
   t.after(() => {
     _resetPendingResolve();
     rmSync(basePath, { recursive: true, force: true });
@@ -4585,7 +4751,7 @@ test("runUnitPhase execute-task retry prompt instructs gsd_task_complete instead
 test("runUnitPhase non-execute-task retry prompt keeps generic required-file guidance", async (t) => {
   _resetPendingResolve();
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-non-execute-retry-prompt-"));
+  const basePath = makeLoopTestBase("gsd-non-execute-retry-prompt-");
   t.after(() => {
     _resetPendingResolve();
     rmSync(basePath, { recursive: true, force: true });
@@ -4933,7 +5099,7 @@ test("autoLoop rejects execute-task with 0 tool calls as hallucinated (#1833)", 
 test("runUnitPhase retries 0-tool units with ordinary network-related assistant text", async (t) => {
   _resetPendingResolve();
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-zero-tool-network-text-"));
+  const basePath = makeLoopTestBase("gsd-zero-tool-network-text-");
   t.after(() => {
     rmSync(basePath, { recursive: true, force: true });
   });
@@ -5028,7 +5194,7 @@ test("runUnitPhase retries 0-tool units with ordinary network-related assistant 
 test("runUnitPhase pauses auto-mode when zero-tool-call retry is exhausted", async (t) => {
   _resetPendingResolve();
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-zero-tool-exhausted-"));
+  const basePath = makeLoopTestBase("gsd-zero-tool-exhausted-");
   t.after(() => {
     rmSync(basePath, { recursive: true, force: true });
   });
@@ -5313,7 +5479,7 @@ test("autoLoop rejects complete-slice with 0 tool calls as context-exhausted (#2
 test("autoLoop pauses on zero-tool-call rate-limit assistant messages instead of immediate retry", async (t) => {
   _resetPendingResolve();
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-zero-tool-rate-limit-"));
+  const basePath = makeLoopTestBase("gsd-zero-tool-rate-limit-");
   t.after(() => {
     _resetPendingResolve();
     rmSync(basePath, { recursive: true, force: true });
@@ -5529,6 +5695,15 @@ test("dispatch Worktree Safety honors degraded branch fallback instead of demand
   // branch in the project root. The safety gate must validate against that
   // effective branch mode, not the configured worktree mode.
   const projectRoot = mkdtempSync(join(tmpdir(), "gsd-wt-safety-degraded-"));
+  execSync("git init --initial-branch=main", { cwd: projectRoot, stdio: "ignore" });
+  execSync("git config user.email test@test.com", { cwd: projectRoot, stdio: "ignore" });
+  execSync("git config user.name Test", { cwd: projectRoot, stdio: "ignore" });
+  // The lifecycle fallback checks out the milestone branch in the project
+  // root, so the safety gate's branch verification expects that branch here
+  // too. expectedBranch comes from deps.autoWorktreeBranch (mocked to
+  // "auto/M001"), so the fixture repo must be on that same branch.
+  execSync("git commit --allow-empty -m init", { cwd: projectRoot, stdio: "ignore" });
+  execSync("git checkout -b auto/M001", { cwd: projectRoot, stdio: "ignore" });
   t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
 
   const s = makeLoopSession({
@@ -5591,6 +5766,15 @@ test("dispatch Worktree Safety honors stranded branch recovery instead of demand
   // NOT degraded — the adoption is intentional. The safety gate must validate
   // against the effective branch mode, not the configured worktree mode.
   const projectRoot = mkdtempSync(join(tmpdir(), "gsd-wt-safety-stranded-"));
+  execSync("git init --initial-branch=main", { cwd: projectRoot, stdio: "ignore" });
+  execSync("git config user.email test@test.com", { cwd: projectRoot, stdio: "ignore" });
+  execSync("git config user.name Test", { cwd: projectRoot, stdio: "ignore" });
+  // Stranded recovery adopts the milestone branch in the project root, so the
+  // safety gate's branch verification expects that branch here too.
+  // expectedBranch comes from deps.autoWorktreeBranch (mocked to "auto/M001"),
+  // so the fixture repo must be on that same branch.
+  execSync("git commit --allow-empty -m init", { cwd: projectRoot, stdio: "ignore" });
+  execSync("git checkout -b auto/M001", { cwd: projectRoot, stdio: "ignore" });
   t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
 
   const s = makeLoopSession({
@@ -5648,7 +5832,7 @@ test("runDispatch runs stuck detection while artifact verification retry is pend
   const notifications: string[] = [];
   ctx.ui.notify = (msg: string) => { notifications.push(msg); };
 
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-5719-retry-stuck-"));
+  const basePath = makeLoopTestBase("gsd-5719-retry-stuck-");
   t.after(() => rmSync(basePath, { recursive: true, force: true }));
 
   const s = makeLoopSession({
@@ -5716,7 +5900,7 @@ test("runDispatch falls back to main when dispatch guard cannot read main branch
 
   const ctx = makeMockCtx();
   const pi = makeMockPi();
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-5530-main-branch-fallback-"));
+  const basePath = makeLoopTestBase("gsd-5530-main-branch-fallback-");
   t.after(() => rmSync(basePath, { recursive: true, force: true }));
 
   let guardBranch: string | null = null;
@@ -6243,7 +6427,7 @@ test("pre-dispatch replace resolves final unit before dispatch health and stuck 
   );
 });
 
-test("autoLoop warns but proceeds for greenfield project (no project files) (#1833)", async () => {
+test("autoLoop warns but proceeds for greenfield project (no project files) (#1833)", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -6252,7 +6436,9 @@ test("autoLoop warns but proceeds for greenfield project (no project files) (#18
   const pi = makeMockPi();
 
   const notifications: string[] = [];
-  const s = makeLoopSession({ basePath: "/tmp/empty-worktree" });
+  const basePath = makeLoopTestBase("gsd-greenfield-");
+  t.after(() => rmSync(basePath, { recursive: true, force: true }));
+  const s = makeLoopSession({ basePath });
 
   ctx.ui.notify = (msg: string) => {
     notifications.push(msg);
@@ -6275,8 +6461,6 @@ test("autoLoop warns but proceeds for greenfield project (no project files) (#18
         blockers: [],
       } as any;
     },
-    // Has .git but no package.json or src/
-    existsSync: (p: string) => p.endsWith(".git"),
   });
 
   await autoLoop(ctx, pi, s, deps);

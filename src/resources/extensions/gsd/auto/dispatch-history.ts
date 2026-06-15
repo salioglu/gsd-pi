@@ -28,7 +28,7 @@
  */
 
 import type { WindowEntry } from "./types.js";
-import { buildDispatchKey, normalizeDispatchKey } from "./dispatch-key.js";
+import { buildDispatchKey, normalizeDispatchKey, parseDispatchKey } from "./dispatch-key.js";
 import { detectStuck } from "./detect-stuck.js";
 import {
   getLatestForUnit,
@@ -84,12 +84,18 @@ export interface DispatchHistoryOptions {
   windowSize?: number;
 }
 
-function lookupLatestLedgerError(unitType: string, unitId: string): string | undefined {
+/**
+ * Fetch the latest dispatch ledger error for a unit, the single canonical
+ * lookup shared by the DispatchHistory window and the legacy
+ * `loopState.recentUnits` path in dispatch.ts. The ledger keys rows by the
+ * bare unit id with the unit type in its own column, so the lookup must use
+ * the bare id and require a unit_type match (a compound `type/id` key would
+ * miss the row, and another unit type's error on the same id must never be
+ * attached — it would trip the repeat-error rule spuriously).
+ */
+export function lookupLatestLedgerError(unitType: string, unitId: string): string | undefined {
   try {
     const row = getLatestForUnit(unitId);
-    // The ledger keys rows by bare unit id; require a unit_type match so
-    // another unit type's error on the same id is never attached (it would
-    // trip the repeat-error rule spuriously).
     if (!row || row.unit_type !== unitType) return undefined;
     return row.error_summary ?? undefined;
   } catch {
@@ -133,7 +139,17 @@ export function createDispatchHistory(options: DispatchHistoryOptions): Dispatch
       try {
         const persisted = getRecentUnitKeysForProjectRoot(scopeId, windowSize);
         if (persisted.length === 0) return 0;
-        window = persisted.map(({ key }) => ({ key: normalizeDispatchKey(key) }));
+        const rebuilt: WindowEntry[] = [];
+        for (const { key } of persisted) {
+          const normalized = normalizeDispatchKey(key);
+          const parsed = parseDispatchKey(normalized);
+          const error =
+            parsed && rebuilt.some((entry) => entry.key === normalized)
+              ? lookupLatestLedgerError(parsed.unitType, parsed.unitId)
+              : undefined;
+          rebuilt.push({ key: normalized, error });
+        }
+        window = rebuilt;
         while (window.length > windowSize) window.shift();
         return window.length;
       } catch (err) {

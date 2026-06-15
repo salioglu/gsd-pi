@@ -23,6 +23,7 @@ import { recordDispatchClaim, markFailed, markCanceled } from "../db/unit-dispat
 import {
   buildDispatchKey,
   createDispatchHistory,
+  lookupLatestLedgerError,
   normalizeDispatchKey,
   parseDispatchKey,
   STUCK_WINDOW_SIZE,
@@ -157,6 +158,31 @@ test("recordDispatch attaches the latest ledger error on repeats so repeat-error
   assert.match(verdict?.reason ?? "", /Same error repeated/);
 });
 
+test("lookupLatestLedgerError matches the bare unit id, not the compound key", (t) => {
+  const f = makeLedgerFixture(t);
+  const dispatchId = f.claim("execute-task", "M001/S01/T01");
+  markFailed(dispatchId, { errorSummary: "boom: deterministic failure" });
+
+  // The ledger keys rows by the bare unit id with the unit type in its own
+  // column. The shared lookup (also used by dispatch.ts's runDispatch path)
+  // must use the bare id; a compound `unitType/unitId` value misses entirely,
+  // which previously silently dropped repeat-error detection on that path.
+  assert.equal(
+    lookupLatestLedgerError("execute-task", "M001/S01/T01"),
+    "boom: deterministic failure",
+  );
+  assert.equal(
+    lookupLatestLedgerError("execute-task", "execute-task/M001/S01/T01"),
+    undefined,
+    "a compound key must not match the bare-id ledger row",
+  );
+  assert.equal(
+    lookupLatestLedgerError("plan-slice", "M001/S01/T01"),
+    undefined,
+    "a different unit type on the same id must not be attached",
+  );
+});
+
 test("recordDispatch never attaches another unit type's ledger error for the same unit id", (t) => {
   const f = makeLedgerFixture(t);
   const dispatchId = f.claim("plan-slice", "M001/S01");
@@ -260,6 +286,35 @@ test("#482 regression: a re-dispatch loop spanning a session restart is detected
   const verdict = restarted.detectStuck();
   assert.equal(verdict?.stuck, true);
   assert.match(verdict?.reason ?? "", /execute-task:M001\/S01\/T01 derived 3 consecutive times/);
+});
+
+test("rehydrate mirrors recordDispatch error attachment so repeat-error detection fires after the next dispatch", (t) => {
+  const f = makeLedgerFixture(t);
+  // Session 1: two failed dispatches for the same unit, same error summary.
+  for (let i = 0; i < 2; i++) {
+    const id = f.claim("execute-task", "M001/S01/T01");
+    markFailed(id, { errorSummary: "boom: deterministic failure" });
+  }
+
+  // Session 2: fresh history rehydrates from the ledger. Just like the live
+  // recordDispatch path, the first occurrence of a unit skips the ledger
+  // lookup; only repeats carry the error. So rehydration alone does not trip
+  // Rule 1 — keeping the post-restart window no more aggressive than the live
+  // one (Rule 1 has no retry-budget suppression).
+  const restarted = historyFor(f.base);
+  const count = restarted.rehydrate();
+  assert.equal(count, 2);
+  const window = restarted.getRecentWindow();
+  assert.equal(window[0].error, undefined);
+  assert.equal(window[1].error, "boom: deterministic failure");
+  assert.equal(restarted.detectStuck(), null);
+
+  // The next dispatch of the same unit attaches the error again, giving two
+  // consecutive matching errors → Rule 1 fires, exactly as in the live path.
+  restarted.recordDispatch("execute-task", "M001/S01/T01");
+  const verdict = restarted.detectStuck();
+  assert.equal(verdict?.stuck, true);
+  assert.match(verdict?.reason ?? "", /Same error repeated/);
 });
 
 test("rehydrate degrades to an empty window without a scope or ledger", () => {
