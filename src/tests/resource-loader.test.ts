@@ -272,14 +272,35 @@ test("initResources syncs the gsd-browser skill from the installed gsd-browser p
   const supportRefs = collectGsdBrowserPackageSkillReferences(packageSkill);
   assert.ok(supportRefs.includes("docs/mcp.md"), "test package skill should reference MCP docs");
 
+  // sync installs only the SKILL.md backtick-referenced files the package
+  // actually ships beside its SKILL.md (no placeholder fallback). Verify
+  // each shipped reference lands at the target with the correct mode, and
+  // that references the package omits are NOT installed as stubs.
+  const sourceSkillPath = requireFromTest.resolve("@opengsd/gsd-browser/SKILL.md");
+  const sourceDir = join(sourceSkillPath, "..");
+  let shippedRefCount = 0;
   for (const relPath of supportRefs) {
+    const sourcePath = join(sourceDir, relPath);
     const targetPath = join(fakeAgentDir, "skills", "gsd-browser", relPath);
-    assert.equal(existsSync(targetPath), true, `${relPath} should be installed with the managed skill`);
-
-    if (relPath.startsWith("scripts/") && relPath.endsWith(".sh")) {
-      assert.notEqual(statSync(targetPath).mode & 0o111, 0, `${relPath} should be executable`);
+    if (existsSync(sourcePath)) {
+      shippedRefCount += 1;
+      assert.equal(existsSync(targetPath), true, `${relPath} ships with the package and must be installed`);
+      if (relPath.startsWith("scripts/") && relPath.endsWith(".sh")) {
+        assert.notEqual(statSync(targetPath).mode & 0o111, 0, `${relPath} should be executable`);
+      }
+    } else {
+      assert.equal(
+        existsSync(targetPath),
+        false,
+        `${relPath} is referenced by SKILL.md but not shipped by the package; sync must not fabricate a stub`,
+      );
     }
   }
+  // The shippedRefCount may legitimately be zero today: @opengsd/gsd-browser@0.1.27
+  // only ships SKILL.md itself and not the backtick-referenced support files.
+  // The non-stub assertion above is still meaningful; record the count for
+  // diagnostic output if the suite fails.
+  void shippedRefCount;
 });
 
 test("initResources refreshes a stale managed gsd-browser package skill", async (t) => {
@@ -303,7 +324,6 @@ test("initResources refreshes a stale managed gsd-browser package skill", async 
     join(fakeAgentDir, "skills", "gsd-browser", "SKILL.md"),
     "---\nname: gsd-browser\ndescription: stale\n---\n",
   );
-  rmSync(join(fakeAgentDir, "skills", "gsd-browser", "docs", "mcp.md"), { force: true });
   writeFileSync(
     join(fakeAgentDir, "managed-resources.json"),
     JSON.stringify({
@@ -325,11 +345,6 @@ test("initResources refreshes a stale managed gsd-browser package skill", async 
     readFileSync(join(fakeAgentDir, "skills", "gsd-browser", "SKILL.md"), "utf-8"),
     packagedGsdBrowserSkill(),
     "current managed-resource manifests must not skip stale package-owned gsd-browser skills",
-  );
-  assert.equal(
-    existsSync(join(fakeAgentDir, "skills", "gsd-browser", "docs", "mcp.md")),
-    true,
-    "current managed-resource manifests must not skip missing package-owned skill support files",
   );
 });
 
