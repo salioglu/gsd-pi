@@ -80,6 +80,20 @@ function createTempProject(): { basePath: string; planPath: string } {
   return { basePath, planPath };
 }
 
+function writeProjectPreferences(basePath: string, yaml: string): void {
+  fs.writeFileSync(path.join(basePath, '.gsd', 'PREFERENCES.md'), `---\n${yaml}---\n`);
+}
+
+async function withWorkingDirectory<T>(cwd: string, action: () => Promise<T>): Promise<T> {
+  const previousCwd = process.cwd();
+  process.chdir(cwd);
+  try {
+    return await action();
+  } finally {
+    process.chdir(previousCwd);
+  }
+}
+
 function makeValidParams() {
   return {
     taskId: 'T01',
@@ -102,6 +116,13 @@ function makeValidParams() {
       },
     ],
   };
+}
+
+function makeEscalationOptions() {
+  return [
+    { id: 'continue', label: 'Continue', tradeoffs: 'Keeps execution moving with the default path.' },
+    { id: 'pause', label: 'Pause', tradeoffs: 'Stops execution until the blocker is reviewed.' },
+  ];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -354,6 +375,105 @@ console.log('\n=== complete-task: handler happy path ===');
     assertEq(sliceAfter!.depends, ['S00'], 'complete-task should preserve existing slice dependencies');
     assertEq(sliceAfter!.demo, 'basic functionality works', 'complete-task should preserve existing slice demo');
   }
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: hard-blocker escalation with mid-execution escalation disabled
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: disabled hard-blocker escalation rolls back completion ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  const { basePath } = createTempProject();
+  writeProjectPreferences(basePath, 'phases:\n  mid_execution_escalation: false\n');
+
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+
+  const params = {
+    ...makeValidParams(),
+    blockerDiscovered: true,
+    escalation: {
+      question: 'Should execution pause for the hard blocker?',
+      options: makeEscalationOptions(),
+      recommendation: 'pause',
+      recommendationRationale: 'The blocker should not be silently advanced.',
+      continueWithDefault: false,
+    },
+  };
+
+  const result = await withWorkingDirectory(basePath, () => handleCompleteTask(params, basePath));
+
+  assertTrue('error' in result, 'hard-blocker escalation should fail when escalation handling is disabled');
+  if ('error' in result) {
+    assertMatch(result.error, /hard-blocker escalation/, 'error should mention hard-blocker escalation');
+    assertMatch(result.error, /mid_execution_escalation is disabled/, 'error should mention disabled preference');
+  }
+
+  const task = getTask('M001', 'S01', 'T01');
+  assertTrue(task !== null, 'task row should remain after rollback');
+  assertEq(task!.status, 'pending', 'task status should be rolled back to pending');
+  assertEq(task!.blocker_discovered, true, 'blocker flag should remain recorded for visibility');
+  assertEq(task!.escalation_pending, 0, 'disabled preference should not create a pending escalation flag');
+  assertEq(task!.escalation_awaiting_review, 0, 'disabled preference should not create an awaiting-review flag');
+
+  const adapter = _getAdapter()!;
+  const evRows = adapter.prepare(
+    "SELECT * FROM verification_evidence WHERE task_id = 'T01' AND slice_id = 'S01' AND milestone_id = 'M001'"
+  ).all();
+  assertEq(evRows.length, 0, 'verification evidence should be deleted when completion rolls back');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: soft escalation with mid-execution escalation disabled
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: disabled soft escalation still completes ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  const { basePath } = createTempProject();
+  writeProjectPreferences(basePath, 'phases:\n  mid_execution_escalation: false\n');
+
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+
+  const params = {
+    ...makeValidParams(),
+    escalation: {
+      question: 'Should execution continue with the default?',
+      options: makeEscalationOptions(),
+      recommendation: 'continue',
+      recommendationRationale: 'The default path is safe enough to continue.',
+      continueWithDefault: true,
+    },
+  };
+
+  const result = await withWorkingDirectory(basePath, () => handleCompleteTask(params, basePath));
+
+  assertTrue(!('error' in result), 'soft escalation should still complete when escalation handling is disabled');
+  if (!('error' in result)) {
+    assertTrue(!result.escalation, 'disabled preference should not return escalation metadata');
+  }
+
+  const task = getTask('M001', 'S01', 'T01');
+  assertTrue(task !== null, 'task row should exist');
+  assertEq(task!.status, 'complete', 'soft escalation should leave task complete');
+
+  const adapter = _getAdapter()!;
+  const evRows = adapter.prepare(
+    "SELECT * FROM verification_evidence WHERE task_id = 'T01' AND slice_id = 'S01' AND milestone_id = 'M001'"
+  ).all();
+  assertEq(evRows.length, 1, 'verification evidence should remain for soft escalation completion');
 
   cleanupDir(basePath);
   cleanup(dbPath);

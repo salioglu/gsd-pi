@@ -453,6 +453,25 @@ export async function handleCompleteTask(
       }
     }
   } else if (params.escalation && !escalationWriteEnabled) {
+    if (params.escalation.continueWithDefault === false) {
+      const msg = `complete-task received a hard-blocker escalation (continueWithDefault=false) but phases.mid_execution_escalation is disabled for ${params.milestoneId}/${params.sliceId}/${params.taskId}; reverting to pending instead of silently advancing.`;
+      logWarning("tool", msg);
+      try {
+        deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
+        updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, 'pending');
+        invalidateStateCache();
+        logWarning(
+          "tool",
+          `complete-task rolled back DB completion for ${params.milestoneId}/${params.sliceId}/${params.taskId} because hard-blocker escalation handling is disabled; SUMMARY.md left on disk for retry.`,
+        );
+      } catch (rollbackErr) {
+        logWarning(
+          "tool",
+          `complete-task rollback failed after disabled hard-blocker escalation for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(rollbackErr as Error).message}`,
+        );
+      }
+      return { error: msg };
+    }
     logWarning(
       "tool",
       `complete-task received escalation payload but phases.mid_execution_escalation is not enabled; ignoring (${params.milestoneId}/${params.sliceId}/${params.taskId})`,
