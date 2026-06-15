@@ -2,6 +2,7 @@ import type { DefaultResourceLoader as DefaultResourceLoaderType } from '@gsd/pi
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compareSemver } from './update-check.js'
@@ -30,6 +31,9 @@ const resourcesDir = resolveBundledResourcesDirFromPackageRoot(packageRoot)
 const bundledExtensionsDir = join(resourcesDir, 'extensions')
 const resourceVersionManifestName = 'managed-resources.json'
 const resourceFingerprintFileName = '.managed-resources-content-hash'
+const gsdBrowserSkillName = 'gsd-browser'
+const requireFromResourceLoader = createRequire(import.meta.url)
+const gsdBrowserSkillReferenceDirs = ['docs', 'scripts', 'gsd-browser-skill']
 
 interface ManagedResourceManifest {
   gsdVersion: string
@@ -185,6 +189,115 @@ function getCurrentResourceFingerprint(): string {
     // Source-tree and partial-build workflows may not have a precomputed hash.
   }
   return computeResourceFingerprint()
+}
+
+function resolveGsdBrowserPackageSkillPath(): string | null {
+  try {
+    return requireFromResourceLoader.resolve('@opengsd/gsd-browser/SKILL.md')
+  } catch {
+    return null
+  }
+}
+
+export function collectGsdBrowserPackageSkillReferences(content: string): string[] {
+  const refs = new Set<string>()
+  const referencePattern = /`((?:\.\/)?(?:docs|scripts|gsd-browser-skill)\/[^`\s]+)`/g
+
+  for (const match of content.matchAll(referencePattern)) {
+    const ref = normalizeGsdBrowserPackageSkillReference(match[1])
+    if (ref) refs.add(ref)
+  }
+
+  return [...refs].sort()
+}
+
+function normalizeGsdBrowserPackageSkillReference(ref: string | undefined): string | null {
+  if (!ref) return null
+  const normalized = ref
+    .replace(/^\.\//, '')
+    .replace(/[),.;:]+$/, '')
+
+  if (normalized.includes('..') || normalized.startsWith('/')) return null
+  if (!gsdBrowserSkillReferenceDirs.some(dir => normalized === dir || normalized.startsWith(`${dir}/`))) {
+    return null
+  }
+
+  return normalized
+}
+
+function readGsdBrowserPackageSkillBundle(sourceSkillPath: string): Map<string, Buffer> {
+  const skillContent = readFileSync(sourceSkillPath)
+  const files = new Map<string, Buffer>([['SKILL.md', skillContent]])
+  const supportRefs = collectGsdBrowserPackageSkillReferences(skillContent.toString('utf-8'))
+  const sourceDir = dirname(sourceSkillPath)
+
+  for (const relPath of supportRefs) {
+    const sourcePath = join(sourceDir, relPath)
+    if (existsSync(sourcePath)) {
+      files.set(relPath, readFileSync(sourcePath))
+    }
+  }
+
+  return files
+}
+
+export function hasStaleGsdBrowserPackageSkill(skillsDir: string): boolean {
+  const targetDir = join(skillsDir, gsdBrowserSkillName)
+  const sourceSkillPath = resolveGsdBrowserPackageSkillPath()
+
+  // Package unresolvable. syncGsdBrowserPackageSkill is a no-op in this case
+  // (it preserves any existing managed skill), so reporting "stale" here
+  // would drive a full resource resync on every launch that the sync cannot
+  // actually satisfy. Keep the existing managed skill in place until the
+  // package becomes resolvable again or the manifest fingerprint changes.
+  if (!sourceSkillPath) return false
+
+  try {
+    const sourceDir = dirname(sourceSkillPath)
+    const skillContent = readFileSync(sourceSkillPath, 'utf-8')
+    for (const [relPath, content] of readGsdBrowserPackageSkillBundle(sourceSkillPath)) {
+      const targetPath = join(targetDir, relPath)
+      if (!existsSync(targetPath) || !readFileSync(targetPath).equals(content)) {
+        return true
+      }
+    }
+    // Only flag SKILL.md references when sync can actually correct them.
+    // The bundle loop above already covers "source has it, target missing".
+    // A reference the package itself does not ship (source missing) is only
+    // worth a resync if the target still has a stale copy that sync should
+    // clean up; missing on both sides is the steady state when upstream
+    // omits files referenced from SKILL.md and is not actionable here.
+    for (const relPath of collectGsdBrowserPackageSkillReferences(skillContent)) {
+      const sourcePath = join(sourceDir, relPath)
+      const targetPath = join(targetDir, relPath)
+      if (!existsSync(sourcePath) && existsSync(targetPath)) {
+        return true
+      }
+    }
+    return false
+  } catch {
+    return true
+  }
+}
+
+function syncGsdBrowserPackageSkill(skillsDir: string): void {
+  const targetDir = join(skillsDir, gsdBrowserSkillName)
+  const sourceSkillPath = resolveGsdBrowserPackageSkillPath()
+
+  if (!sourceSkillPath) return
+
+  makeTreeWritable(targetDir)
+  rmSync(targetDir, { recursive: true, force: true })
+
+  for (const [relPath, content] of readGsdBrowserPackageSkillBundle(sourceSkillPath)) {
+    const targetPath = join(targetDir, relPath)
+    mkdirSync(dirname(targetPath), { recursive: true })
+    writeFileSync(targetPath, content)
+    if (relPath.startsWith('scripts/') && relPath.endsWith('.sh')) {
+      chmodSync(targetPath, 0o755)
+    }
+  }
+  makeTreeWritable(targetDir)
 }
 
 function collectFileEntries(dir: string, root: string, out: string[]): void {
@@ -584,18 +697,20 @@ function pruneRemovedBundledExtensions(
 }
 
 /**
- * Syncs all bundled resources to agentDir (~/.gsd/agent/) on every launch.
+ * Initializes managed resources under agentDir (~/.gsd/agent/).
  *
  * - extensions/ → ~/.gsd/agent/extensions/   (overwrite when version changes)
  * - shared/     → ~/.gsd/agent/shared/       (overwrite when version changes)
  * - agents/     → ~/.gsd/agent/agents/        (overwrite when version changes)
  * - skills/     → ~/.gsd/agent/skills/        (overwrite when version changes)
+ * - gsd-browser skill → ~/.gsd/agent/skills/gsd-browser/ from @opengsd/gsd-browser
  * - GSD-WORKFLOW.md → ~/.gsd/agent/GSD-WORKFLOW.md (fallback for env var miss)
  *
- * Skips the copy when the managed-resources.json version matches the current
- * GSD version, avoiding ~128ms of synchronous cpSync on every startup.
- * After `npm update -g @glittercowboy/gsd`, versions will differ and the
- * copy runs once to land the new resources.
+ * Skips the full copy only when the managed-resources.json version, content
+ * fingerprint, and package-owned gsd-browser skill all match the current
+ * install, avoiding ~128ms of synchronous cpSync on steady-state startup.
+ * After `npm update -g @opengsd/gsd-pi`, versions will differ and the copy
+ * runs once to land the new resources.
  *
  * Inspectable: `ls ~/.gsd/agent/extensions/`
  */
@@ -641,12 +756,14 @@ export function initResources(agentDir: string, skillsDir: string = join(agentDi
       skillsDir,
       join(resourcesDir, 'skills'),
     )
+    const hasStaleGsdBrowserSkill = hasStaleGsdBrowserPackageSkill(skillsDir)
     if (
       manifest.contentHash &&
       manifest.contentHash === currentHash &&
       !hasStaleExtensionFiles &&
       !hasMissingSharedFiles &&
-      !hasMissingSkillFiles
+      !hasMissingSkillFiles &&
+      !hasStaleGsdBrowserSkill
     ) {
       return
     }
@@ -658,6 +775,7 @@ export function initResources(agentDir: string, skillsDir: string = join(agentDi
   syncResourceDir(join(resourcesDir, 'shared'), join(agentDir, 'shared'))
   syncResourceDir(join(resourcesDir, 'agents'), join(agentDir, 'agents'))
   syncResourceDir(join(resourcesDir, 'skills'), skillsDir)
+  syncGsdBrowserPackageSkill(skillsDir)
 
   // Sync GSD-WORKFLOW.md to agentDir as a fallback for when GSD_WORKFLOW_PATH
   // env var is not set (e.g. fork/dev builds, alternative entry points).
