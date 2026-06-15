@@ -245,9 +245,12 @@ export function hasStaleGsdBrowserPackageSkill(skillsDir: string): boolean {
   const targetDir = join(skillsDir, gsdBrowserSkillName)
   const sourceSkillPath = resolveGsdBrowserPackageSkillPath()
 
-  if (!sourceSkillPath) {
-    return existsSync(targetDir)
-  }
+  // Package unresolvable. syncGsdBrowserPackageSkill is a no-op in this case
+  // (it preserves any existing managed skill), so reporting "stale" here
+  // would drive a full resource resync on every launch that the sync cannot
+  // actually satisfy. Keep the existing managed skill in place until the
+  // package becomes resolvable again or the manifest fingerprint changes.
+  if (!sourceSkillPath) return false
 
   try {
     const sourceDir = dirname(sourceSkillPath)
@@ -258,12 +261,15 @@ export function hasStaleGsdBrowserPackageSkill(skillsDir: string): boolean {
         return true
       }
     }
+    // Only flag SKILL.md references when sync can actually correct them.
+    // The bundle loop above already covers "source has it, target missing".
+    // A reference the package itself does not ship (source missing) is only
+    // worth a resync if the target still has a stale copy that sync should
+    // clean up; missing on both sides is the steady state when upstream
+    // omits files referenced from SKILL.md and is not actionable here.
     for (const relPath of collectGsdBrowserPackageSkillReferences(skillContent)) {
-      const targetPath = join(targetDir, relPath)
-      if (!existsSync(targetPath)) {
-        return true
-      }
       const sourcePath = join(sourceDir, relPath)
+      const targetPath = join(targetDir, relPath)
       if (!existsSync(sourcePath) && existsSync(targetPath)) {
         return true
       }

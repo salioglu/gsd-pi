@@ -387,6 +387,79 @@ test("syncGsdBrowserPackageSkill preserves existing managed skill when the packa
   );
 });
 
+test("hasStaleGsdBrowserPackageSkill does not report stale when the package is unresolvable", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-browser-skill-unresolvable-"));
+  const fakeAgentDir = join(tmp, ".gsd", "agent");
+  const restoreHomeEnv = overrideHomeEnv(tmp);
+
+  const browserPkgDir = join(process.cwd(), "node_modules", "@opengsd", "gsd-browser");
+  const browserPkgBackup = `${browserPkgDir}.test-backup`;
+  const { renameSync } = await import("node:fs");
+
+  let renamed = false;
+  t.after(() => {
+    if (renamed) {
+      try { renameSync(browserPkgBackup, browserPkgDir); } catch { /* best effort */ }
+    }
+    restoreHomeEnv();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const { hasStaleGsdBrowserPackageSkill, initResources } = await import("../resource-loader.ts");
+  initResources(fakeAgentDir);
+
+  renameSync(browserPkgDir, browserPkgBackup);
+  renamed = true;
+
+  assert.equal(
+    hasStaleGsdBrowserPackageSkill(join(fakeAgentDir, "skills")),
+    false,
+    "hasStale must agree with sync (no-op on unresolvable package) so launches do not run wasted full resyncs",
+  );
+});
+
+test("hasStaleGsdBrowserPackageSkill does not flag SKILL.md references the package itself does not ship", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-browser-skill-missing-refs-"));
+  const fakeAgentDir = join(tmp, ".gsd", "agent");
+  const restoreHomeEnv = overrideHomeEnv(tmp);
+
+  t.after(() => {
+    restoreHomeEnv();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const {
+    collectGsdBrowserPackageSkillReferences,
+    hasStaleGsdBrowserPackageSkill,
+    initResources,
+  } = await import("../resource-loader.ts");
+
+  initResources(fakeAgentDir);
+  const skillsDir = join(fakeAgentDir, "skills");
+  const installedSkill = readFileSync(
+    join(skillsDir, "gsd-browser", "SKILL.md"),
+    "utf-8",
+  );
+
+  // Sanity: the published package SKILL.md does reference at least one
+  // file the npm tarball does not actually ship (this regression exists
+  // precisely because upstream omits these supports). If a future package
+  // version ships every referenced path, this test's premise no longer
+  // applies and there is nothing to guard against.
+  const refs = collectGsdBrowserPackageSkillReferences(installedSkill);
+  const browserPkgRoot = join(process.cwd(), "node_modules", "@opengsd", "gsd-browser");
+  const missingFromPackage = refs.filter((rel) => !existsSync(join(browserPkgRoot, rel)));
+  if (missingFromPackage.length === 0) {
+    return; // upstream now ships everything; nothing to assert.
+  }
+
+  assert.equal(
+    hasStaleGsdBrowserPackageSkill(skillsDir),
+    false,
+    "hasStale must not loop forever on SKILL.md references the package itself does not ship",
+  );
+});
+
 test("bundled skill frontmatter is valid YAML", () => {
   const skillsDir = join(process.cwd(), "src", "resources", "skills");
   const skillNames = readdirSync(skillsDir, { withFileTypes: true })
