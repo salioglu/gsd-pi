@@ -240,6 +240,8 @@ test("workflow-start prompt defaults to autonomy instead of per-phase confirmati
   const prompt = readPrompt("workflow-start");
   assert.match(prompt, /Keep moving by default/i);
   assert.match(prompt, /Decision gates, not ceremony/i);
+  assert.match(prompt, /Persist workflow state/i);
+  assert.match(prompt, /completedAt/i);
   assert.doesNotMatch(prompt, /confirm with the user before proceeding/i);
   assert.doesNotMatch(prompt, /Gate between phases/i);
 });
