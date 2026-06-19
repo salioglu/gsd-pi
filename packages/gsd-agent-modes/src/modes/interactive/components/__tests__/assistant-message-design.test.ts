@@ -62,6 +62,11 @@ describe("AssistantMessageComponent plain surface", () => {
 		const component = new AssistantMessageComponent(message, true);
 		component.setShowMetadata(true);
 		const plain = component.render(80).map((line) => stripAnsi(line)).join("\n");
-		assert.match(plain, /1969-12-31/);
+		// Compute the expected local-timezone date for the Unix epoch using the same
+		// local-time arithmetic as isoDate() so the assertion passes regardless of
+		// the machine's timezone (UTC shows 1970-01-01, UTC-1 shows 1969-12-31, etc.).
+		const d = new Date(0);
+		const expectedDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+		assert.match(plain, new RegExp(expectedDate));
 	});
 });

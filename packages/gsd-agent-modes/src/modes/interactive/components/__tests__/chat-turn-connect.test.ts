@@ -4,8 +4,11 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
+import { initTheme } from "@gsd/pi-coding-agent/theme/theme.js";
 import { reconcileChatTurnConnections } from "../chat-turn-connect.js";
 import { UserMessageComponent } from "../user-message.js";
+
+initTheme("dark", false);
 
 describe("reconcileChatTurnConnections", () => {
 	test("is a no-op for plain transcript layout", () => {
