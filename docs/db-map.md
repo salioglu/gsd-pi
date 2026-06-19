@@ -30,7 +30,8 @@ gsd-db.ts  ← compatibility barrel over the explicit single-writer allowlist
        │                    ← allowlisted ADR migration/backfill helper
        ├── db/queries.ts    ← the Query Module (read-only SELECT wrappers)
        │
-       ├── transaction()  (db/engine.ts via db-transaction.ts — depth counter, no nested BEGIN)
+       ├── transaction()/immediateTransaction()
+       │   (db/engine.ts via db-transaction.ts — depth counter, no nested BEGIN)
        │
        ▼
 db-adapter.ts  ← normalized prepared-statement cache
@@ -754,7 +755,7 @@ remain outside manifest restore.
 
 1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
 
-2. **Transaction wrapping**: every multi-table write uses `transaction()`. Rollback on any error. Re-entrant: nested calls increment depth counter; no nested BEGIN.
+2. **Transaction wrapping**: every multi-table write uses `transaction()` or `immediateTransaction()` when it needs SQLite's reserved writer lock up front. Rollback on any error. Re-entrant: nested calls increment the shared depth counter; no nested `BEGIN`.
 
 3. **Cascade semantics**: hierarchy status cascades are named **Domain Write Operations** in `db/writers/cascades.ts`, each owning its own `transaction()` so the milestone/slice/task subtree transitions atomically (callers keep only projection/file-cleanup/event logic):
    - `gsd_slice_complete` (`completeSliceCascade`) cascades `pending` tasks → `skipped`
