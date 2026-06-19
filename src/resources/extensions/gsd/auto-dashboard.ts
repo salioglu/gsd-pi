@@ -766,6 +766,9 @@ export function setCompletionProgressWidget(
   if (!ctx.hasUI) return;
   const widgetKey = "gsd-progress";
   clearAutoOutcomeWidget(ctx);
+  // Clear the structured GSD progress strip so it does not linger behind
+  // the completion widget (the two use separate display channels).
+  ctx.ui?.setGsdProgress?.(undefined);
 
   if (typeof ctx.ui?.setHeader === "function") {
     ctx.ui.setHeader(() => ({
@@ -1119,7 +1122,9 @@ function installGsdProgressStrip(
       clearInterval(progressRefreshTimer);
       progressRefreshTimer = undefined;
     }
-    ctx.ui?.setGsdProgress?.(undefined);
+    // Do not call setGsdProgress here: callers (resetExtensionUI, unit transition,
+    // setCompletionProgressWidget) clear gsdProgressState directly, and calling it
+    // here would re-enter setGsdProgress which calls dispose again — infinite recursion.
   };
 
   const publish = (registerDispose = false): boolean => {

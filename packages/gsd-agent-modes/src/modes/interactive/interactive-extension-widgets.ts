@@ -133,11 +133,13 @@ export function setGsdProgress(
 	dispose?: () => void,
 ): void {
 	if (dispose !== undefined) {
-		host.gsdProgressDispose?.();
+		const prev = host.gsdProgressDispose;
 		host.gsdProgressDispose = dispose;
+		prev?.();
 	} else if (state === undefined) {
-		host.gsdProgressDispose?.();
+		const prev = host.gsdProgressDispose;
 		host.gsdProgressDispose = undefined;
+		prev?.();
 	}
 	host.gsdProgressState = state;
 	host.ui.requestRender();
@@ -220,9 +222,10 @@ export function resetExtensionUI(host: InteractiveModeDelegateHost): void {
 		host.setExtensionFooter(undefined);
 		host.setExtensionHeader(undefined);
 		clearExtensionWidgets(host, );
-		host.gsdProgressDispose?.();
+		const prevGsdDispose = host.gsdProgressDispose;
 		host.gsdProgressDispose = undefined;
 		host.gsdProgressState = undefined;
+		prevGsdDispose?.();
 		host.footerDataProvider.clearExtensionStatuses();
 		host.footer.invalidate();
 		host.setCustomEditorComponent(undefined);
