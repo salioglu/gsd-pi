@@ -98,7 +98,7 @@ export class InteractiveMode {
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
 	private gsdStatusWidget: GsdStatusWidget;
-	private gsdStatusExpanded = false;
+	private gsdStatusExpanded: boolean | undefined = undefined;
 	private gsdProgressState: import("@gsd/pi-coding-agent/core/extensions/extension-upstream-types.js").GsdProgressState | undefined;
 	private gsdProgressDispose?: () => void;
 	private statusContainer: Container;
@@ -526,7 +526,12 @@ export class InteractiveMode {
 	private toggleToolOutputExpansion(): void { keyHandlers.toggleToolOutputExpansion(this); }
 	private setToolsExpanded(expanded: boolean): void { keyHandlers.setToolsExpanded(this, expanded); }
 	toggleGsdStatusWidget(): void {
-		this.gsdStatusExpanded = !this.gsdStatusExpanded;
+		// Compute the effective expansion so the toggle always visually flips:
+		// undefined = use widgetMode default, otherwise use the explicit value.
+		const progress = this.gsdProgressState;
+		const defaultExpanded = progress !== undefined && progress.widgetMode !== "min" && progress.widgetMode !== undefined;
+		const currentlyExpanded = this.gsdStatusExpanded !== undefined ? this.gsdStatusExpanded : defaultExpanded;
+		this.gsdStatusExpanded = !currentlyExpanded;
 		this.gsdStatusWidget.invalidate();
 		this.footer.invalidate();
 		this.ui.requestRender();

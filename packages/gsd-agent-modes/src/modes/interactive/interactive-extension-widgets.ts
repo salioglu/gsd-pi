@@ -135,6 +135,9 @@ export function setGsdProgress(
 	if (dispose !== undefined) {
 		const prev = host.gsdProgressDispose;
 		host.gsdProgressDispose = dispose;
+		// Reset user's manual expansion for the new unit so widgetMode drives
+		// the initial state again (the user can re-collapse via ctrl+shift+d).
+		host.gsdStatusExpanded = undefined;
 		prev?.();
 	} else if (state === undefined) {
 		const prev = host.gsdProgressDispose;

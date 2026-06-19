@@ -66,7 +66,12 @@ export class UserMessageComponent extends Container {
 		}
 		const out = [...framed];
 		const firstFrameLine = 0;
-		const lastFrameLine = out.length - 1;
+		// Skip trailing blank lines so the end-of-command marker lands on the
+		// last content line, not on the spacer appended by renderPlainSpeakerMessage.
+		let lastFrameLine = out.length - 1;
+		while (lastFrameLine > firstFrameLine && out[lastFrameLine] === "") {
+			lastFrameLine--;
+		}
 		out[firstFrameLine] = OSC133_ZONE_START + out[firstFrameLine];
 		out[lastFrameLine] = out[lastFrameLine] + OSC133_ZONE_END;
 		return this.renderCache.set(cacheKey, out);

@@ -1134,7 +1134,10 @@ function installGsdProgressStrip(
 
   const publish = (registerDispose = false): boolean => {
     if (accessors.isSessionSwitching()) {
-      // Only clear on initial install; timer refreshes must not dispose intervals.
+      // On initial install (registerDispose) clear any stale strip from the
+      // previous unit. On timer refreshes, skip silently — calling
+      // setGsdProgress(undefined) would run dispose() and permanently clear
+      // the refresh timers, leaving the strip blank after the switch.
       if (registerDispose) {
         ctx.ui!.setGsdProgress!(undefined);
       }

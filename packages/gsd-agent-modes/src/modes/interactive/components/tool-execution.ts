@@ -352,6 +352,7 @@ export class ToolExecutionComponent extends Container {
 	private toolName: string;
 	private args: any;
 	private expanded = false;
+	private explicitlyCollapsed = false;
 	private showImages: boolean;
 	private isPartial = true;
 	private toolDefinition?: ToolDefinition;
@@ -769,10 +770,14 @@ export class ToolExecutionComponent extends Container {
 
 	setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
+		this.explicitlyCollapsed = !expanded;
 		this.updateDisplay();
 	}
 
 	private shouldDefaultExpandBody(): boolean {
+		// If the user explicitly collapsed (ctrl+o), don't auto-expand even for
+		// edit/write tools — the global collapse must be respected.
+		if (this.explicitlyCollapsed) return false;
 		if (this.expanded) return true;
 		if (this.result?.isError) return false;
 		return false;

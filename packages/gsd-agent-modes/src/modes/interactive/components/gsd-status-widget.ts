@@ -9,7 +9,12 @@ import { resolveTuiMode } from "../tui-mode.js";
 import { badge, layoutFullWidthFooter, layoutMinimalFooter, renderProgressBar } from "./transcript-design.js";
 
 export interface GsdStatusWidgetState extends AdaptiveLayoutState {
-	manuallyExpanded: boolean;
+	/**
+	 * `undefined` — not yet toggled, use widgetMode default.
+	 * `true`  — user explicitly expanded (overrides widgetMode: "min").
+	 * `false` — user explicitly collapsed (overrides widgetMode: "full").
+	 */
+	manuallyExpanded: boolean | undefined;
 	gsdProgress?: GsdProgressState;
 }
 
@@ -47,7 +52,13 @@ export function isGsdStatusWidgetVisible(state: GsdStatusWidgetState, width: num
 function renderProgressDrivenStrip(state: GsdStatusWidgetState, width: number): string[] {
 	const progress = state.gsdProgress!;
 	const autoExpand = !!state.lastError;
-	const expanded = state.manuallyExpanded || autoExpand;
+	// Errors always force expansion so the user can read them.
+	// When the user has explicitly set expansion via ctrl+shift+d, honour it.
+	// Otherwise fall back to the widgetMode preference from GSD settings.
+	const defaultExpanded = progress.widgetMode !== "min" && progress.widgetMode !== undefined;
+	const expanded =
+		autoExpand ||
+		(state.manuallyExpanded !== undefined ? state.manuallyExpanded : defaultExpanded);
 
 	const phase = progress.phase || state.gsdPhase || "Ready";
 	const modeTag =
@@ -82,7 +93,7 @@ function renderProgressDrivenStrip(state: GsdStatusWidgetState, width: number): 
 			progress.unitLabel ? theme.fg("text", progress.unitLabel) : undefined,
 		].filter((segment): segment is string => !!segment);
 		const taskLine = layoutFullWidthFooter(taskSegments, width, 0, (budget) =>
-			renderProgressBar(taskProgress.done, taskProgress.total, Math.max(8, budget), "accent"),
+			renderProgressBar(taskProgress.done, taskProgress.total, Math.max(8, budget), "running"),
 		);
 		lines.push(padLine(taskLine, width));
 	}
@@ -115,7 +126,7 @@ export class GsdStatusWidget implements Component {
 		}
 
 		const autoExpand = !!state.lastError;
-		const expanded = state.manuallyExpanded || autoExpand;
+		const expanded = autoExpand || (state.manuallyExpanded ?? false);
 		const phase = state.gsdPhase ?? (state.lastError ? "Recovery" : "Ready");
 		const tools =
 			(state.activeToolCount ?? 0) > 0 ? `${state.activeToolCount} running` : "idle";
