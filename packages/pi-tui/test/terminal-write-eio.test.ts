@@ -78,6 +78,42 @@ class BrokenWriteTerminal implements Terminal {
 	setProgress(_active: boolean): void {}
 }
 
+class StartupClosedTerminal implements Terminal {
+	readonly isTTY = true;
+	readonly kittyProtocolActive = false;
+	outputClosed = false;
+
+	setOutputClosedHandler(handler: () => void): void {
+		this.outputClosed = true;
+		handler();
+	}
+
+	start(_onInput: (data: string) => void, _onResize: () => void): void {}
+
+	stop(): void {}
+
+	async drainInput(_maxMs?: number, _idleMs?: number): Promise<void> {}
+
+	write(_data: string): void {}
+
+	get columns(): number {
+		return 80;
+	}
+
+	get rows(): number {
+		return 24;
+	}
+
+	moveBy(_lines: number): void {}
+	hideCursor(): void {}
+	showCursor(): void {}
+	clearLine(): void {}
+	clearFromCursor(): void {}
+	clearScreen(): void {}
+	setTitle(_title: string): void {}
+	setProgress(_active: boolean): void {}
+}
+
 describe("TUI render loop on dead stdout", () => {
 	it("stops rendering and notifies onOutputClosed instead of throwing", async () => {
 		let closed = false;
@@ -92,6 +128,20 @@ describe("TUI render loop on dead stdout", () => {
 		tui.requestRender(true);
 
 		await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+		assert.equal(closed, true);
+		tui.stop();
+	});
+
+	it("notifies onOutputClosed when assigned after startup output closes", () => {
+		let closed = false;
+		const terminal = new StartupClosedTerminal();
+		const tui = new TUI(terminal);
+
+		tui.start();
+		tui.onOutputClosed = () => {
+			closed = true;
+		};
 
 		assert.equal(closed, true);
 		tui.stop();

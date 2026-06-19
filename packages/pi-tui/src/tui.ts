@@ -324,7 +324,7 @@ export class TUI extends Container {
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
 	public onDebug?: () => void;
 	/** Called once when terminal output is no longer writable (pipe closed). */
-	public onOutputClosed?: () => void;
+	private outputClosedHandler?: () => void;
 	private outputClosedHandled = false;
 	private renderRequested = false;
 	private renderTimer: NodeJS.Timeout | undefined;
@@ -380,6 +380,17 @@ export class TUI extends Container {
 
 	get fullRedraws(): number {
 		return this.fullRedrawCount;
+	}
+
+	get onOutputClosed(): (() => void) | undefined {
+		return this.outputClosedHandler;
+	}
+
+	set onOutputClosed(handler: (() => void) | undefined) {
+		this.outputClosedHandler = handler;
+		if (handler && this.outputClosedHandled) {
+			handler();
+		}
 	}
 
 	getShowHardwareCursor(): boolean {
@@ -564,7 +575,7 @@ export class TUI extends Container {
 			this.renderTimer = undefined;
 		}
 		this.renderRequested = false;
-		this.onOutputClosed?.();
+		this.outputClosedHandler?.();
 	}
 
 	private safeDoRender(): void {
