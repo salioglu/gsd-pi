@@ -10,8 +10,6 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { visibleWidth } from "@gsd/pi-tui";
-
 import {
   _resetWidgetModeForTests,
   setCompletionProgressWidget,
@@ -57,15 +55,6 @@ const baseAccessors = {
   isSessionSwitching: () => false,
   getCurrentDispatchedModelId: () => null,
 };
-
-function assertLinesFit(lines: string[], width: number): void {
-  for (const line of lines) {
-    assert.ok(
-      visibleWidth(line) <= width,
-      `line exceeds width ${width}: ${visibleWidth(line)} "${line}"`,
-    );
-  }
-}
 
 // ── Header lifecycle ────────────────────────────────────────────────────
 
