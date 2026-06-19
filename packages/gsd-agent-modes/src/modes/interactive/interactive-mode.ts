@@ -215,10 +215,11 @@ export class InteractiveMode {
 		this.footer = new FooterComponent(session, this.footerDataProvider, () => ({
 			override: this.settingsManager.getAdaptiveMode(),
 			activeToolCount: this.pendingTools.size,
-			gsdPhase: this.pendingWorkingMessage ?? undefined,
+			gsdPhase: this.gsdProgressState?.phase ?? this.pendingWorkingMessage ?? undefined,
 			lastError: this.lastBlockingError,
-			cwd: process.cwd(),
+			cwd: this.gsdProgressState?.path ?? process.cwd(),
 			manuallyExpanded: this.gsdStatusExpanded,
+			gsdProgress: this.gsdProgressState,
 		}));
 		this.footer.setAutoCompactEnabled(session.autoCompactionEnabled);
 		this.toolOutputExpanded = this.settingsManager.getToolsExpanded();

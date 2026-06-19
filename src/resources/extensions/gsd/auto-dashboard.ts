@@ -1112,13 +1112,18 @@ function installGsdProgressStrip(
   };
   refreshRuntimeRecord();
 
+  let progressRefreshTimer: ReturnType<typeof setInterval> | undefined;
+
   const dispose = (): void => {
-    clearInterval(progressRefreshTimer);
+    if (progressRefreshTimer !== undefined) {
+      clearInterval(progressRefreshTimer);
+      progressRefreshTimer = undefined;
+    }
     ctx.ui?.setGsdProgress?.(undefined);
   };
 
-  const publish = (registerDispose = false): void => {
-    if (accessors.isSessionSwitching()) return;
+  const publish = (registerDispose = false): boolean => {
+    if (accessors.isSessionSwitching()) return false;
     ctx.ui!.setGsdProgress!(
       buildGsdProgressPayload(
         accessors,
@@ -1133,20 +1138,26 @@ function installGsdProgressStrip(
       ),
       registerDispose ? dispose : undefined,
     );
+    return true;
   };
 
-  const progressRefreshTimer = setInterval(() => {
-    try {
-      if (mid) {
-        updateSliceProgressCache(accessors.getBasePath(), mid.id, slice?.id);
+  const startProgressRefreshTimer = (): void => {
+    if (progressRefreshTimer !== undefined) return;
+    progressRefreshTimer = setInterval(() => {
+      try {
+        if (mid) {
+          updateSliceProgressCache(accessors.getBasePath(), mid.id, slice?.id);
+        }
+        refreshRuntimeRecord();
+        publish();
+      } catch (err) {
+        logWarning("dashboard", `progress strip refresh failed: ${getErrorMessage(err)}`);
       }
-      refreshRuntimeRecord();
-      publish();
-    } catch (err) {
-      logWarning("dashboard", `progress strip refresh failed: ${getErrorMessage(err)}`);
-    }
-  }, 15_000);
-  progressRefreshTimer.unref?.();
+    }, 15_000);
+    progressRefreshTimer.unref?.();
+  };
 
-  publish(true);
+  if (publish(true)) {
+    startProgressRefreshTimer();
+  }
 }
