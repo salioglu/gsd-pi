@@ -1116,11 +1116,16 @@ function installGsdProgressStrip(
   refreshRuntimeRecord();
 
   let progressRefreshTimer: ReturnType<typeof setInterval> | undefined;
+  let elapsedRefreshTimer: ReturnType<typeof setInterval> | undefined;
 
   const dispose = (): void => {
     if (progressRefreshTimer !== undefined) {
       clearInterval(progressRefreshTimer);
       progressRefreshTimer = undefined;
+    }
+    if (elapsedRefreshTimer !== undefined) {
+      clearInterval(elapsedRefreshTimer);
+      elapsedRefreshTimer = undefined;
     }
     // Do not call setGsdProgress here: callers (resetExtensionUI, unit transition,
     // setCompletionProgressWidget) clear gsdProgressState directly, and calling it
@@ -1128,7 +1133,10 @@ function installGsdProgressStrip(
   };
 
   const publish = (registerDispose = false): boolean => {
-    if (accessors.isSessionSwitching()) return false;
+    if (accessors.isSessionSwitching()) {
+      ctx.ui!.setGsdProgress!(undefined);
+      return false;
+    }
     ctx.ui!.setGsdProgress!(
       buildGsdProgressPayload(
         accessors,
@@ -1144,6 +1152,18 @@ function installGsdProgressStrip(
       registerDispose ? dispose : undefined,
     );
     return true;
+  };
+
+  const startElapsedRefreshTimer = (): void => {
+    if (elapsedRefreshTimer !== undefined) return;
+    elapsedRefreshTimer = setInterval(() => {
+      try {
+        publish();
+      } catch (err) {
+        logWarning("dashboard", `progress strip elapsed refresh failed: ${getErrorMessage(err)}`);
+      }
+    }, 1_000);
+    elapsedRefreshTimer.unref?.();
   };
 
   const startProgressRefreshTimer = (): void => {
@@ -1163,6 +1183,7 @@ function installGsdProgressStrip(
   };
 
   if (publish(true)) {
+    startElapsedRefreshTimer();
     startProgressRefreshTimer();
   }
 }
