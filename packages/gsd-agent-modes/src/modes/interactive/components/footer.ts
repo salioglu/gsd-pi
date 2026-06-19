@@ -172,7 +172,8 @@ export class FooterComponent implements Component {
 				: theme.fg("dim", ` ${formatTokens(totalInput + totalOutput)}/${formatTokens(contextWindow)}`);
 		const pct = contextPercent === "?" ? 0 : contextPercentValue;
 		const contextBar = renderProgressBar(pct, 100, CONTEXT_BAR_WIDTH, barColor);
-		const contextSegment = `${contextBar} ${pctLabel}${tokenHint}`;
+		const autoHint = this.autoCompactEnabled ? theme.fg("dim", " (auto)") : "";
+		const contextSegment = `${contextBar} ${pctLabel}${tokenHint}${autoHint}`;
 
 		const leftSegments = [
 			gsdSegment,

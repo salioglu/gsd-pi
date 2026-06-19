@@ -80,7 +80,11 @@ function renderProgressDrivenStrip(state: GsdStatusWidgetState, width: number): 
 
 	const lines = [headLine];
 
-	if (progress.healthSummary) {
+	// "small" mode: compact — task progress only, no health summary or workflow details.
+	// "full" mode (or unspecified): full detail with health summary, task progress, and workflow line.
+	const isSmall = progress.widgetMode === "small";
+
+	if (!isSmall && progress.healthSummary) {
 		lines.push(padLine(theme.fg("dim", truncateToWidth(progress.healthSummary, width, "…")), width));
 	}
 
@@ -98,14 +102,16 @@ function renderProgressDrivenStrip(state: GsdStatusWidgetState, width: number): 
 		lines.push(padLine(taskLine, width));
 	}
 
-	const toolCount = state.activeToolCount ?? 0;
-	const workflowSegments = [
-		theme.fg("dim", "tools ") +
-			theme.fg(toolCount > 0 ? "toolRunning" : "text", toolCount > 0 ? `${toolCount} running` : "idle"),
-		theme.fg("dim", "path ") + theme.fg("text", truncateToWidth(progress.path ?? basename(state.cwd), width - 20, "…")),
-		theme.fg("dim", "ctrl+shift+d collapse"),
-	];
-	lines.push(padLine(workflowSegments.join(theme.fg("dim", " │ ")), width));
+	if (!isSmall) {
+		const toolCount = state.activeToolCount ?? 0;
+		const workflowSegments = [
+			theme.fg("dim", "tools ") +
+				theme.fg(toolCount > 0 ? "toolRunning" : "text", toolCount > 0 ? `${toolCount} running` : "idle"),
+			theme.fg("dim", "path ") + theme.fg("text", truncateToWidth(progress.path ?? basename(state.cwd), width - 20, "…")),
+			theme.fg("dim", "ctrl+shift+d collapse"),
+		];
+		lines.push(padLine(workflowSegments.join(theme.fg("dim", " │ ")), width));
+	}
 
 	return lines;
 }

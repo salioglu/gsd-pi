@@ -61,6 +61,74 @@ test("FooterComponent renders workspace in center when GSD strip is hidden", () 
 	assert.doesNotMatch(lines[0], /╭/);
 });
 
+test("FooterComponent shows (auto) hint when autoCompactEnabled is true", () => {
+	const footer = new FooterComponent(
+		{
+			state: {
+				model: { id: "test-model", provider: "test", contextWindow: 1000 },
+			},
+			sessionManager: {
+				getUsageTotals: () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }),
+				getSessionName: () => undefined,
+			},
+			getContextUsage: () => ({ percent: 20, contextWindow: 1000 }),
+			getLastTurnCost: () => 0,
+			modelRegistry: {
+				isUsingOAuth: () => false,
+				getProviderAuthMode: () => "apiKey",
+			},
+		} as any,
+		{
+			getGitBranch: () => "main",
+			getExtensionStatuses: () => new Map(),
+			getAvailableProviderCount: () => 1,
+		} as any,
+		() => ({
+			override: "chat",
+			activeToolCount: 0,
+			cwd: "/tmp/gsd-pi",
+			manuallyExpanded: false,
+		}),
+	);
+	footer.setAutoCompactEnabled(true);
+	const lines = footer.render(160).map((line) => stripVTControlCharacters(line));
+	assert.match(lines[0], /\(auto\)/);
+});
+
+test("FooterComponent hides (auto) hint when autoCompactEnabled is false", () => {
+	const footer = new FooterComponent(
+		{
+			state: {
+				model: { id: "test-model", provider: "test", contextWindow: 1000 },
+			},
+			sessionManager: {
+				getUsageTotals: () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }),
+				getSessionName: () => undefined,
+			},
+			getContextUsage: () => ({ percent: 20, contextWindow: 1000 }),
+			getLastTurnCost: () => 0,
+			modelRegistry: {
+				isUsingOAuth: () => false,
+				getProviderAuthMode: () => "apiKey",
+			},
+		} as any,
+		{
+			getGitBranch: () => "main",
+			getExtensionStatuses: () => new Map(),
+			getAvailableProviderCount: () => 1,
+		} as any,
+		() => ({
+			override: "chat",
+			activeToolCount: 0,
+			cwd: "/tmp/gsd-pi",
+			manuallyExpanded: false,
+		}),
+	);
+	footer.setAutoCompactEnabled(false);
+	const lines = footer.render(160).map((line) => stripVTControlCharacters(line));
+	assert.doesNotMatch(lines[0], /\(auto\)/);
+});
+
 test("FooterComponent promotes gsd-step to center when GSD strip is visible", () => {
 	const footer = new FooterComponent(
 		{
