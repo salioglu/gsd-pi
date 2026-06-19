@@ -342,6 +342,45 @@ export function renderChatFrame(
 	return surface.render(body, outerWidth);
 }
 
+/** Variant A — plain speaker header line (no rails). */
+export function renderPlainSpeakerHeader(
+	label: string,
+	meta: string | undefined,
+	width: number,
+	tone: "user" | "assistant",
+): string {
+	const labelStyled =
+		tone === "user" ? theme.fg("border", theme.bold(label)) : theme.fg("accent", theme.bold(label));
+	const metaStyled = meta ? theme.fg("dim", ` · ${meta}`) : "";
+	return padLine(truncateToWidth(labelStyled + metaStyled, width, "…"), width);
+}
+
+export function renderPlainSpeakerBody(
+	lines: string[],
+	width: number,
+	bodyColor: "userMessageText" | "assistantMessageText",
+): string[] {
+	const source = trimOuterBlankLines(lines);
+	return source.map((line) => padLine(theme.fg(bodyColor, line), width));
+}
+
+export function renderPlainSpeakerMessage(
+	lines: string[],
+	width: number,
+	opts: { label: string; meta?: string; tone: "user" | "assistant"; trailingBlank?: boolean },
+): string[] {
+	const bodyColor = opts.tone === "user" ? "userMessageText" : "assistantMessageText";
+	const out = [
+		renderPlainSpeakerHeader(opts.label, opts.meta, width, opts.tone),
+		...renderPlainSpeakerBody(lines, width, bodyColor),
+	];
+	if (opts.trailingBlank !== false) {
+		out.push("");
+	}
+	return out;
+}
+
+/** @deprecated Connected rails — Variant B. Prefer renderPlainSpeakerMessage. */
 export function renderAssistantRail(
 	lines: string[],
 	width: number,
@@ -373,6 +412,7 @@ export function renderAssistantRail(
 	return result;
 }
 
+/** @deprecated Connected rails — Variant B. Prefer renderPlainSpeakerMessage. */
 export function renderUserRail(
 	lines: string[],
 	width: number,
@@ -466,17 +506,16 @@ export function renderToolLineCard(
 	width: number,
 	opts: { status: string; tone: StatusTone; hidden?: boolean; titlePrefix?: string; bg?: ThemeBg; indent?: number },
 ): string[] {
+	const indent = opts.indent ?? 2;
+	const prefix = " ".repeat(indent);
 	const tone = toneColor(opts.tone);
-	const indent = opts.indent ?? TRANSCRIPT_CARD_INDENT;
-	const innerWidth = Math.max(20, width - indent);
 	const titleText = `${opts.titlePrefix ?? ""}${styledHeader(title, "borderAccent")}${
 		target ? ` ${theme.fg("text", target)}` : ""
 	}`;
 	const statusText = opts.hidden ? `${opts.status} · output hidden · ctrl+o expand` : opts.status;
-	const right = theme.fg(opts.tone === "success" ? "success" : tone, statusText);
-	const rule = openRuleLine(titleText, right, innerWidth, tone, opts.tone === "running");
-	const line = opts.bg ? theme.bg(opts.bg, rule) : rule;
-	return indentRenderedLines([line], indent, width);
+	const head = `${titleText} · ${theme.fg(opts.tone === "success" ? "success" : tone, statusText)}`;
+	const line = opts.bg ? theme.bg(opts.bg, head) : head;
+	return [padLine(prefix + truncateToWidth(line, Math.max(1, width - indent), "…"), width)];
 }
 
 export function renderCommandCard(
@@ -484,15 +523,13 @@ export function renderCommandCard(
 	width: number,
 	opts: { status: string; tone: StatusTone; progress?: string; indent?: number },
 ): string[] {
-	const tone = toneColor(opts.tone);
-	const indent = opts.indent ?? TRANSCRIPT_CARD_INDENT;
-	const innerWidth = Math.max(20, width - indent);
-	const titleText = `${theme.fg("accent", "$")} ${theme.fg("text", command)}`;
+	const left = `${theme.fg("accent", "$")} ${theme.fg("text", command)}`;
 	const statusText = opts.progress
 		? `${opts.progress} ${opts.status}`
 		: `${opts.status} · output hidden · ctrl+o expand`;
-	const right = theme.fg(opts.tone === "success" ? "success" : tone, statusText);
-	return indentRenderedLines([openRuleLine(titleText, right, innerWidth, tone, opts.tone === "running")], indent, width);
+	const statusColor = opts.tone === "error" ? "error" : opts.tone === "running" ? "accent" : "success";
+	const right = theme.fg(statusColor, statusText);
+	return [padLine(alignRight(left, right, width), width)];
 }
 
 export function renderProgressBar(done: number, total: number, width: number, tone: StatusTone = "success"): string {
@@ -515,4 +552,105 @@ export function renderFooterStrip(leftSegments: string[], right: string, width: 
 	const left = truncateToWidth(leftSegments.filter(Boolean).join(sep), leftBudget, "");
 	const content = rightAlign(left, rightStyled, innerWidth);
 	return roundedPanel([content], outerWidth);
+}
+
+const footerSegmentSep = () => theme.fg("dim", " │ ");
+
+/**
+ * Full-width footer: fixed segments plus one flex segment (typically context + bar).
+ * The flex segment receives all remaining horizontal space.
+ */
+export function layoutFullWidthFooter(
+	segments: string[],
+	width: number,
+	flexAt: number,
+	flexRender: (segmentBudget: number) => string,
+): string {
+	const sep = footerSegmentSep();
+	const sepWidth = visibleWidth(sep);
+	const slotCount = segments.length + 1;
+	const separators = Math.max(0, slotCount - 1) * sepWidth;
+
+	let fixedWidth = 0;
+	for (const segment of segments) {
+		fixedWidth += visibleWidth(segment);
+	}
+
+	const flexBudget = Math.max(12, width - fixedWidth - separators);
+	const flexSegment = flexRender(flexBudget);
+
+	const parts = [...segments.slice(0, flexAt), flexSegment, ...segments.slice(flexAt)];
+	const line = parts.join(sep);
+	return truncateToWidth(line, width, "…");
+}
+
+export function renderFullWidthFooterStrip(
+	segments: string[],
+	width: number,
+	flex?: { at: number; render: (segmentBudget: number) => string },
+): string[] {
+	const outerWidth = Math.max(20, width);
+	const innerWidth = Math.max(1, outerWidth - 2);
+	const content = flex
+		? layoutFullWidthFooter(segments, innerWidth, flex.at, flex.render)
+		: truncateToWidth(segments.filter(Boolean).join(footerSegmentSep()), innerWidth, "…");
+	return roundedPanel([content], outerWidth);
+}
+
+/** Single-line footer — no box, ` · ` separators. */
+export function layoutMinimalFooter(
+	segments: string[],
+	width: number,
+	flex?: { at: number; render: (segmentBudget: number) => string },
+): string {
+	const sep = theme.fg("dim", " · ");
+	const sepWidth = visibleWidth(sep);
+	if (flex) {
+		const slotCount = segments.length + 1;
+		const separators = Math.max(0, slotCount - 1) * sepWidth;
+		let fixedWidth = 0;
+		for (const segment of segments) {
+			fixedWidth += visibleWidth(segment);
+		}
+		const flexBudget = Math.max(8, width - fixedWidth - separators);
+		const flexSegment = flex.render(flexBudget);
+		const parts = [...segments.slice(0, flex.at), flexSegment, ...segments.slice(flex.at)];
+		return truncateToWidth(parts.join(sep), width, "…");
+	}
+	return truncateToWidth(segments.filter(Boolean).join(sep), width, "…");
+}
+
+/**
+ * Full-width minimal footer: left + center (flex) flush left, stats flush right.
+ */
+export function layoutFullWidthMinimalFooter(
+	leftSegments: string[],
+	rightSegments: string[],
+	width: number,
+	flexRender: (segmentBudget: number) => string,
+): string {
+	const sep = theme.fg("dim", " · ");
+	const left = leftSegments.filter(Boolean).join(sep);
+	const right = rightSegments.filter(Boolean).join(sep);
+	const leftWidth = left ? visibleWidth(left) : 0;
+	const rightWidth = right ? visibleWidth(right) : 0;
+	const sepWidth = visibleWidth(sep);
+
+	if (!right) {
+		const flexBudget = Math.max(8, width - leftWidth - (left ? sepWidth : 0));
+		const center = flexRender(flexBudget);
+		const line = [left, center].filter(Boolean).join(sep);
+		return truncateToWidth(line, width, "…");
+	}
+
+	const flexBudget = Math.max(8, width - leftWidth - rightWidth - sepWidth - 1);
+	const center = flexRender(flexBudget);
+	const leftBlock = center ? (left ? `${left}${sep}${center}` : center) : left;
+	return alignRight(leftBlock, right, width);
+}
+
+/** Single-line footer output — no rounded panel. */
+export function renderMinimalFooterLine(line: string, width: number): string[] {
+	const outerWidth = Math.max(20, width);
+	return [padRight(truncateToWidth(line, outerWidth, "…"), outerWidth)];
 }

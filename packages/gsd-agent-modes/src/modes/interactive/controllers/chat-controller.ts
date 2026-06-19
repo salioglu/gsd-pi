@@ -5,7 +5,7 @@ import { Loader, Markdown, Spacer, Text } from "@gsd/pi-tui";
 import type { InteractiveModeEvent, InteractiveModeStateHost } from "../interactive-mode-state.js";
 import { theme } from "@gsd/pi-coding-agent/theme/theme.js";
 import { AssistantMessageComponent } from "../components/assistant-message.js";
-import { chatTurnFollowsUser, reconcileChatTurnConnections } from "../components/chat-turn-connect.js";
+import { reconcileChatTurnConnections } from "../components/chat-turn-connect.js";
 import {
 	ToolExecutionComponent,
 	ToolPhaseSummaryComponent,
@@ -1015,17 +1015,12 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 								) {
 									continue;
 								}
-								const connectedToUser =
-									renderedSegments.filter((s) => s.kind === "text-run").length === 0 &&
-									orphanedSegments.filter((s) => s.kind === "text-run").length === 0 &&
-									chatTurnFollowsUser(host.chatContainer.children);
 								const comp = new AssistantMessageComponent(
 									undefined,
 									host.hideThinkingBlock,
 									host.getMarkdownThemeWithSettings(),
 									timestampFormat,
 									{ startIndex: seg.startIndex, endIndex: seg.endIndex },
-									connectedToUser,
 								);
 								host.chatContainer.addChild(comp);
 								markFirstVisibleAssistantOutput(host, seg.contentType, {
@@ -1244,16 +1239,12 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 								continue;
 							}
 
-							const connectedToUser =
-								renderedSegments.filter((s) => s.kind === "text-run").length === 0 &&
-								chatTurnFollowsUser(host.chatContainer.children);
 							const comp = new AssistantMessageComponent(
 								undefined,
 								host.hideThinkingBlock,
 								host.getMarkdownThemeWithSettings(),
 								timestampFormat,
 								{ startIndex: seg.startIndex, endIndex: seg.endIndex },
-								connectedToUser,
 							);
 							comp.updateContent(host.streamingMessage);
 							const segmentText = getTextFromContentBlocks(finalBlocks, seg.startIndex, seg.endIndex);
@@ -1284,14 +1275,12 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					}
 
 					if (!host.streamingComponent && shouldRenderAssistant && !suppressRedundantHandoff) {
-						const connectedToUser = chatTurnFollowsUser(host.chatContainer.children);
 						host.streamingComponent = new AssistantMessageComponent(
 							undefined,
 							host.hideThinkingBlock,
 							host.getMarkdownThemeWithSettings(),
 							timestampFormat,
 							undefined,
-							connectedToUser,
 						);
 						host.chatContainer.addChild(host.streamingComponent);
 						markFirstVisibleAssistantOutput(host, "message_end_only");

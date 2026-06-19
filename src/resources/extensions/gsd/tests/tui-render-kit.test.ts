@@ -86,13 +86,15 @@ describe("tui render kit", () => {
     }
   });
 
-  test("renderPanel indents body lines so chrome never sits on copyable text", () => {
+  test("renderPanel keeps body on dedicated lines without vertical borders", () => {
     const lines = renderPanel(theme, "Title", ["body"], 40);
-    // [header, blank, body, footer rule]
-    const body = lines[2];
-    assert.ok(body.startsWith("  body"), `body should be indented: "${body}"`);
-    assert.match(lines[0], /^── Title ─+$/, "header is an inline-titled rule");
-    assert.match(lines[lines.length - 1], /^─+$/, "panel closes with a plain rule");
+    const body = lines[1];
+    assert.match(body, /^body/, `body line should start with copyable text: "${body}"`);
+    assert.match(lines[0] ?? "", /^──+ .* ─+$/);
+    assert.match(lines.at(-1) ?? "", /^─+$/);
+    for (const line of lines) {
+      assert.ok(!line.includes("│"), `renderPanel line must not contain a vertical bar: "${line}"`);
+    }
   });
 
   test("renderKeyHints and renderProgressBar fit caller budgets", () => {
