@@ -16,8 +16,8 @@ export const promptGoldenUnits = [
     unitType: "execute-task",
     // Tool Surface guidance and related prompt additions have grown this prompt;
     // the baseline is adjusted so the gate still tracks shrinkage from the
-    // original oversized prompts while allowing today's ~8259-char fixture.
-    phase2StartChars: 13770,
+    // original oversized prompts while allowing today's ~8536-char fixture.
+    phase2StartChars: 14230,
     requiredMarkers: [
       "UNIT: Execute Task T01",
       "Inlined Task Plan",
@@ -32,8 +32,8 @@ export const promptGoldenUnits = [
     unitType: "complete-slice",
     // Tool Surface guidance and subsequent feature additions have grown this
     // prompt; the baseline is adjusted so the gate still tracks shrinkage from
-    // the original oversized prompts while allowing today's ~8349-char fixture.
-    phase2StartChars: 13940,
+    // the original oversized prompts while allowing today's ~8613-char fixture.
+    phase2StartChars: 14400,
     requiredMarkers: [
       "UNIT: Complete Slice S01",
       "Tool Surface",
