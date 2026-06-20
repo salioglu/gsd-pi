@@ -324,9 +324,12 @@ export function loadEffectiveGSDPreferences(
       opts?.availableModelIds,
       result.preferences.dynamic_routing,
     );
+    const defaultsToApply = explicitProfile
+      ? profileDefaults
+      : withoutProfilePhaseDefaults(profileDefaults);
     result = {
       ...result,
-      preferences: mergePreferences(profileDefaults as GSDPreferences, result.preferences),
+      preferences: mergePreferences(defaultsToApply as GSDPreferences, result.preferences),
     };
   }
 
@@ -341,6 +344,12 @@ export function loadEffectiveGSDPreferences(
   result = stripInheritedPlanningDepth(result, projectHasPlanningDepth);
 
   return result;
+}
+
+function withoutProfilePhaseDefaults(defaults: Partial<GSDPreferences>): Partial<GSDPreferences> {
+  if (defaults.phases === undefined) return defaults;
+  const { phases: _phases, ...rest } = defaults;
+  return rest;
 }
 
 function mergePreferenceMetadata(

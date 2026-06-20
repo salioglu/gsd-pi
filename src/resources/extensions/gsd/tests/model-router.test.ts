@@ -484,6 +484,11 @@ test("loadEffectiveGSDPreferences: implicit balanced (D046) resolves tiers from 
     assert.equal(models?.planning, "gpt-4o");
     assert.equal(models?.completion, "gpt-4o-mini");
     assert.notEqual(models?.completion, "gemini-2.0-flash");
+    assert.equal(
+      loaded?.preferences.phases?.skip_slice_research,
+      undefined,
+      "implicit balanced model defaults must not silently skip slice research",
+    );
   } finally {
     if (oldHome === undefined) delete process.env.GSD_HOME;
     else process.env.GSD_HOME = oldHome;
