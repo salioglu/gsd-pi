@@ -84,7 +84,7 @@ test("theme color helper prints usage, contrast, file, and built-in theme report
 	const fixturePath = join(fixtureDir, "colors.json");
 	await writeFile(fixturePath, JSON.stringify({ vars: { brand: "#336699", ignored: "transparent" } }));
 	const fileReport = await runThemeColorScript(["test", fixturePath]);
-	assert.match(fileReport.logs.join("\n"), new RegExp(`Testing ${fixturePath}`));
+	assert.ok(fileReport.logs.join("\n").includes(`Testing ${fixturePath}`), `Expected output to include "Testing ${fixturePath}"`);
 	assert.match(fileReport.logs.join("\n"), /brand/);
 	assert.doesNotMatch(fileReport.logs.join("\n"), /ignored/);
 
