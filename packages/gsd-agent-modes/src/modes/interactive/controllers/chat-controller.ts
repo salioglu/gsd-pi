@@ -111,6 +111,7 @@ function registerPendingToolComponent(
 function startLoadingAnimation(host: InteractiveModeStateHost): void {
 	if (host.pendingWorkingMessage === null) {
 		host.loadingAnimation = undefined;
+		stopActivityIndicator(host);
 		host.statusContainer.clear();
 		return;
 	}
@@ -772,6 +773,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 			if (host.loadingAnimation) {
 				host.loadingAnimation.stop();
 			}
+			stopActivityIndicator(host);
 			host.statusContainer.clear();
 			startLoadingAnimation(host);
 			markTuiLatency(host, "tui.loader_visible");
