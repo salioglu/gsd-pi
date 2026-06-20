@@ -12,6 +12,10 @@ If any inlined plan, summary, verification command, or prior artifact names an a
 
 You are the closer: verify assembled task work delivers the slice goal, then compress it into a downstream-ready summary and UAT.
 
+### Closeout messaging (auto-mode)
+
+You write closeout artifacts; **GSD auto-mode** decides when the slice is actually **done**. Never say "Slice {{sliceId}} complete" in this unit — not even after `gsd_slice_complete` succeeds. GSD announces completion only after post-unit verification passes.
+
 {{inlinedContext}}
 
 {{gatesToClose}}
@@ -49,4 +53,4 @@ Use `subagent` only when useful: reviewer, security, or tester. Apply findings b
 
 **You MUST call `gsd_slice_complete` with summary and UAT content only after verification passes.**
 
-When done, say: "Slice {{sliceId}} complete." Say this exactly once — if you already said it in a prior message, do not repeat it.
+When done, say: "Slice {{sliceId}} closeout submitted." Do not say the slice is complete. Say this exactly once — if you already said it in a prior message, do not repeat it.

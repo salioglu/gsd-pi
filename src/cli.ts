@@ -19,7 +19,7 @@ import { shouldRedirectAutoToHeadless } from './cli-auto-routing.js'
 import { printHelp, printSubcommandHelp } from './help-text.js'
 import { applySecurityOverrides } from './security-overrides.js'
 import { validateConfiguredModel } from './startup-model-validation.js'
-import { migrateAnthropicDefaultToClaudeCode } from './provider-migrations.js'
+import { migrateAnthropicDefaultToClaudeCode, migrateGeminiCliDefaultToAntigravity } from './provider-migrations.js'
 import { applyModelOverride } from './cli-model-override.js'
 import {
   buildHeadlessAutoArgs,
@@ -681,6 +681,12 @@ if (isPrintMode) {
     settingsManager,
     modelRegistry,
   })
+  migrateGeminiCliDefaultToAntigravity({
+    authStorage,
+    isAntigravityReady: () => modelRegistry.isProviderRequestReady('google-antigravity'),
+    settingsManager,
+    modelRegistry,
+  })
 
   const { session, extensionsResult, modelFallbackMessage } = await createAgentSession({
     authStorage,
@@ -800,6 +806,12 @@ flushPendingProviderRegistrations(resourceLoader, modelRegistry)
 migrateAnthropicDefaultToClaudeCode({
   authStorage,
   isClaudeCodeReady: () => modelRegistry.isProviderRequestReady('claude-code'),
+  settingsManager,
+  modelRegistry,
+})
+migrateGeminiCliDefaultToAntigravity({
+  authStorage,
+  isAntigravityReady: () => modelRegistry.isProviderRequestReady('google-antigravity'),
   settingsManager,
   modelRegistry,
 })

@@ -38,7 +38,7 @@ import { checkResourcesStale, autoWorktreeBranch, mergeMilestoneToMain } from ".
 import { getSessionLockStatus } from "../session-lock.js";
 import { resolveUokFlags } from "../uok/flags.js";
 import { emitJournalEvent as _emitJournalEvent } from "../journal.js";
-import { loadEffectiveGSDPreferences, getIsolationMode, resolveEffectiveUnitIsolationMode } from "../preferences.js";
+import { loadEffectiveGSDPreferences, loadEffectiveGSDPreferencesWithRegistry, getIsolationMode, resolveEffectiveUnitIsolationMode, resolveProfileAnchorProvider } from "../preferences.js";
 import {
   detectWorktreeName,
   getMainBranch,
@@ -207,7 +207,11 @@ export async function decideOrchestratorDispatch(
   const active = state.activeMilestone;
   const activeSession = input.session ?? session;
   const activeDispatchBasePath = activeSession?.basePath || dispatchBasePath;
-  const prefs = loadEffectiveGSDPreferences(activeDispatchBasePath)?.preferences;
+  const prefs = loadEffectiveGSDPreferencesWithRegistry(
+    ctx.modelRegistry,
+    activeDispatchBasePath,
+    resolveProfileAnchorProvider(ctx.model?.provider, session?.autoModeStartModel?.provider),
+  )?.preferences;
   if (!active) {
     if (state.phase !== "pre-planning") return null;
     if (!hasPendingDeepStage(prefs, activeDispatchBasePath)) {
@@ -520,7 +524,11 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     milestoneId?: string;
   }): Promise<void> {
     const activeBasePath = this.getLiveDispatchBasePath();
-    const prefs = loadEffectiveGSDPreferences(activeBasePath)?.preferences;
+    const prefs = loadEffectiveGSDPreferencesWithRegistry(
+      this.ctx.modelRegistry,
+      activeBasePath,
+      resolveProfileAnchorProvider(this.ctx.model?.provider, this.s.autoModeStartModel?.provider),
+    )?.preferences;
     const uokFlags = resolveUokFlags(prefs);
     if (!uokFlags.gates) return;
     const milestoneId = input.milestoneId ?? this.s.currentMilestoneId ?? undefined;

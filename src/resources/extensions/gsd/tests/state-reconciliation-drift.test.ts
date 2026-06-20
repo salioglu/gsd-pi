@@ -1546,6 +1546,21 @@ test("ADR-017 (#414): slice-level on-disk summary blocker matches auto.ts filter
   );
 });
 
+test("completedMilestoneReopenedGuidance tells active milestones to finish closeout", async () => {
+  const { completedMilestoneReopenedGuidance } = await import(
+    "../state-reconciliation/drift/artifact-db.ts"
+  );
+  const guidance = completedMilestoneReopenedGuidance({
+    milestoneId: "M005",
+    dbStatus: "active",
+    completedDispatchAt: "2026-05-30T00:01:00.000Z",
+  });
+  assert.match(guidance, /M005/);
+  assert.match(guidance, /\/gsd dispatch complete-milestone M005/);
+  assert.match(guidance, /\/gsd status M005/);
+  assert.match(guidance, /\/gsd next again before fixing/);
+});
+
 test("ADR-017: completed milestone dispatch history blocks accidental re-planning", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-completed-reopened-drift-"));
   t.after(() => cleanup(base));
@@ -1574,7 +1589,8 @@ test("ADR-017: completed milestone dispatch history blocks accidental re-plannin
   });
 
   assert.equal(result.ok, true);
-  assert.match(result.blockers.join("\n"), /completed complete-milestone dispatch history/);
+  assert.match(result.blockers.join("\n"), /completed closeout dispatch history/);
+  assert.match(result.blockers.join("\n"), /\/gsd dispatch complete-milestone M001/);
 });
 
 test("ADR-017: synthetic parallel-research slice directory is ignored", async (t) => {

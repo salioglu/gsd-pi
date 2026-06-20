@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 import {
   anchorProcessCwdForAutoResume,
@@ -126,6 +126,23 @@ test("anchorProcessCwdForAutoResume recovers when current cwd was deleted", () =
     rmSync(deletedCwd, { recursive: true, force: true });
 
     assert.equal(anchorProcessCwdForAutoResume(base), true);
+    assert.equal(realpathSync(process.cwd()), realpathSync(base));
+  } finally {
+    process.chdir(previousCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("anchorProcessCwdForAutoResume falls back when primary basePath is missing", () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-resume-cwd-anchor-fallback-"));
+  const missingWorktree = join(base, ".gsd-worktrees", "M002");
+  const previousCwd = process.cwd();
+
+  mkdirSync(base, { recursive: true });
+  mkdirSync(dirname(missingWorktree), { recursive: true });
+
+  try {
+    assert.equal(anchorProcessCwdForAutoResume(missingWorktree, [base]), true);
     assert.equal(realpathSync(process.cwd()), realpathSync(base));
   } finally {
     process.chdir(previousCwd);
@@ -845,7 +862,7 @@ test("stopAuto completion closeout emits a headless terminal notification withou
       "headless completion closeout must emit the terminal stop notification headless waits for",
     );
     assert.equal(
-      typeof widgetCalls.filter(([key]) => key === "gsd-progress").at(-1)?.[1],
+      typeof widgetCalls.filter(([key]) => key === "gsd-outcome").at(-1)?.[1],
       "function",
       "headless completion closeout must still leave the final roll-up widget installed",
     );

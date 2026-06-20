@@ -119,6 +119,7 @@ test("reactive-execute prompt keeps task summaries with subagents and avoids bat
   const prompt = readPrompt("reactive-execute");
   assert.match(prompt, /subagent-written summary as authoritative/i);
   assert.match(prompt, /Do NOT create a batch commit/i);
+  assert.match(prompt, /cwd:\s*"\{\{workingDirectory\}\}"/);
   assert.doesNotMatch(prompt, /\*\*Write task summaries\*\*/i);
   assert.doesNotMatch(prompt, /\*\*Commit\*\* all changes/i);
 });

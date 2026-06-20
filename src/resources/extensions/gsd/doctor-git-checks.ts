@@ -8,6 +8,7 @@ import { loadFile } from "./files.js";
 import { resolveMilestoneFile } from "./paths.js";
 import { isCompletedMilestoneTerminal } from "./milestone-closeout.js";
 import { deriveState } from "./state.js";
+import { isClosedStatus } from "./status-guards.js";
 import { allWorktreesDirs, createWorktree, listWorktrees, resolveGitDir } from "./worktree-manager.js";
 import { abortAndReset } from "./git-self-heal.js";
 import { RUNTIME_EXCLUSION_PATHS, resolveMilestoneIntegrationBranch, writeIntegrationBranch } from "./git-service.js";
@@ -189,7 +190,7 @@ export async function checkGitHealth(
       const milestoneId = wt.branch.replace(/^milestone\//, "");
       const milestoneEntry = state.registry.find(m => m.id === milestoneId);
       const isComplete = milestoneEntry
-        ? await isCompletedMilestoneTerminal(basePath, milestoneId)
+        ? isClosedStatus(milestoneEntry.status)
         : false;
 
       if (!isComplete && !hasProjectContentOnDisk(wt.path) && hasProjectContentOnDisk(basePath)) {
@@ -287,6 +288,8 @@ export async function checkGitHealth(
           let branchMilestoneComplete = false;
           const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
           if (!roadmapContent) continue;
+          const milestoneEntry = state.registry.find(m => m.id === milestoneId);
+          if (!milestoneEntry || !isClosedStatus(milestoneEntry.status)) continue;
           branchMilestoneComplete = await isCompletedMilestoneTerminal(basePath, milestoneId);
           if (branchMilestoneComplete) {
             issues.push({

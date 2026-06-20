@@ -12,6 +12,7 @@ import { compileSubagentPermissionContract, type ToolsPolicy } from "../unit-con
 import { logWarning } from "../workflow-logger.js";
 import { isGsdWorktreePath, resolveWorktreeProjectRoot } from "../worktree-root.js";
 import { worktreesDirs } from "../worktree-placement.js";
+import { bashReferencesProjectRootOutsideWorktree } from "../worktree-shell-guard.js";
 import { evaluateGateAnswer } from "../consent-verdict.js";
 
 /**
@@ -1373,6 +1374,37 @@ function isPathContained(target: string, container: string): boolean {
   return target.startsWith(container.endsWith(sep) ? container : container + sep);
 }
 
+function formatWorktreeIsolationBlockReason(
+  tool: string,
+  displayTarget: string,
+  isAutoLive: boolean,
+  effectiveBasePath: string,
+): string {
+  if (isGsdWorktreePath(effectiveBasePath)) {
+    return [
+      `HARD BLOCK: ${tool} target "${displayTarget}" is outside the active milestone worktree`,
+      `while \`git.isolation: worktree\` is configured. Source edits must stay inside`,
+      `\`.gsd-worktrees/<MID>/\` (or \`.gsd/\` planning artifacts) so the auto-mode commit`,
+      `pipeline captures them. Writing to the project root leaks changes that block milestone merge.`,
+      `Use a relative path under the worktree cwd or an absolute path inside the worktree directory.`,
+      ...(isAutoLive ? [] : [
+        "This guard also applies to subagent children spawned from the worktree — do not",
+        "`cd` to the project root or reference its paths in shell commands.",
+      ]),
+    ].join(" ");
+  }
+
+  return [
+    `HARD BLOCK: Worktree isolation is configured (\`git.isolation: worktree\`) but auto-mode is`,
+    `not running and the target "${displayTarget}" is not inside \`.gsd/worktrees/<MID>/\`.`,
+    `Code edits at the project root would be lost — only the auto-mode commit pipeline`,
+    `(auto-post-unit) commits work, and it never runs outside the loop.`,
+    `Required action: start auto-mode with \`/gsd\` so the milestone worktree is created,`,
+    `then write inside it. To disable this guard for self-hosting development, set`,
+    `GSD_DISABLE_WORKTREE_WRITE_GUARD=1.`,
+  ].join(" ");
+}
+
 /**
  * Block planning-write tool calls that would land code at the project root
  * while `git.isolation: worktree` is in effect and auto-mode hasn't created
@@ -1390,10 +1422,9 @@ function isPathContained(target: string, container: string): boolean {
  *   5. Target is inside `<projectRoot>/.gsd/worktrees/` (a real worktree).
  *   6. Target is inside `<projectRoot>/.gsd/` and isn't masquerading as a
  *      worktrees sibling (rejects the `.gsd/worktrees-extra/…` prefix trick).
- *   7. Auto is live AND `effectiveBasePath` is itself a `.gsd/worktrees/…` path.
  *
- * Otherwise: block with a message that points the agent at `/gsd` to start
- * auto-mode.
+ * Otherwise: block with a message that points the agent at the active worktree
+ * or `/gsd` to start auto-mode.
  */
 export function shouldBlockWorktreeWrite(
   toolName: string,
@@ -1442,24 +1473,46 @@ export function shouldBlockWorktreeWrite(
     // fall through: looks like worktrees<something> sibling — block
   }
 
-  // Auto is live and the caller is operating inside a worktree path —
-  // host tool's write happens in worktree context; let it through.
-  if (isAutoLive && isGsdWorktreePath(effectiveBasePath)) return { block: false };
-
   // Block. Provide enough context that the agent can self-correct.
   const displayTarget = isPathContained(realTarget, realRoot)
     ? relative(realRoot, realTarget) || "."
     : realTarget;
   return {
     block: true,
-    reason: [
-      `HARD BLOCK: Worktree isolation is configured (\`git.isolation: worktree\`) but auto-mode is`,
-      `not running and the target "${displayTarget}" is not inside \`.gsd/worktrees/<MID>/\`.`,
-      `Code edits at the project root would be lost — only the auto-mode commit pipeline`,
-      `(auto-post-unit) commits work, and it never runs outside the loop.`,
-      `Required action: start auto-mode with \`/gsd\` so the milestone worktree is created,`,
-      `then write inside it. To disable this guard for self-hosting development, set`,
-      `GSD_DISABLE_WORKTREE_WRITE_GUARD=1.`,
-    ].join(" "),
+    reason: formatWorktreeIsolationBlockReason(tool, displayTarget, isAutoLive, effectiveBasePath),
+  };
+}
+
+/**
+ * Block bash commands that reference the project root while executing inside an
+ * active milestone worktree under `git.isolation: worktree`.
+ *
+ * Mirrors the gsd_exec sandbox rule so native bash cannot bypass write/edit gates.
+ */
+export function shouldBlockWorktreeBash(
+  command: string,
+  effectiveBasePath: string,
+  isAutoLive: boolean,
+  currentUnitType?: string | null,
+): { block: boolean; reason?: string } {
+  if (process.env.GSD_DISABLE_WORKTREE_WRITE_GUARD === "1") return { block: false };
+  if (getIsolationMode(effectiveBasePath) !== "worktree") return { block: false };
+  if (currentUnitType && WORKTREE_GATE_BOOTSTRAP_UNITS.has(currentUnitType)) return { block: false };
+  // Block whenever the effective cwd is inside a milestone worktree — not only
+  // during live auto-mode. Reactive-execute subagents run as fresh pi children
+  // without an auto session, but still inherit the worktree cwd and must not
+  // shell out to the project root (the native bash bypass that caused root-write leaks).
+  if (!isGsdWorktreePath(effectiveBasePath)) return { block: false };
+  if (!command.trim()) return { block: false };
+  if (!bashReferencesProjectRootOutsideWorktree(command, effectiveBasePath)) return { block: false };
+
+  return {
+    block: true,
+    reason: formatWorktreeIsolationBlockReason(
+      "bash",
+      "project root path reference in shell command",
+      isAutoLive,
+      effectiveBasePath,
+    ),
   };
 }

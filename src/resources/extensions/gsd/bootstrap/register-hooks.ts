@@ -13,7 +13,7 @@ import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-exten
 import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
 
 import { buildMilestoneFileName, clearPathCache, milestonesDir, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
-import { applyAskUserQuestionsGateResult, clearDiscussionFlowState, formatPendingAskUserQuestionsGateMessage, hostWriteGateAdapter, isApprovalGateVerifiedInSnapshot, isDepthConfirmationAnswer, isMilestoneDepthVerified, isMilestoneDepthVerifiedInSnapshot, isQueuePhaseActive, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeWrite, isGateQuestionId, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { applyAskUserQuestionsGateResult, clearDiscussionFlowState, formatPendingAskUserQuestionsGateMessage, hostWriteGateAdapter, isApprovalGateVerifiedInSnapshot, isDepthConfirmationAnswer, isMilestoneDepthVerified, isMilestoneDepthVerifiedInSnapshot, isQueuePhaseActive, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeBash, shouldBlockWorktreeWrite, isGateQuestionId, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
 import { canonicalToolName } from "../engine-hook-contract.js";
 import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
@@ -46,7 +46,7 @@ import {
   isDestructiveConfirmGateId,
   requestDestructiveConfirmation,
 } from "../safety/destructive-confirmation.js";
-import { logWarning as safetyLogWarning } from "../workflow-logger.js";
+import { logWarning as safetyLogWarning, setStderrLoggingEnabled } from "../workflow-logger.js";
 import { isUnitCloseoutTool, runInteractiveUnitCloseout } from "../unit-closeout.js";
 import { installNotifyInterceptor } from "./notify-interceptor.js";
 import { initNotificationStore } from "../notification-store.js";
@@ -146,6 +146,15 @@ async function installWelcomeHeader(ctx: ExtensionContext): Promise<void> {
   } catch {
     /* non-fatal */
   }
+}
+
+/** Suppress the startup welcome banner without restoring the built-in pi header. */
+function suppressWelcomeHeader(ctx: ExtensionContext): void {
+  if (!ctx.hasUI || typeof ctx.ui?.setHeader !== "function") return;
+  ctx.ui.setHeader(() => ({
+    render(): string[] { return []; },
+    invalidate(): void {},
+  }));
 }
 
 /**
@@ -819,6 +828,9 @@ function initSessionNotifications(ctx: ExtensionContext): void {
   installNotifyInterceptor(ctx);
   initNotificationWidget(ctx);
   notifyPreferenceDiagnostics(ctx, contextBasePath(ctx), { surface: "session-start" });
+  if (ctx.hasUI) {
+    setStderrLoggingEnabled(false);
+  }
 }
 
 async function prepareWorkflowMcpForHookContext(
@@ -871,7 +883,14 @@ export function registerHooks(
       process.env.GSD_SHOW_TOKEN_COST = prefs?.preferences.show_token_cost ? "1" : "";
     } catch { /* non-fatal */ }
     if (!preserveCloseoutSurface) {
-      await installWelcomeHeader(ctx);
+      // Per-unit newSession() during auto/step runs fires session_start again.
+      // Keep the welcome banner startup-only — do not overwrite the empty header
+      // that updateProgressWidget installs once work begins.
+      if (isAutoActive() || isAutoPaused()) {
+        suppressWelcomeHeader(ctx);
+      } else {
+        await installWelcomeHeader(ctx);
+      }
     }
     await loadToolApiKeysForSession();
     if (isAutoActive() || preserveCloseoutSurface) {
@@ -1033,6 +1052,10 @@ export function registerHooks(
   pi.on("message_end", async (event) => {
     const { suppressTerminalDeletedWorktreeMessageEnd } = await import("./agent-end-recovery.js");
     suppressTerminalDeletedWorktreeMessageEnd(event);
+    if (isAutoActive()) {
+      const { sanitizePrematureCloseoutMessageEnd } = await import("../auto-closeout-messaging.js");
+      sanitizePrematureCloseoutMessageEnd(event);
+    }
   });
 
   // Squash-merge quick-task branch back to the original branch after the
@@ -1362,6 +1385,16 @@ export function registerHooks(
         dash.currentUnit?.type,
       );
       if (wtGuard.block) return wtGuard;
+    }
+
+    if (isToolCallEventType("bash", event)) {
+      const wtBashGuard = shouldBlockWorktreeBash(
+        event.input.command,
+        dash.basePath ?? discussionBasePath,
+        isAutoActive(),
+        dash.currentUnit?.type,
+      );
+      if (wtBashGuard.block) return wtBashGuard;
     }
 
     // ── Single-writer engine: block direct writes to STATE.md ──────────
