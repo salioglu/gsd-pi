@@ -23,7 +23,7 @@ export function createExtensionUIContext(host: any): ExtensionUIContext {
 				}
 				// GSD auto-mode suppresses the default loader but the turn is still
 				// in flight — keep a compact pulse until agent_end.
-				if (message === null && host.session?.isStreaming) {
+				if (host.session?.isStreaming) {
 					const phase = host.gsdProgressState?.phase as string | undefined;
 					startActivityIndicator(host, phase);
 				} else {

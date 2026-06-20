@@ -111,7 +111,7 @@ function renderProgressDrivenStrip(state: GsdStatusWidgetState, width: number): 
 	// Errors always force expansion so the user can read them.
 	// When the user has explicitly set expansion via ctrl+shift+d, honour it.
 	// Otherwise fall back to the widgetMode preference from GSD settings.
-	const defaultExpanded = progress.widgetMode !== "min" && progress.widgetMode !== undefined;
+	const defaultExpanded = progress.widgetMode !== "min";
 	const expanded =
 		autoExpand ||
 		(state.manuallyExpanded !== undefined ? state.manuallyExpanded : defaultExpanded);
