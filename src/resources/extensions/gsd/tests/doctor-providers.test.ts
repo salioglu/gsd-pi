@@ -904,17 +904,16 @@ test("runProviderChecks detects claude.exe in PATH on Windows (#4548)", { skip: 
   });
 });
 
-test("PROVIDER_ROUTES includes google-gemini-cli as route for google (#2922)", async () => {
+test("PROVIDER_ROUTES includes google-antigravity and google-gemini-cli as routes for google (#2922)", async () => {
   const { readFileSync: readFS } = await import("node:fs");
   const { dirname: dirn, join: joinPath } = await import("node:path");
   const { fileURLToPath: fileUrl } = await import("node:url");
   const __dir = dirn(fileUrl(import.meta.url));
   const src = readFS(joinPath(__dir, "..", "doctor-providers.ts"), "utf-8");
 
-  // PROVIDER_ROUTES must map google -> [..., "google-gemini-cli"]
   assert.ok(
-    src.includes('"google-gemini-cli"'),
-    'PROVIDER_ROUTES must include "google-gemini-cli" as a route (#2922)',
+    src.includes('google: ["google-antigravity", "google-gemini-cli"]'),
+    'PROVIDER_ROUTES must prefer "google-antigravity" over "google-gemini-cli" for google (#2922)',
   );
 });
 

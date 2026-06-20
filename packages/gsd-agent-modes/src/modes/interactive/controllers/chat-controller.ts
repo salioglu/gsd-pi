@@ -130,6 +130,32 @@ function startLoadingAnimation(host: InteractiveModeStateHost): void {
 	}
 }
 
+/** Compact activity pulse used when extensions suppress the default working loader. */
+export function startActivityIndicator(host: InteractiveModeStateHost, message?: string): void {
+	stopActivityIndicator(host);
+	const phase =
+		message?.trim() ||
+		(host as { gsdProgressState?: { phase?: string } }).gsdProgressState?.phase ||
+		host.defaultWorkingMessage;
+	host.activityLoader = new Loader(
+		host.ui,
+		(spinner) => theme.fg("accent", spinner),
+		(text) => theme.fg("muted", text),
+		phase,
+	);
+	host.statusContainer.addChild(host.activityLoader);
+	host.ui.requestRender();
+}
+
+export function stopActivityIndicator(host: InteractiveModeStateHost): void {
+	if (!host.activityLoader) return;
+	host.activityLoader.stop();
+	host.activityLoader = undefined;
+	if (!host.loadingAnimation && !host.autoCompactionLoader && !host.retryLoader) {
+		host.statusContainer.clear();
+	}
+}
+
 function markTuiLatency(
 	host: InteractiveModeStateHost,
 	phase: string,
@@ -1379,6 +1405,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 				host.loadingAnimation = undefined;
 				host.statusContainer.clear();
 			}
+			stopActivityIndicator(host);
 			if (host.streamingComponent && host.streamingMessage) {
 				host.streamingComponent.setShowMetadata(true);
 				host.streamingComponent.updateContent(host.streamingMessage);

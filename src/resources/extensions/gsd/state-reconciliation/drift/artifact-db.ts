@@ -410,6 +410,27 @@ function quarantineSliceDir(record: DiskSliceIdDivergenceDrift, basePath: string
   renameSync(record.sliceDir, target);
 }
 
+export function completedMilestoneReopenedGuidance(
+  record: Pick<CompletedMilestoneReopenedDrift, "milestoneId" | "dbStatus" | "completedDispatchAt">,
+): string {
+  const when = record.completedDispatchAt ?? "time unknown";
+  const intro =
+    `Milestone ${record.milestoneId} has completed closeout dispatch history (${when}) ` +
+    `but DB status is still ${record.dbStatus}.`;
+
+  if (isClosedStatus(record.dbStatus)) {
+    return (
+      `${intro} Use gsd_milestone_reopen for ${record.milestoneId} to redo this milestone, then run /gsd next.`
+    );
+  }
+
+  return (
+    `${intro} Finish closeout with \`/gsd dispatch complete-milestone ${record.milestoneId}\`, ` +
+    `review with \`/gsd status ${record.milestoneId}\`, then run /gsd next. ` +
+    "Running /gsd next again before fixing this will pause immediately."
+  );
+}
+
 function diskSliceIdDivergenceGuidance(record: DiskSliceIdDivergenceDrift): string {
   const quarantineExample = `.gsd/quarantine/milestones/${record.milestoneId}/slices/${record.sliceId}-manual-review`;
   return (
@@ -444,11 +465,7 @@ export function repairArtifactDbDrift(
   }
 
   if (record.kind === "completed-milestone-reopened") {
-    throw new Error(
-      `Milestone ${record.milestoneId} has completed complete-milestone dispatch history` +
-        ` (${record.completedDispatchAt ?? "time unknown"}) but the DB status is ${record.dbStatus}. ` +
-        "Refusing to plan it again without an explicit reopen or recovery.",
-    );
+    throw new Error(completedMilestoneReopenedGuidance(record));
   }
 
   throw new Error(
@@ -472,11 +489,7 @@ export function describeArtifactDbDriftBlocker(
   }
 
   if (record.kind === "completed-milestone-reopened") {
-    return (
-      `Milestone ${record.milestoneId} has completed complete-milestone dispatch history` +
-      ` (${record.completedDispatchAt ?? "time unknown"}) but the DB status is ${record.dbStatus}. ` +
-      "Refusing to plan it again without an explicit reopen or recovery."
-    );
+    return completedMilestoneReopenedGuidance(record);
   }
 
   return (

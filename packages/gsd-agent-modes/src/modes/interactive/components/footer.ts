@@ -166,10 +166,11 @@ export class FooterComponent implements Component {
 		}
 
 		const pctLabel = theme.fg(barColor, contextPercent === "?" ? "?" : `${contextPercent}%`);
+		const contextTokens = contextUsage?.tokens;
 		const tokenHint =
-			contextPercent === "?"
+			contextPercent === "?" || contextTokens == null
 				? ""
-				: theme.fg("dim", ` ${formatTokens(totalInput + totalOutput)}/${formatTokens(contextWindow)}`);
+				: theme.fg("dim", ` ${formatTokens(contextTokens)}/${formatTokens(contextWindow)}`);
 		const pct = contextPercent === "?" ? 0 : contextPercentValue;
 		const contextBar = renderProgressBar(pct, 100, CONTEXT_BAR_WIDTH, barColor);
 		const autoHint = this.autoCompactEnabled ? theme.fg("dim", " (auto)") : "";

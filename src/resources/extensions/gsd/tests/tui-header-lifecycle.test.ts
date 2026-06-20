@@ -296,12 +296,11 @@ test("completion dashboard keeps final milestone roll-up in the progress widget"
   assert.match(output, /Users can see what shipped/);
   assert.match(output, /Keep completion closeout/);
   assert.match(output, /Verification/);
-  assert.match(output, /Files: src\/resources\/extensions\/gsd\/auto-dashboard\.ts/);
-  assert.match(output, /Run totals 3\/3 slices/);
-  assert.match(output, /100% cache hit/);
-  assert.match(output, /\$21\.29/);
-  assert.match(output, /1\.0M tokens/);
-  assert.match(output, /8 units/);
+  assert.match(output, /Files:/);
+  assert.match(output, /auto-dashboard\.ts/);
+  assert.doesNotMatch(output, /Run totals/);
+  assert.doesNotMatch(output, /\$21\.29/);
+  assert.doesNotMatch(output, /1\.0M tokens/);
   assert.doesNotMatch(output, /COMPLETE-MILESTONE/);
 
   if (component.dispose) component.dispose();

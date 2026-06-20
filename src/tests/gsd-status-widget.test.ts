@@ -39,7 +39,7 @@ test("GsdStatusWidget widgetMode=min renders one line (header only)", () => {
 	assert.match(lines[0], /GSD AUTO/);
 });
 
-test("GsdStatusWidget widgetMode=small renders header + task progress, no workflow line", () => {
+test("GsdStatusWidget widgetMode=small renders header with task progress on the right, no workflow line", () => {
 	const widget = new GsdStatusWidget(() => ({
 		override: "auto",
 		activeToolCount: 1,
@@ -48,16 +48,16 @@ test("GsdStatusWidget widgetMode=small renders header + task progress, no workfl
 		gsdProgress: makeProgress("small"),
 	}));
 	const lines = widget.render(WIDTH).map((line) => stripVTControlCharacters(line));
-	// header + task progress = 2 lines; no health summary (not in payload for small) and no workflow line
-	assert.ok(lines.length >= 2, "small mode should produce at least 2 lines (header + task progress)");
+	assert.equal(lines.length, 1, "small mode should keep slice/task progress on the header line");
 	assert.match(lines[0], /GSD AUTO/);
-	assert.match(lines[1], /3\/10 tasks/);
-	// workflow line must NOT appear in small mode
-	const fullText = lines.join("\n");
-	assert.doesNotMatch(fullText, /ctrl\+shift\+d/);
+	assert.match(lines[0], /tasks .* 3\/10/);
+	assert.match(lines[0], /●/);
+	assert.doesNotMatch(lines[0], /█/);
+	assert.ok(lines[0].trimEnd().endsWith("execute-task"), "task progress should sit on the far right");
+	assert.doesNotMatch(lines.join("\n"), /ctrl\+shift\+d/);
 });
 
-test("GsdStatusWidget widgetMode=full renders header + task progress + workflow line", () => {
+test("GsdStatusWidget widgetMode=full renders header + health summary + workflow line", () => {
 	const widget = new GsdStatusWidget(() => ({
 		override: "auto",
 		activeToolCount: 1,
@@ -66,9 +66,9 @@ test("GsdStatusWidget widgetMode=full renders header + task progress + workflow 
 		gsdProgress: makeProgress("full"),
 	}));
 	const lines = widget.render(WIDTH).map((line) => stripVTControlCharacters(line));
-	// header + health summary + task progress + workflow = up to 4 lines
-	assert.ok(lines.length >= 3, "full mode should produce at least 3 lines");
+	assert.equal(lines.length, 3, "full mode should render header, health summary, and workflow line");
 	assert.match(lines[0], /GSD AUTO/);
+	assert.match(lines[0], /tasks .* 3\/10/);
 	const fullText = lines.join("\n");
 	assert.match(fullText, /ctrl\+shift\+d/);
 });

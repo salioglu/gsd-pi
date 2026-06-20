@@ -2100,9 +2100,6 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
             return "dispatched";
           }
           if (getUnitCostSpikeAction(unitCostUsd, rollingAvgUsd, resolveUnitCostSpikeMultiplier(prefs)) === "pause") {
-            s.pendingVerificationRetry = null;
-            s.verificationRetryCount.delete(retryKey);
-            s.verificationRetryFailureHashes.delete(retryKey);
             const advancedPastUnit = await hasArtifactCostGuardAdvancedPastUnit(
               s,
               ctx,
@@ -2111,6 +2108,9 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
               prefs,
             );
             if (advancedPastUnit) {
+              s.pendingVerificationRetry = null;
+              s.verificationRetryCount.delete(retryKey);
+              s.verificationRetryFailureHashes.delete(retryKey);
               debugLog("postUnit", {
                 phase: "artifact-cost-spike-continue-after-advance",
                 unitType: s.currentUnit.type,
@@ -2131,14 +2131,21 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
               unitCostUsd,
               rollingAvgUsd,
             );
+            if (parallelBlocker) {
+              s.pendingVerificationRetry = null;
+              s.verificationRetryCount.delete(retryKey);
+              s.verificationRetryFailureHashes.delete(retryKey);
+              ctx.ui.notify(
+                `Unit ${s.currentUnit.id} cost spike detected (${unitCostUsd.toFixed(2)} vs avg ${rollingAvgUsd.toFixed(2)}) — wrote parallel blocker and pausing auto-mode.`,
+                "error",
+              );
+              await pauseAuto(ctx, pi);
+              return "dispatched";
+            }
             ctx.ui.notify(
-              parallelBlocker
-                ? `Unit ${s.currentUnit.id} cost spike detected (${unitCostUsd.toFixed(2)} vs avg ${rollingAvgUsd.toFixed(2)}) — wrote parallel blocker and pausing auto-mode.`
-                : `Unit ${s.currentUnit.id} cost spike detected (${unitCostUsd.toFixed(2)} vs avg ${rollingAvgUsd.toFixed(2)}) — pausing auto-mode.`,
-              "error",
+              `Unit ${s.currentUnit.id} cost spike detected (${unitCostUsd.toFixed(2)} vs avg ${rollingAvgUsd.toFixed(2)}) during artifact verification retry; keeping verification failure as the authoritative blocker.`,
+              "warning",
             );
-            await pauseAuto(ctx, pi);
-            return "dispatched";
           }
           const attempt = (s.verificationRetryCount.get(retryKey) ?? 0) + 1;
           const failureDetails = describeArtifactVerificationFailure(

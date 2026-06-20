@@ -14,7 +14,7 @@ import { renderPlainSpeakerMessage } from "../transcript-design.js";
 initTheme("dark", false);
 
 describe("AssistantMessageComponent plain surface", () => {
-	test("renders assistant content as an unboxed speaker line + body", () => {
+	test("renders assistant content with corner opener and unboxed body", () => {
 		const message = {
 			id: "m1",
 			role: "assistant",
@@ -31,8 +31,8 @@ describe("AssistantMessageComponent plain surface", () => {
 		assert.match(joined, /GSD/);
 		assert.match(joined, /gpt-test/);
 		assert.match(joined, /update the renderer/);
-		assert.doesNotMatch(joined, /╭/);
-		assert.doesNotMatch(joined, /╰/);
+		assert.match(joined, /╭─ GSD/);
+		assert.doesNotMatch(joined, /╯/);
 		assert.doesNotMatch(joined, /[│┃]/);
 	});
 
@@ -46,7 +46,8 @@ describe("AssistantMessageComponent plain surface", () => {
 			.join("\n");
 		assert.match(plain, /GSD/);
 		assert.match(plain, /Hey there/);
-		assert.doesNotMatch(plain, /╭/);
+		assert.match(plain, /╭─ GSD/);
+		assert.doesNotMatch(plain, /╯/);
 	});
 
 	test("renders metadata for a zero timestamp", () => {

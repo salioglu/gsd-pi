@@ -129,6 +129,49 @@ test("FooterComponent hides (auto) hint when autoCompactEnabled is false", () =>
 	assert.doesNotMatch(lines[0], /\(auto\)/);
 });
 
+test("FooterComponent shows in-context tokens, not cumulative session usage", () => {
+	const footer = new FooterComponent(
+		{
+			state: {
+				model: { id: "test-model", provider: "test", contextWindow: 1_000_000 },
+			},
+			sessionManager: {
+				getUsageTotals: () => ({
+					input: 4_000,
+					output: 1_700,
+					cacheRead: 50_000,
+					cacheWrite: 0,
+					cost: 0,
+				}),
+				getSessionName: () => undefined,
+			},
+			getContextUsage: () => ({ percent: 97, contextWindow: 1_000_000, tokens: 970_000 }),
+			getLastTurnCost: () => 0,
+			modelRegistry: {
+				isUsingOAuth: () => false,
+				getProviderAuthMode: () => "apiKey",
+			},
+		} as any,
+		{
+			getGitBranch: () => "main",
+			getExtensionStatuses: () => new Map(),
+			getAvailableProviderCount: () => 1,
+		} as any,
+		() => ({
+			override: "chat",
+			activeToolCount: 0,
+			cwd: "/tmp/gsd-pi",
+			manuallyExpanded: false,
+		}),
+	);
+
+	const lines = footer.render(160).map((line) => stripVTControlCharacters(line));
+
+	assert.match(lines[0], /97%/);
+	assert.match(lines[0], /970k\/1\.0M/);
+	assert.doesNotMatch(lines[0], /5\.7k\/1\.0M/);
+});
+
 test("FooterComponent promotes gsd-step to center when GSD strip is visible", () => {
 	const footer = new FooterComponent(
 		{

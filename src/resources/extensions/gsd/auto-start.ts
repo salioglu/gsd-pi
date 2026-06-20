@@ -21,6 +21,10 @@ import { loadFile, getManifestStatus } from "./files.js";
 import type { InterruptedSessionAssessment } from "./interrupted-session.js";
 import {
   loadEffectiveGSDPreferences,
+  loadEffectiveGSDPreferencesWithRegistry,
+  modelIdsForProfileResolution,
+  resolveProfileAnchorProvider,
+  resolveDisabledModelProvidersFromPreferences,
   resolveSkillDiscoveryMode,
   getIsolationMode,
 } from "./preferences.js";
@@ -1012,9 +1016,14 @@ export async function bootstrapAutoSession(
   // run /login" before pausing and resetting to claude-code/claude-sonnet-4-6.
   const manualSessionOverride = getSessionModelOverride(ctx.sessionManager.getSessionId());
   const sessionProviderIsCustom = isCustomProvider(ctx.model?.provider);
+  const profileModelIds = modelIdsForProfileResolution(
+    ctx.modelRegistry,
+    resolveProfileAnchorProvider(ctx.model?.provider),
+    resolveDisabledModelProvidersFromPreferences(),
+  );
   const preferredModel = sessionProviderIsCustom
     ? null
-    : resolveDefaultSessionModel(ctx.model?.provider, base);
+    : resolveDefaultSessionModel(ctx.model?.provider, base, profileModelIds);
   // Validate the preferred model against the live registry + provider auth so
   // an unconfigured PREFERENCES.md entry (no API key / OAuth) can't become the
   // start-model snapshot. Without this, every subsequent unit would try to
@@ -1456,7 +1465,11 @@ export async function bootstrapAutoSession(
       }
     }
 
-    const effectivePrefs = loadEffectiveGSDPreferences(base)?.preferences;
+    const effectivePrefs = loadEffectiveGSDPreferencesWithRegistry(
+      ctx.modelRegistry,
+      base,
+      resolveProfileAnchorProvider(ctx.model?.provider, startModelSnapshot?.provider),
+    )?.preferences;
     const { shouldRunDeepProjectSetup } = await import("./auto-dispatch.js");
     const deepProjectStagePending = shouldRunDeepProjectSetup(
       state,
@@ -1808,7 +1821,11 @@ export async function bootstrapAutoSession(
     // FlatRateContext used by selectAndApplyModel so user-declared
     // flat-rate providers and externalCli auto-detection are respected.
     const { isFlatRateProvider, buildFlatRateContext } = await import("./auto-model-selection.js");
-    const bannerPrefs = loadEffectiveGSDPreferences(base)?.preferences;
+    const bannerPrefs = loadEffectiveGSDPreferencesWithRegistry(
+      ctx.modelRegistry,
+      base,
+      resolveProfileAnchorProvider(ctx.model?.provider, s.autoModeStartModel?.provider),
+    )?.preferences;
     const effectiveProvider = s.autoModeStartModel?.provider ?? ctx.model?.provider;
     const effectivelyEnabled = routingConfig.enabled
       && (routingConfig.allow_flat_rate_providers

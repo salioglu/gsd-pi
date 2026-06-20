@@ -115,6 +115,7 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (text: string) => void;
 	private loadingAnimation: Loader | undefined = undefined;
+	private activityLoader: Loader | undefined = undefined;
 	private pendingWorkingMessage: string | null | undefined = undefined;
 	private readonly defaultWorkingMessage = "Working...";
 	private lastBlockingError: string | undefined = undefined;
@@ -195,6 +196,7 @@ export class InteractiveMode {
 			cwd: this.gsdProgressState?.path ?? process.cwd(),
 			manuallyExpanded: this.gsdStatusExpanded,
 			gsdProgress: this.gsdProgressState,
+			isStreaming: this.session.isStreaming,
 		}));
 		this.statusContainer = new Container();
 		this.pinnedMessageContainer = new Container();

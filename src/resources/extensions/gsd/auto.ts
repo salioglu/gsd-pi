@@ -80,6 +80,8 @@ import type { SessionLockStatus } from "./session-lock.js";
 import {
   resolveAutoSupervisorConfig,
   loadEffectiveGSDPreferences,
+  loadEffectiveGSDPreferencesWithRegistry,
+  resolveProfileAnchorProvider,
   getIsolationMode,
   resolveEffectiveUnitIsolationMode,
 } from "./preferences.js";
@@ -851,7 +853,7 @@ export function _warnIfWorktreeMissingForTest(
   if (worktreePath && !existsSync(worktreePath)) {
     logWarning(
       "session",
-      `Worktree was expected at ${worktreePath} but is missing. Continuing in project-root mode. To restart with a fresh worktree, run /gsd-debug or recreate the milestone.`,
+      `Worktree was expected at ${worktreePath} but is missing. Resuming from project root; /gsd next will recreate the worktree when isolation is enabled.`,
       { file: "auto.ts", milestoneId },
     );
     return true;
@@ -859,18 +861,33 @@ export function _warnIfWorktreeMissingForTest(
   return false;
 }
 
-export function anchorProcessCwdForAutoResume(basePath: string): boolean {
-  try {
-    process.chdir(basePath);
-    return true;
-  } catch (err) {
-    logWarning(
-      "session",
-      `resume cwd anchor failed: ${err instanceof Error ? err.message : String(err)}`,
-      { file: "auto.ts", basePath },
-    );
-    return false;
+export function anchorProcessCwdForAutoResume(
+  basePath: string,
+  fallbackPaths: string[] = [],
+): boolean {
+  const candidates = [basePath, ...fallbackPaths].filter(
+    (candidate, index, all) =>
+      Boolean(candidate) && all.indexOf(candidate) === index,
+  );
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    try {
+      process.chdir(candidate);
+      return true;
+    } catch (err) {
+      logWarning(
+        "session",
+        `resume cwd anchor failed for ${candidate}: ${err instanceof Error ? err.message : String(err)}`,
+        { file: "auto.ts", basePath: candidate },
+      );
+    }
   }
+  logWarning(
+    "session",
+    `resume cwd anchor failed: no usable directory among ${candidates.join(", ")}`,
+    { file: "auto.ts" },
+  );
+  return false;
 }
 
 export function isAutoPaused(): boolean {
@@ -1178,6 +1195,52 @@ function shouldPreserveCoordinationForPause(errorContext?: ErrorContext): boolea
   return errorContext?.category === "provider" && errorContext.isTransient === true;
 }
 
+function resolvePauseLifecyclePresentation(errorContext?: ErrorContext): {
+  status: "paused" | "blocked";
+  title: string;
+  detail: string;
+  nextAction: string;
+  commands: string[];
+  notifyLevel: "info" | "warning";
+  notifyPrefix: string;
+} {
+  const resumeCmd = s.stepMode ? "/gsd next" : "/gsd auto";
+  const modeLabel = s.stepMode ? "Step" : "Auto";
+  const defaultPresentation = {
+    status: "paused" as const,
+    title: `${modeLabel}-mode paused`,
+    detail: errorContext?.message ?? "Paused by user request.",
+    nextAction: `Type to steer, or run ${resumeCmd} to resume.`,
+    commands: [resumeCmd, "/gsd status for overview", "/gsd notifications for history"],
+    notifyLevel: "info" as const,
+    notifyPrefix: `${modeLabel}-mode paused`,
+  };
+
+  const message = errorContext?.message ?? "";
+  if (
+    message.includes("completed closeout dispatch history") ||
+    message.includes("completed complete-milestone dispatch history")
+  ) {
+    const milestoneMatch = message.match(/Milestone (M\d+[A-Z0-9-]*)/);
+    const milestoneId = milestoneMatch?.[1] ?? "this milestone";
+    return {
+      status: "blocked",
+      title: `${modeLabel}-mode blocked`,
+      detail: message,
+      nextAction: `Run \`/gsd dispatch complete-milestone ${milestoneId}\` to finish closeout, then ${resumeCmd}.`,
+      commands: [
+        `/gsd dispatch complete-milestone ${milestoneId}`,
+        `/gsd status ${milestoneId}`,
+        resumeCmd,
+      ],
+      notifyLevel: "warning",
+      notifyPrefix: `${modeLabel}-mode blocked`,
+    };
+  }
+
+  return defaultPresentation;
+}
+
 function setLifecycleOutcome(
   ctx: ExtensionContext | undefined,
   input: {
@@ -1229,11 +1292,15 @@ function setTerminalCloseoutOutcome(
     invalidate(): void {},
   }));
   ctx.ui.setStatus?.("gsd-step", undefined);
+  ctx.ui?.setGsdProgress?.(undefined);
   ctx.ui.setWidget?.("gsd-progress", undefined);
+  const detail = input.allMilestonesComplete && input.milestoneTitle
+    ? `${input.milestoneTitle}. All milestones complete`
+    : `${titleLine}${input.reason ?? "Milestone closeout finished."}`;
   setLifecycleOutcome(ctx, {
     status: "complete",
     title,
-    detail: `${titleLine}${input.reason ?? "Milestone closeout finished."}`,
+    detail,
     nextAction,
     commands: TERMINAL_CLOSEOUT_COMMANDS,
     unitLabel: input.milestoneId ? `complete-milestone ${input.milestoneId}` : null,
@@ -2050,6 +2117,12 @@ export async function pauseAuto(
     });
     return;
   }
+
+  anchorProcessCwdForAutoResume(s.basePath || s.originalBasePath || "", [
+    s.originalBasePath,
+    lockBase(),
+  ].filter((path): path is string => Boolean(path)));
+
   s.active = false;
   s.paused = true;
   clearUnitTimeout();
@@ -2165,22 +2238,22 @@ export async function pauseAuto(
   s.pendingVerificationRetry = null;
   ctx?.ui.setStatus("gsd-auto", "paused");
   ctx?.ui.setWidget("gsd-progress", undefined);
-  const resumeCmd = s.stepMode ? "/gsd next" : "/gsd auto";
+  const lifecycle = resolvePauseLifecyclePresentation(_errorContext);
   setLifecycleOutcome(ctx, {
-    status: "paused",
-    title: `${s.stepMode ? "Step" : "Auto"}-mode paused`,
-    detail: _errorContext?.message ?? "Paused by user request.",
-    nextAction: `Type to steer, or run ${resumeCmd} to resume.`,
-    commands: [resumeCmd, "/gsd status for overview", "/gsd notifications for history"],
+    status: lifecycle.status,
+    title: lifecycle.title,
+    detail: lifecycle.detail,
+    nextAction: lifecycle.nextAction,
+    commands: lifecycle.commands,
     unitLabel: pausedUnitLabel,
   });
   if (ctx) initHealthWidget(ctx);
   const pauseMessage = _errorContext?.message
-    ? `${s.stepMode ? "Step" : "Auto"}-mode paused: ${_errorContext.message}`
-    : `${s.stepMode ? "Step" : "Auto"}-mode paused (Escape). Type to interact, or ${resumeCmd} to resume.`;
+    ? `${lifecycle.notifyPrefix}: ${_errorContext.message}`
+    : `${lifecycle.notifyPrefix} (Escape). Type to interact, or ${lifecycle.commands[0] ?? (s.stepMode ? "/gsd next" : "/gsd auto")} to resume.`;
   ctx?.ui.notify(
     pauseMessage,
-    "info",
+    lifecycle.notifyLevel,
   );
 }
 
@@ -2250,7 +2323,7 @@ function ensureOrchestrationModule(ctx: ExtensionContext, pi: ExtensionAPI, base
  * Build the LoopDeps object from auto.ts private scope.
  * This bundles all private functions that autoLoop needs without exporting them.
  */
-function buildLoopDeps(pi: ExtensionAPI): LoopDeps {
+function buildLoopDeps(pi: ExtensionAPI, ctx: ExtensionContext): LoopDeps {
   // Initialize the unified rule registry with converted dispatch rules.
   // Must happen before LoopDeps is assembled so facade functions
   // (resolveDispatch, runPreDispatchHooks, etc.) delegate to the registry.
@@ -2276,7 +2349,12 @@ function buildLoopDeps(pi: ExtensionAPI): LoopDeps {
     invalidateAllCaches,
     deriveState,
     rebuildState,
-    loadEffectiveGSDPreferences,
+    loadEffectiveGSDPreferences: () =>
+      loadEffectiveGSDPreferencesWithRegistry(
+        ctx.modelRegistry,
+        s.basePath || undefined,
+        resolveProfileAnchorProvider(ctx.model?.provider, s.autoModeStartModel?.provider),
+      ),
 
     // Pre-dispatch health gate
     preDispatchHealthGate,
@@ -2555,7 +2633,7 @@ export async function startAuto(
               if (persistedWorktreePath && !existsSync(persistedWorktreePath)) {
                 logWarning(
                   "session",
-                  `Worktree was expected at ${persistedWorktreePath} but is missing. Continuing in project-root mode. To restart with a fresh worktree, run /gsd-debug or recreate the milestone.`,
+                  `Worktree was expected at ${persistedWorktreePath} but is missing. Resuming from project root; /gsd next will recreate the worktree when isolation is enabled.`,
                   { file: "auto.ts", milestoneId: meta.milestoneId ?? "" },
                 );
               }
@@ -2650,13 +2728,16 @@ export async function startAuto(
     if (resumeWorktreePath && !existsSync(resumeWorktreePath)) {
       logWarning(
         "session",
-        `Worktree was expected at ${resumeWorktreePath} but is missing. Continuing in project-root mode. To restart with a fresh worktree, run /gsd-debug or recreate the milestone.`,
+        `Worktree was expected at ${resumeWorktreePath} but is missing. Resuming from project root; /gsd next will recreate the worktree when isolation is enabled.`,
         { file: "auto.ts", milestoneId: s.currentMilestoneId ?? "" },
       );
     }
     // ADR-016 phase 2 / B3 (#5621): paused-resume worktree-path adoption.
     buildLifecycle().resumeFromPausedSession(base, resumeWorktreePath);
-    anchorProcessCwdForAutoResume(s.basePath || base);
+    anchorProcessCwdForAutoResume(s.basePath || base, [
+      base,
+      s.originalBasePath || base,
+    ]);
     // Rebuild scope now that s.basePath reflects the actual worktree (or project root).
     rebuildScope(s.basePath, s.currentMilestoneId);
     // Ensure the workflow-logger audit log is pinned to the project root
@@ -2702,7 +2783,7 @@ export async function startAuto(
       rebuildScope(s.basePath, s.currentMilestoneId);
     }
 
-    const loopDeps = buildLoopDeps(pi);
+    const loopDeps = buildLoopDeps(pi, ctx);
     ensureOrchestrationModule(ctx, pi, s.basePath || base);
     registerSigtermHandler(lockBase());
 
@@ -2822,7 +2903,7 @@ export async function startAuto(
   // Build scope after bootstrap has populated s.basePath / s.originalBasePath /
   // s.currentMilestoneId (including worktree setup inside bootstrapAutoSession).
   rebuildScope(s.basePath, s.currentMilestoneId);
-  const loopDeps = buildLoopDeps(pi);
+  const loopDeps = buildLoopDeps(pi, ctx);
   ensureOrchestrationModule(ctx, pi, s.basePath || base);
   captureProjectRootEnv(s.originalBasePath || s.basePath);
   registerAutoWorkerForSession(s);

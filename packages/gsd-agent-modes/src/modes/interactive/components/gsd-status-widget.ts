@@ -6,7 +6,7 @@ import { theme } from "@gsd/pi-coding-agent/theme/theme.js";
 import type { AdaptiveLayoutState } from "./adaptive-layout.js";
 import type { GsdProgressState } from "./gsd-progress-state.js";
 import { resolveTuiMode } from "../tui-mode.js";
-import { badge, layoutFullWidthFooter, layoutMinimalFooter, renderProgressBar } from "./transcript-design.js";
+import { badge, formatStepProgress, layoutMinimalFooter, styledActivitySpinner } from "./transcript-design.js";
 
 export interface GsdStatusWidgetState extends AdaptiveLayoutState {
 	/**
@@ -16,6 +16,8 @@ export interface GsdStatusWidgetState extends AdaptiveLayoutState {
 	 */
 	manuallyExpanded: boolean | undefined;
 	gsdProgress?: GsdProgressState;
+	/** True while the agent turn is in flight (model thinking, tools, etc.). */
+	isStreaming?: boolean;
 }
 
 function padLine(line: string, width: number): string {
@@ -49,6 +51,60 @@ export function isGsdStatusWidgetVisible(state: GsdStatusWidgetState, width: num
 	return isWidgetActive(state, width);
 }
 
+function gsdAutoBadge(isStreaming: boolean): string {
+	if (isStreaming) {
+		return `${styledActivitySpinner("accent")} ${theme.fg("accent", theme.bold("GSD AUTO"))}`;
+	}
+	return badge("● GSD AUTO", "accent");
+}
+
+function buildTaskProgressSegments(progress: GsdProgressState): string[] {
+	const taskProgress = progress.taskProgress;
+	if (!taskProgress || taskProgress.total <= 0) return [];
+
+	const segments: string[] = [];
+	const sliceProgress = progress.sliceProgress;
+	if (sliceProgress && sliceProgress.total > 0) {
+		segments.push(formatStepProgress("slices", sliceProgress.done, sliceProgress.total, { mode: "completed" }));
+	}
+	segments.push(
+		formatStepProgress("tasks", taskProgress.done, taskProgress.total, {
+			mode: "position",
+			countColor: "accent",
+		}),
+	);
+	if (progress.sliceLabel) {
+		segments.push(theme.fg("dim", progress.sliceLabel));
+	}
+	if (progress.taskLabel) {
+		segments.push(theme.fg("dim", progress.taskLabel));
+	}
+	if (progress.unitLabel) {
+		segments.push(theme.fg("text", progress.unitLabel));
+	}
+	return segments;
+}
+
+function renderProgressHeadRight(progress: GsdProgressState): string {
+	const sep = theme.fg("dim", " · ");
+	const progressSegments = buildTaskProgressSegments(progress);
+	const timingParts = [progress.elapsed, progress.eta].filter(
+		(part): part is string => Boolean(part),
+	);
+
+	if (progressSegments.length > 0) {
+		const rightParts = [
+			...timingParts.map((part) => theme.fg("dim", part)),
+			...progressSegments,
+		];
+		return rightParts.join(sep);
+	}
+	if (timingParts.length > 0) {
+		return theme.fg("dim", timingParts.join(" · "));
+	}
+	return "";
+}
+
 function renderProgressDrivenStrip(state: GsdStatusWidgetState, width: number): string[] {
 	const progress = state.gsdProgress!;
 	const autoExpand = !!state.lastError;
@@ -64,14 +120,13 @@ function renderProgressDrivenStrip(state: GsdStatusWidgetState, width: number): 
 	const modeTag =
 		progress.modeTag === "NEXT" ? theme.fg("success", progress.modeTag) : undefined;
 	const headLeft = [
-		badge("● GSD AUTO", "accent"),
+		gsdAutoBadge(!!state.isStreaming),
 		modeTag,
 		theme.fg("text", truncateToWidth(phase, Math.max(12, width - 36), "…")),
 	]
 		.filter(Boolean)
 		.join(" ");
-	const headRightParts = [progress.elapsed, progress.eta].filter(Boolean);
-	const headRight = headRightParts.length > 0 ? theme.fg("dim", headRightParts.join(" · ")) : "";
+	const headRight = renderProgressHeadRight(progress);
 	const headLine = padLine(alignRight(headLeft, headRight, width), width);
 
 	if (!expanded) {
@@ -86,20 +141,6 @@ function renderProgressDrivenStrip(state: GsdStatusWidgetState, width: number): 
 
 	if (!isSmall && progress.healthSummary) {
 		lines.push(padLine(theme.fg("dim", truncateToWidth(progress.healthSummary, width, "…")), width));
-	}
-
-	const taskProgress = progress.taskProgress;
-	if (taskProgress && taskProgress.total > 0) {
-		const taskSegments = [
-			theme.fg("accent", `${taskProgress.done}/${taskProgress.total} tasks`),
-			progress.sliceLabel ? theme.fg("dim", progress.sliceLabel) : undefined,
-			progress.taskLabel ? theme.fg("dim", progress.taskLabel) : undefined,
-			progress.unitLabel ? theme.fg("text", progress.unitLabel) : undefined,
-		].filter((segment): segment is string => !!segment);
-		const taskLine = layoutFullWidthFooter(taskSegments, width, 0, (budget) =>
-			renderProgressBar(taskProgress.done, taskProgress.total, Math.max(8, budget), "running"),
-		);
-		lines.push(padLine(taskLine, width));
 	}
 
 	if (!isSmall) {
@@ -131,46 +172,39 @@ export class GsdStatusWidget implements Component {
 			return renderProgressDrivenStrip(state, width);
 		}
 
-		const autoExpand = !!state.lastError;
-		const expanded = autoExpand || (state.manuallyExpanded ?? false);
+		const expanded = state.manuallyExpanded ?? false;
 		const phase = state.gsdPhase ?? (state.lastError ? "Recovery" : "Ready");
 		const tools =
 			(state.activeToolCount ?? 0) > 0 ? `${state.activeToolCount} running` : "idle";
+		const blockedTag = state.lastError ? theme.fg("error", "blocked") : undefined;
 
 		if (!expanded) {
 			const phaseText = theme.fg("text", truncateToWidth(phase, Math.max(12, width - 28), "…"));
 			const toolsText = theme.fg("dim", tools);
 			const line = layoutMinimalFooter(
-				[badge("● GSD AUTO", "accent"), phaseText, toolsText],
+				[gsdAutoBadge(!!state.isStreaming), phaseText, blockedTag, toolsText].filter(
+					(segment): segment is string => !!segment,
+				),
 				width,
 			);
 			return [padLine(line, width)];
 		}
 
-		const headLeft = `${badge("● GSD AUTO", "accent")} ${theme.fg("accent", truncateToWidth(phase, Math.max(12, width - 20), "…"))}`;
+		const headLeft = `${gsdAutoBadge(!!state.isStreaming)} ${theme.fg("accent", truncateToWidth(phase, Math.max(12, width - 20), "…"))}`;
 		const headRight = state.lastError
-			? theme.fg("warning", "recovery")
+			? theme.fg("warning", "blocked")
 			: theme.fg("dim", tools);
 
 		const toolCount = state.activeToolCount ?? 0;
 		const progressSegments = [
 			theme.fg("accent", toolCount > 0 ? `${toolCount} running` : "idle"),
-			state.lastError
-				? theme.fg("error", truncateToWidth(state.lastError, Math.max(20, width - 24), "…"))
-				: theme.fg("dim", "path ") + theme.fg("text", basename(state.cwd)),
+			blockedTag ?? theme.fg("dim", "path ") + theme.fg("text", basename(state.cwd)),
 			theme.fg("dim", "ctrl+shift+d collapse"),
 		];
-		const progressLine = layoutFullWidthFooter(progressSegments, width, 0, (budget) =>
-			renderProgressBar(
-				toolCount > 0 ? Math.min(toolCount, 14) : 0,
-				14,
-				Math.max(10, budget),
-				toolCount > 0 ? "running" : "muted",
-			),
-		);
+		const progressLine = layoutMinimalFooter(progressSegments, width);
 
 		const hint = state.lastError
-			? theme.fg("dim", "inspect failed output before retrying")
+			? theme.fg("dim", "see error above · retry when ready")
 			: theme.fg("dim", "watch live output below");
 
 		return [

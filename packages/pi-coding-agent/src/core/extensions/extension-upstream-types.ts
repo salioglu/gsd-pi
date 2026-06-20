@@ -156,6 +156,8 @@ export interface GsdProgressState {
 	phase: string;
 	modeTag?: "AUTO" | "NEXT";
 	taskProgress?: { done: number; total: number };
+	/** Milestone slice completion — completed count vs total slices. */
+	sliceProgress?: { done: number; total: number };
 	sliceLabel?: string;
 	taskLabel?: string;
 	unitLabel?: string;

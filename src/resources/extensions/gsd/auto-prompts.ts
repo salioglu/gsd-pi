@@ -3891,7 +3891,11 @@ export async function buildReactiveExecutePrompt(
     const taskPrompt = [
       `## UNIT: Execute Task ${tid} ("${tTitle}")`,
       "",
-      "Work only in the repository root.",
+      "## Working Directory",
+      "",
+      `Your working directory is \`${base}\`. All file reads, writes, and shell commands MUST operate relative to this directory. Do NOT \`cd\` to any other directory.`,
+      `If any inlined plan names an absolute path outside \`${base}\`, treat it as stale — use the equivalent path under \`${base}\` before reading, writing, or executing.`,
+      "",
       "Implement from the inlined task plan below. Verify changes, then call `gsd_task_complete`.",
       "Do not run git commands.",
       "",

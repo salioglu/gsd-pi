@@ -12,6 +12,7 @@ import {
   renderFrame,
   renderKeyHints,
   renderPanel,
+  renderPlainOutcome,
   renderProgressBar,
   rightAlign,
   safeLine,
@@ -95,6 +96,41 @@ describe("tui render kit", () => {
     for (const line of lines) {
       assert.ok(!line.includes("│"), `renderPanel line must not contain a vertical bar: "${line}"`);
     }
+  });
+
+  test("renderPlainOutcome uses a chat-style header without rule borders", () => {
+    const lines = renderPlainOutcome(
+      theme,
+      60,
+      "✓ Milestone M002 complete",
+      ["Dark Mode. Milestone M002 complete.", "Next · Review the closeout."],
+    );
+    assertWidth(lines, 60);
+    assert.match(lines[0] ?? "", /^GSD · /);
+    assert.doesNotMatch(lines.join("\n"), /^─/m);
+    for (const line of lines) {
+      assert.ok(!line.includes("│"), `plain outcome must not use vertical bars: "${line}"`);
+    }
+  });
+
+  test("renderPlainOutcome spreads header meta and footer commands to the right edge", () => {
+    const width = 80;
+    const lines = renderPlainOutcome(
+      theme,
+      width,
+      "● Step complete",
+      ["Next · Advance one step."],
+      {
+        headerRight: "2m 05s",
+        footerRight: "/gsd next  ·  /gsd auto",
+      },
+    );
+    assertWidth(lines, width);
+    const header = lines[0] ?? "";
+    const footer = lines.at(-2) ?? "";
+    assert.ok(header.endsWith("2m 05s"), `elapsed should be right-aligned: "${header}"`);
+    assert.ok(footer.endsWith("/gsd auto"), `commands should be right-aligned: "${footer}"`);
+    assert.ok(visibleWidth(header) >= width - 1, "header should use full row width");
   });
 
   test("renderKeyHints and renderProgressBar fit caller budgets", () => {

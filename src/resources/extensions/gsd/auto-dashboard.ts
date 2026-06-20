@@ -31,7 +31,7 @@ import { execFileSync } from "node:child_process";
 import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import { makeUI } from "../shared/tui.js";
 import { GLYPH, INDENT } from "../shared/mod.js";
-import { padRightVisible, renderPanel, renderProgressBar, rightAlign, wrapVisibleText } from "./tui/render-kit.js";
+import { padRightVisible, renderPlainOutcome, renderProgressBar, rightAlign, wrapVisibleText } from "./tui/render-kit.js";
 import { computeProgressScore } from "./progress-score.js";
 import {
   getGlobalGSDPreferencesPath,
@@ -758,17 +758,97 @@ export function updateProgressWidget(
   installGsdProgressStrip(ctx, accessors, unitType, unitId, mid, slice, task, isHook, verb);
 }
 
+function buildCompletionRollupLines(
+  theme: Theme,
+  snapshot: CompletionDashboardSnapshot,
+  width: number,
+): { lines: string[]; footerCommands?: string } {
+  const innerWidth = Math.max(8, width - 2);
+  const lines: string[] = [];
+
+  const add = (line: string): void => {
+    if (!line) return;
+    for (const wrapped of wrapVisibleText(line, innerWidth).slice(0, 12 - lines.length)) {
+      lines.push(wrapped);
+    }
+  };
+
+  if (snapshot.milestoneTitle) {
+    add(theme.fg("text", snapshot.milestoneTitle));
+  }
+
+  const oneLiner = normalizeRollupText(snapshot.oneLiner);
+  if (oneLiner) {
+    add(`${theme.fg("accent", "Outcome")} ${theme.fg("text", oneLiner)}`);
+  }
+
+  const changed = [
+    ...(snapshot.successCriteriaResults ? [snapshot.successCriteriaResults] : []),
+    ...(snapshot.requirementOutcomes ? [snapshot.requirementOutcomes] : []),
+    ...(snapshot.keyDecisions ?? []),
+  ].map(normalizeRollupText).filter((v): v is string => !!v).slice(0, 4);
+  if (changed.length > 0) {
+    add(theme.fg("accent", "What changed"));
+    for (const item of changed) add(`  - ${theme.fg("text", item)}`);
+  }
+
+  const verification = [
+    snapshot.definitionOfDoneResults,
+    snapshot.deviations ? `Deviations: ${snapshot.deviations}` : null,
+    snapshot.followUps ? `Follow-ups: ${snapshot.followUps}` : null,
+  ].map(normalizeRollupText).filter((v): v is string => !!v);
+  if (verification.length > 0 || (snapshot.keyFiles?.length ?? 0) > 0) {
+    add(theme.fg("accent", "Verification"));
+    for (const item of verification.slice(0, 3)) add(`  - ${theme.fg("text", item)}`);
+    const files = (snapshot.keyFiles ?? []).map(normalizeRollupText).filter((v): v is string => !!v).slice(0, 4);
+    if (files.length > 0) {
+      add(`  ${theme.fg("accent", "Files:")} ${theme.fg("text", files.join("; "))}`);
+    }
+  }
+
+  const lessons = (snapshot.lessonsLearned ?? []).map(normalizeRollupText).filter((v): v is string => !!v).slice(0, 2);
+  if (lessons.length > 0) {
+    add(`${theme.fg("accent", "Lessons:")} ${theme.fg("text", lessons.join("; "))}`);
+  }
+
+  const nextAction = snapshot.allMilestonesComplete
+    ? snapshot.unmappedActiveRequirements && snapshot.unmappedActiveRequirements > 0
+      ? `Review ${snapshot.unmappedActiveRequirements} unmapped active requirement${snapshot.unmappedActiveRequirements === 1 ? "" : "s"}, then start a new milestone when ready.`
+      : "Review the roll-up, then start a new milestone when ready."
+    : "Review the roll-up, inspect status, or continue to the next milestone.";
+  add(`${theme.fg("success", "Next")} ${theme.fg("text", nextAction)}`);
+
+  if ((snapshot.requirementsBacklogPreview?.length ?? 0) > 0) {
+    add(theme.fg("accent", "Requirements backlog"));
+    for (const line of snapshot.requirementsBacklogPreview ?? []) {
+      add(`  ${theme.fg("text", line)}`);
+    }
+  }
+
+  const commands = snapshot.allMilestonesComplete
+    ? snapshot.unmappedActiveRequirements && snapshot.unmappedActiveRequirements > 0
+      ? ["/gsd to review requirements backlog", "/gsd status for overview", "/gsd visualize to inspect", "/gsd start for new work"]
+      : ["/gsd status for overview", "/gsd visualize to inspect", "/gsd notifications for history", "/gsd start for new work"]
+    : ["/gsd status for overview", "/gsd visualize to inspect", "/gsd notifications for history", "/gsd auto for next milestone"];
+  const footerCommands = theme.fg("dim", commands.join("  ·  "));
+
+  if (snapshot.reason) {
+    add(theme.fg("dim", snapshot.reason));
+  }
+
+  return { lines, footerCommands };
+}
 
 export function setCompletionProgressWidget(
   ctx: ExtensionContext,
   snapshot: CompletionDashboardSnapshot,
 ): void {
   if (!ctx.hasUI) return;
-  const widgetKey = "gsd-progress";
   clearAutoOutcomeWidget(ctx);
   // Clear the structured GSD progress strip so it does not linger behind
   // the completion widget (the two use separate display channels).
   ctx.ui?.setGsdProgress?.(undefined);
+  ctx.ui.setWidget("gsd-progress", undefined);
 
   if (typeof ctx.ui?.setHeader === "function") {
     ctx.ui.setHeader(() => ({
@@ -780,117 +860,20 @@ export function setCompletionProgressWidget(
     ctx.ui.setStatus("gsd-step", undefined);
   }
 
-  ctx.ui.setWidget(widgetKey, (_tui, theme) => ({
+  ctx.ui.setWidget("gsd-outcome", (_tui, theme) => ({
     render(width: number): string[] {
-      const ui = makeUI(theme, width);
-      const pad = INDENT.base;
-      const lines: string[] = [];
-      const contentWidth = Math.max(20, width - visibleWidth(pad));
-      const add = (line = ""): void => {
-        lines.push(line ? truncateToWidth(`${pad}${line}`, width, "…") : "");
-      };
-      const addSection = (label: string, value: string | null | undefined, indent = ""): void => {
-        const clean = normalizeRollupText(value);
-        if (!clean) return;
-        add(`${indent}${theme.fg("accent", label)} ${theme.fg("text", truncateToWidth(clean, contentWidth - indent.length - label.length - 1, "…"))}`);
-      };
-      const addList = (label: string, values: string[] | undefined, limit: number, indent = ""): void => {
-        const clean = (values ?? []).map(normalizeRollupText).filter((v): v is string => !!v);
-        if (clean.length === 0) return;
-        const shown = clean.slice(0, limit);
-        const more = clean.length > shown.length ? ` (+${clean.length - shown.length} more)` : "";
-        add(`${indent}${theme.fg("accent", label)} ${theme.fg("text", truncateToWidth(shown.join("; ") + more, contentWidth - indent.length - label.length - 1, "…"))}`);
-      };
-
-      lines.push(...ui.bar());
-
       const elapsed = formatAutoElapsed(snapshot.startedAt);
       const heading = snapshot.allMilestonesComplete
         ? "All milestones complete"
         : snapshot.milestoneId
           ? `Milestone ${snapshot.milestoneId} roll-up`
           : "Milestone roll-up";
-      lines.push(rightAlign(`${pad}${theme.fg("accent", theme.bold(heading))}`, elapsed ? theme.fg("dim", elapsed) : "", width));
-
-      if (snapshot.milestoneTitle) {
-        add(theme.fg("text", snapshot.milestoneTitle));
-      }
-
-      lines.push("");
-      add(theme.fg("accent", "Outcome"));
-      addSection("", snapshot.oneLiner, "  ");
-
-      const changed = [
-        ...(snapshot.successCriteriaResults ? [snapshot.successCriteriaResults] : []),
-        ...(snapshot.requirementOutcomes ? [snapshot.requirementOutcomes] : []),
-        ...(snapshot.keyDecisions ?? []),
-      ].map(normalizeRollupText).filter((v): v is string => !!v).slice(0, 4);
-      if (changed.length > 0) {
-        lines.push("");
-        add(theme.fg("accent", "What changed"));
-        for (const item of changed) add(`  - ${theme.fg("text", item)}`);
-      }
-
-      const verification = [
-        snapshot.definitionOfDoneResults,
-        snapshot.deviations ? `Deviations: ${snapshot.deviations}` : null,
-        snapshot.followUps ? `Follow-ups: ${snapshot.followUps}` : null,
-      ].map(normalizeRollupText).filter((v): v is string => !!v);
-      if (verification.length > 0 || (snapshot.keyFiles?.length ?? 0) > 0) {
-        lines.push("");
-        add(theme.fg("accent", "Verification"));
-        for (const item of verification.slice(0, 3)) add(`  - ${theme.fg("text", item)}`);
-        addList("Files:", snapshot.keyFiles, 4, "  ");
-      }
-
-      if ((snapshot.lessonsLearned?.length ?? 0) > 0) {
-        lines.push("");
-        addList("Lessons:", snapshot.lessonsLearned, 2);
-      }
-
-      const hasSliceTotals = typeof snapshot.completedSlices === "number" && typeof snapshot.totalSlices === "number" && snapshot.totalSlices > 0;
-
-      lines.push("");
-      const stats: string[] = [];
-      if (hasSliceTotals) stats.push(theme.fg("success", `${snapshot.completedSlices}/${snapshot.totalSlices} slices`));
-      if (snapshot.unitCount > 0) stats.push(theme.fg("dim", `${snapshot.unitCount} units`));
-      if (snapshot.totalTokens > 0) stats.push(theme.fg("dim", `${formatWidgetTokens(snapshot.totalTokens)} tokens`));
-      if (snapshot.totalCost > 0) stats.push(theme.fg("warning", `$${snapshot.totalCost.toFixed(2)}`));
-      if (typeof snapshot.cacheHitRate === "number") {
-        const hitColor = snapshot.cacheHitRate >= 70 ? "success" : snapshot.cacheHitRate >= 40 ? "warning" : "error";
-        stats.push(theme.fg(hitColor, `${Math.round(snapshot.cacheHitRate)}% cache hit`));
-      }
-      if (stats.length > 0) {
-        add(`${theme.fg("accent", "Run totals")} ${stats.join(theme.fg("dim", " · "))}`);
-      }
-
-      lines.push("");
-      const nextAction = snapshot.allMilestonesComplete
-        ? snapshot.unmappedActiveRequirements && snapshot.unmappedActiveRequirements > 0
-          ? `Review ${snapshot.unmappedActiveRequirements} unmapped active requirement${snapshot.unmappedActiveRequirements === 1 ? "" : "s"}, then start a new milestone when ready.`
-          : "Review the roll-up, then start a new milestone when ready."
-        : "Review the roll-up, inspect status, or continue to the next milestone.";
-      const commands = snapshot.allMilestonesComplete
-        ? snapshot.unmappedActiveRequirements && snapshot.unmappedActiveRequirements > 0
-          ? ["/gsd to review requirements backlog", "/gsd status for overview", "/gsd visualize to inspect", "/gsd start for new work"]
-          : ["/gsd status for overview", "/gsd visualize to inspect", "/gsd notifications for history", "/gsd start for new work"]
-        : ["/gsd status for overview", "/gsd visualize to inspect", "/gsd notifications for history", "/gsd auto for next milestone"];
-      add(`${theme.fg("success", "Next")} ${theme.fg("text", nextAction)}`);
-      if ((snapshot.requirementsBacklogPreview?.length ?? 0) > 0) {
-        lines.push("");
-        add(theme.fg("accent", "Requirements backlog"));
-        for (const line of snapshot.requirementsBacklogPreview ?? []) {
-          add(`  ${theme.fg("text", line)}`);
-        }
-      }
-      add(theme.fg("dim", commands.join("  ·  ")));
-
-      const location = snapshot.basePath ? theme.fg("dim", snapshot.basePath) : "";
-      const reason = theme.fg("dim", snapshot.reason);
-      lines.push(rightAlign(`${pad}${truncateToWidth(location, Math.max(0, width - 32), "…")}`, reason, width));
-      lines.push(...ui.bar());
-
-      return lines;
+      const statusLine = `${theme.fg("success", "✓")} ${theme.fg("text", heading)}`;
+      const { lines, footerCommands } = buildCompletionRollupLines(theme, snapshot, width);
+      return renderPlainOutcome(theme, width, statusLine, lines, {
+        headerRight: elapsed ? theme.fg("dim", elapsed) : undefined,
+        footerRight: footerCommands,
+      });
     },
     invalidate(): void {},
     dispose(): void {},
@@ -902,6 +885,8 @@ export function setAutoOutcomeWidget(
   snapshot: AutoOutcomeSurfaceSnapshot,
 ): void {
   if (!ctx.hasUI) return;
+  ctx.ui?.setGsdProgress?.(undefined);
+  ctx.ui.setWidget("gsd-progress", undefined);
 
   ctx.ui.setWidget("gsd-outcome", (_tui, theme) => ({
     render(width: number): string[] {
@@ -915,40 +900,57 @@ export function setAutoOutcomeWidget(
           : snapshot.status === "blocked" ? "!"
             : snapshot.status === "paused" ? "||"
               : "●";
-      // renderPanel indents body lines by 2; mirror that for wrap width.
-      const innerWidth = Math.max(8, width - 2);
-      const maxLines = 7;
-      const lines: string[] = [];
       const elapsed = snapshot.startedAt ? formatAutoElapsed(snapshot.startedAt) : "";
-      const heading = `${theme.fg(color, icon)} ${theme.fg("accent", theme.bold("GSD"))} ${theme.fg("text", snapshot.title)}`;
-      // Elapsed rides inline after the title on the header rule.
-      const title = elapsed ? `${heading}  ${theme.fg("dim", elapsed)}` : heading;
+      const statusLine = `${theme.fg(color, icon)} ${theme.fg("text", snapshot.title)}`;
       const commands = snapshot.commands?.filter(Boolean) ?? [];
-      const commandLine = commands.length > 0 ? theme.fg("dim", commands.join("  ·  ")) : null;
+      const commandLine = commands.length > 0 ? theme.fg("dim", commands.join("  ·  ")) : undefined;
 
-      const addWrapped = (text: string, prefix = ""): void => {
-        const reserve = commandLine ? 1 : 0;
-        const remaining = Math.max(0, maxLines - reserve - lines.length);
-        if (remaining === 0) return;
-        const available = Math.max(8, innerWidth - visibleWidth(prefix));
-        for (const [idx, line] of wrapVisibleText(text, available).slice(0, remaining).entries()) {
-          lines.push(`${idx === 0 ? prefix : " ".repeat(visibleWidth(prefix))}${line}`);
-        }
+      const innerWidth = Math.max(8, width);
+      const maxLines = 7;
+      const splitRows: Array<{ left: string; right?: string }> = [];
+      let commandsPlaced = false;
+
+      const pushLeft = (left: string): void => {
+        if (splitRows.length >= maxLines - (commandLine ? 1 : 0)) return;
+        splitRows.push({ left });
       };
 
       if (snapshot.detail) {
-        addWrapped(snapshot.detail, `${theme.fg("dim", "Reason")} `);
+        for (const line of wrapVisibleText(snapshot.detail, innerWidth).slice(0, maxLines)) {
+          pushLeft(theme.fg("text", line));
+        }
       }
+
       if (snapshot.unitLabel) {
-        addWrapped(snapshot.unitLabel, `${theme.fg("dim", "Last")}   `);
+        const lastLeft = theme.fg("dim", "Last · ") + theme.fg("text", snapshot.unitLabel);
+        if (
+          commandLine &&
+          visibleWidth(lastLeft) + visibleWidth(commandLine) + 2 <= innerWidth &&
+          splitRows.length < maxLines
+        ) {
+          splitRows.push({ left: lastLeft, right: commandLine });
+          commandsPlaced = true;
+        } else {
+          pushLeft(lastLeft);
+        }
       }
-      addWrapped(snapshot.nextAction, `${theme.fg("success", "Next")}   `);
 
-      if (commandLine && lines.length < maxLines) {
-        lines.push(commandLine);
+      const nextPrefix = theme.fg("success", "Next · ");
+      const nextPrefixWidth = visibleWidth(nextPrefix);
+      for (const [idx, line] of wrapVisibleText(
+        snapshot.nextAction,
+        Math.max(8, innerWidth - nextPrefixWidth),
+      ).entries()) {
+        if (splitRows.length >= maxLines - (commandLine && !commandsPlaced ? 1 : 0)) break;
+        const lead = idx === 0 ? nextPrefix : " ".repeat(nextPrefixWidth);
+        pushLeft(theme.fg("text", lead + line));
       }
 
-      return renderPanel(theme, title, lines, width, { ruleColor: color });
+      return renderPlainOutcome(theme, width, statusLine, [], {
+        headerRight: elapsed ? theme.fg("dim", elapsed) : undefined,
+        splitRows,
+        footerRight: commandLine && !commandsPlaced ? commandLine : undefined,
+      });
     },
     invalidate(): void {},
     dispose(): void {},
@@ -1048,7 +1050,11 @@ function buildGsdProgressPayload(
 
   const roadmapSlices = mid ? getRoadmapSlicesSync() : null;
   let taskProgress: { done: number; total: number } | undefined;
+  let sliceProgress: { done: number; total: number } | undefined;
   if (shouldRenderRoadmapProgress(roadmapSlices)) {
+    if (roadmapSlices.total > 0) {
+      sliceProgress = { done: roadmapSlices.done, total: roadmapSlices.total };
+    }
     const { activeSliceTasks } = roadmapSlices;
     if (activeSliceTasks && activeSliceTasks.total > 0) {
       const taskNum = isHook
@@ -1079,6 +1085,7 @@ function buildGsdProgressPayload(
     phase,
     modeTag,
     taskProgress,
+    sliceProgress,
     sliceLabel: slice?.id,
     taskLabel: task?.id,
     unitLabel,

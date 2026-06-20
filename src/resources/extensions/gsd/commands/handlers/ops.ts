@@ -58,7 +58,7 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
     ["execute-task", "execute"],
     ["complete-slice", "complete"],
     ["validate-milestone", "validate-milestone"],
-    ["complete-milestone", "complete"],
+    ["complete-milestone", "complete-milestone"],
   ]);
   const aliasPhase = directDispatchAlias.get(trimmed);
   if (aliasPhase) {
@@ -238,7 +238,10 @@ Examples:
   if (trimmed === "dispatch" || trimmed.startsWith("dispatch ")) {
     const phase = trimmed.replace(/^dispatch\s*/, "").trim();
     if (!phase) {
-      ctx.ui.notify("Usage: /gsd dispatch <phase>  (research|plan|execute|complete|validate|reassess|uat|replan)", "warning");
+      ctx.ui.notify(
+        "Usage: /gsd dispatch <phase>  (research|plan|execute|complete|complete-milestone|validate|reassess|uat|replan)",
+        "warning",
+      );
       return true;
     }
     const basePath = projectRoot();

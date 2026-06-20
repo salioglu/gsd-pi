@@ -119,6 +119,54 @@ export function renderPanel(
   return surface.render(body, width);
 }
 
+export interface PlainOutcomeLayoutOptions {
+  /** Right side of the header row (e.g. elapsed time). */
+  headerRight?: string;
+  /** Full-width body rows with an optional right column. */
+  splitRows?: Array<{ left: string; right?: string }>;
+  /** Footer hints pinned to the bottom-right (e.g. slash commands). */
+  footerRight?: string;
+}
+
+/**
+ * Plain transcript outcome — matches the GSD chat/tool speaker line (no rule box).
+ * Header: `GSD · <status>` with optional right meta; body copy-clean; optional footer right.
+ */
+export function renderPlainOutcome(
+  theme: ThemeLike,
+  width: number,
+  statusLine: string,
+  bodyLines: string[],
+  options?: PlainOutcomeLayoutOptions,
+): string[] {
+  const headerLeft =
+    theme.fg("accent", theme.bold("GSD")) + theme.fg("dim", " · ") + statusLine;
+  const header = options?.headerRight
+    ? rightAlign(headerLeft, options.headerRight, width)
+    : safeLine(headerLeft, width);
+
+  const out: string[] = [header];
+
+  if (options?.splitRows && options.splitRows.length > 0) {
+    for (const row of options.splitRows) {
+      out.push(row.right ? rightAlign(row.left, row.right, width) : safeLine(row.left, width));
+    }
+  } else {
+    for (const line of bodyLines.filter(Boolean)) {
+      out.push(safeLine(line, width));
+    }
+  }
+
+  if (options?.footerRight) {
+    out.push(rightAlign("", options.footerRight, width));
+  }
+
+  if (out.length === 1 && !options?.footerRight) {
+    return [header, ""];
+  }
+  return [...out, ""];
+}
+
 export function renderFrame(
   theme: ThemeLike,
   inner: string[],

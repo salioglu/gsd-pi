@@ -18,6 +18,12 @@ export function chatMessageWidth(width: number): number {
 
 /** Outer indent for user turns and tool/work cards in the connected transcript. */
 export const TRANSCRIPT_CARD_INDENT = 4;
+
+/** Tool rows in the transcript (Variant A). */
+export const TRANSCRIPT_TOOL_MARKER = "▸";
+
+/** System/compaction/skill notices in the transcript (Variant A). */
+export const TRANSCRIPT_SYSTEM_MARKER = "◇";
 const RUNNING_RAIL_FRAME_MS = 70;
 const RUNNING_RAIL_TRAIL = 5;
 const HORIZONTAL_RAIL = "─";
@@ -178,11 +184,19 @@ export function renderConnectedCard(
 	return out;
 }
 
+function stripAnsiCodes(text: string): string {
+	return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function isBlankRenderLine(line: string): boolean {
+	return stripAnsiCodes(line).trim().length === 0;
+}
+
 export function trimOuterBlankLines(lines: string[]): string[] {
 	let start = 0;
 	let end = lines.length;
-	while (start < end && lines[start].trim().length === 0) start++;
-	while (end > start && lines[end - 1].trim().length === 0) end--;
+	while (start < end && isBlankRenderLine(lines[start]!)) start++;
+	while (end > start && isBlankRenderLine(lines[end - 1]!)) end--;
 	return lines.slice(start, end);
 }
 
@@ -190,8 +204,8 @@ export function trimOuterBlankLines(lines: string[]): string[] {
 export function collapseBlankLines(lines: string[]): string[] {
 	const out: string[] = [];
 	for (const line of lines) {
-		const blank = line.trim().length === 0;
-		if (blank && out.length > 0 && out[out.length - 1]!.trim().length === 0) continue;
+		const blank = isBlankRenderLine(line);
+		if (blank && out.length > 0 && isBlankRenderLine(out[out.length - 1]!)) continue;
 		out.push(line);
 	}
 	return trimOuterBlankLines(out);
@@ -232,6 +246,14 @@ function panelToneColor(tone: TuiTone): ThemeColor {
 
 export function badge(text: string, tone: TuiTone = "default"): string {
 	return theme.fg(panelToneColor(tone), text);
+}
+
+const ACTIVITY_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+
+/** Compact braille spinner for live auto-mode status chrome. */
+export function styledActivitySpinner(tone: TuiTone = "accent"): string {
+	const frame = ACTIVITY_SPINNER_FRAMES[Math.floor(Date.now() / 120) % ACTIVITY_SPINNER_FRAMES.length];
+	return theme.fg(panelToneColor(tone), frame);
 }
 
 export function keyValue(label: string, value: string, valueColor: ThemeColor = "text", labelWidth = 10): string {
@@ -299,9 +321,8 @@ export function openSurface(
 }
 
 /**
- * Render a framed system/conversation surface (compaction notices, skill
- * invocations) as a copy-clean open surface (ADR-019): a titled top rule
- * and body lines with no border column. Replaces the former chat-frame.ts.
+ * Render a system/conversation notice (compaction, skill invocations) as a
+ * plain ◇ header plus copy-clean body lines (Variant A — no horizontal rules).
  */
 export function renderChatFrame(
 	contentLines: string[],
@@ -322,37 +343,56 @@ export function renderChatFrame(
 
 	// A label may carry a " - " splitting a bold name from a dim detail.
 	const dashIdx = opts.label.indexOf(" - ");
-	const titleStyled =
+	const labelStyled =
 		dashIdx >= 0
 			? theme.fg(frameColor, theme.bold(opts.label.slice(0, dashIdx))) + theme.fg("dim", opts.label.slice(dashIdx))
 			: theme.fg(frameColor, theme.bold(opts.label));
 	const rightRaw =
 		opts.showTimestamp === false || !opts.timestamp ? "" : formatTimestamp(opts.timestamp, opts.timestampFormat);
+	const metaStyled = rightRaw ? theme.fg("dim", ` · ${rightRaw}`) : "";
+	const header = padLine(
+		truncateToWidth(
+			`${theme.fg(frameColor, TRANSCRIPT_SYSTEM_MARKER)} ${labelStyled}${metaStyled}`,
+			outerWidth,
+			"…",
+		),
+		outerWidth,
+	);
 
 	const source = trimOuterBlankLines(contentLines);
-	const body = (source.length > 0 ? source : [""]).map((line) => theme.fg(bodyColor, line));
-
-	let surface = style()
-		.border("open")
-		.borderColor((text) => theme.fg(frameColor, text))
-		.title(titleStyled);
-	if (rightRaw) {
-		surface = surface.titleRight(theme.fg("dim", rightRaw));
-	}
-	return surface.render(body, outerWidth);
+	const body = (source.length > 0 ? source : [""]).map((line) => padLine(theme.fg(bodyColor, line), outerWidth));
+	return [header, ...body, ""];
 }
 
-/** Variant A — plain speaker header line (no rails). */
+/** Chat/dialog corner glyph — top-left opener on speaker headers. */
+export const CHAT_CORNER_TOP_LEFT = "╭─ ";
+
+function speakerCornerColor(tone: "user" | "assistant"): ThemeColor {
+	return tone === "user" ? "border" : "borderAccent";
+}
+
+function renderCornerSpeakerHeader(
+	label: string,
+	meta: string | undefined,
+	width: number,
+	tone: "user" | "assistant",
+): string {
+	const cornerColor = speakerCornerColor(tone);
+	const labelStyled =
+		tone === "user" ? theme.fg("border", theme.bold(label)) : theme.fg("accent", theme.bold(label));
+	const metaStyled = meta ? theme.fg("dim", ` · ${meta}`) : "";
+	const topLeft = theme.fg(cornerColor, CHAT_CORNER_TOP_LEFT) + labelStyled + metaStyled;
+	return padLine(truncateToWidth(topLeft, width, "…"), width);
+}
+
+/** @deprecated Prefer renderCornerSpeakerHeader via renderPlainSpeakerMessage. */
 export function renderPlainSpeakerHeader(
 	label: string,
 	meta: string | undefined,
 	width: number,
 	tone: "user" | "assistant",
 ): string {
-	const labelStyled =
-		tone === "user" ? theme.fg("border", theme.bold(label)) : theme.fg("accent", theme.bold(label));
-	const metaStyled = meta ? theme.fg("dim", ` · ${meta}`) : "";
-	return padLine(truncateToWidth(labelStyled + metaStyled, width, "…"), width);
+	return renderCornerSpeakerHeader(label, meta, width, tone);
 }
 
 export function renderPlainSpeakerBody(
@@ -369,11 +409,10 @@ export function renderPlainSpeakerMessage(
 	width: number,
 	opts: { label: string; meta?: string; tone: "user" | "assistant"; trailingBlank?: boolean },
 ): string[] {
+	const outerWidth = Math.max(20, width);
 	const bodyColor = opts.tone === "user" ? "userMessageText" : "assistantMessageText";
-	const out = [
-		renderPlainSpeakerHeader(opts.label, opts.meta, width, opts.tone),
-		...renderPlainSpeakerBody(lines, width, bodyColor),
-	];
+	const body = renderPlainSpeakerBody(lines, outerWidth, bodyColor);
+	const out = [renderCornerSpeakerHeader(opts.label, opts.meta, outerWidth, opts.tone), ...body];
 	if (opts.trailingBlank !== false) {
 		out.push("");
 	}
@@ -421,7 +460,7 @@ export function renderUserRail(
 	const source = trimOuterBlankLines(lines);
 	const body = (source.length > 0 ? source : [""]).map((line) => theme.fg("userMessageText", line));
 	const titleRight = opts.meta ? theme.fg("dim", opts.meta) : undefined;
-	return renderConnectedCard(width, opts.label ?? "You", body, {
+	return renderConnectedCard(width, opts.label ?? "YOU", body, {
 		indent: TRANSCRIPT_CARD_INDENT,
 		titleRight,
 		railColor: "border",
@@ -500,22 +539,73 @@ export function renderTranscriptCard(
 	});
 }
 
+function statusColorForTone(tone: StatusTone): ThemeColor {
+	if (tone === "error") return "error";
+	if (tone === "running") return "accent";
+	if (tone === "warning") return "warning";
+	return "success";
+}
+
+export function renderCompactToolStrip(
+	title: string,
+	target: string | undefined,
+	width: number,
+	opts: { status: string; tone: StatusTone; hidden?: boolean },
+): string[] {
+	const titleText = target
+		? `${styledHeader(title, "borderAccent")} ${theme.fg("text", target)}`
+		: styledHeader(title, "borderAccent");
+	const left = `${theme.fg("borderAccent", TRANSCRIPT_TOOL_MARKER)} ${titleText}`;
+	const statusText = opts.hidden ? `${opts.status} · output hidden · ctrl+o expand` : opts.status;
+	const right = theme.fg(statusColorForTone(opts.tone), statusText);
+	return [padLine(alignRight(left, right, width), width)];
+}
+
+export function renderPlainToolMessage(
+	bodyLines: string[],
+	width: number,
+	opts: { title: string; target?: string; meta?: string; tone: StatusTone },
+): string[] {
+	const outerWidth = Math.max(20, width);
+	const indent = TRANSCRIPT_CARD_INDENT;
+	const prefix = indentSpaces(indent);
+	const innerWidth = Math.max(1, outerWidth - indent);
+
+	const titleText = opts.target
+		? `${styledHeader(opts.title, "borderAccent")} ${theme.fg("text", opts.target)}`
+		: styledHeader(opts.title, "borderAccent");
+	const left = `${theme.fg("borderAccent", TRANSCRIPT_TOOL_MARKER)} ${titleText}`;
+	const right = opts.meta ? theme.fg(statusColorForTone(opts.tone), opts.meta) : "";
+	const header = padLine(alignRight(left, right, outerWidth), outerWidth);
+
+	const hasImage = bodyLines.some((line) => isImageLine(line));
+	const bodySource = hasImage ? bodyLines : collapseBlankLines(bodyLines);
+
+	const paintBody = (line: string): string => {
+		if (isImageLine(line)) {
+			return prefix + "   " + line;
+		}
+		if (hasImage && isBlankRenderLine(line)) {
+			return padLine(prefix + padRight("", innerWidth), outerWidth);
+		}
+		return padLine(truncateToWidth(line, outerWidth, ""), outerWidth);
+	};
+
+	return [header, ...bodySource.map(paintBody), ""];
+}
+
+/** @deprecated Prefer renderCompactToolStrip (Variant A). */
 export function renderToolLineCard(
 	title: string,
 	target: string | undefined,
 	width: number,
 	opts: { status: string; tone: StatusTone; hidden?: boolean; titlePrefix?: string; bg?: ThemeBg; indent?: number },
 ): string[] {
-	const indent = opts.indent ?? 2;
-	const prefix = " ".repeat(indent);
-	const tone = toneColor(opts.tone);
-	const titleText = `${opts.titlePrefix ?? ""}${styledHeader(title, "borderAccent")}${
-		target ? ` ${theme.fg("text", target)}` : ""
-	}`;
-	const statusText = opts.hidden ? `${opts.status} · output hidden · ctrl+o expand` : opts.status;
-	const head = `${titleText} · ${theme.fg(opts.tone === "success" ? "success" : tone, statusText)}`;
-	const line = opts.bg ? theme.bg(opts.bg, head) : head;
-	return [padLine(prefix + truncateToWidth(line, Math.max(1, width - indent), "…"), width)];
+	return renderCompactToolStrip(title, target, width, {
+		status: opts.status,
+		tone: opts.tone,
+		hidden: opts.hidden,
+	});
 }
 
 export function renderCommandCard(
@@ -540,6 +630,62 @@ export function renderProgressBar(done: number, total: number, width: number, to
 		theme.fg(toneColor(tone), "█".repeat(filled)) +
 		theme.fg("dim", "░".repeat(clampedWidth - filled))
 	);
+}
+
+export type StepDotMode = "position" | "completed";
+
+const STEP_DOT_MAX = 12;
+
+/**
+ * Discrete step indicator — ● for reached steps, ○ for pending.
+ * `position`: done is the active step index (1-based, includes current).
+ * `completed`: done is the count of fully finished steps.
+ */
+export function renderStepDots(
+	done: number,
+	total: number,
+	opts: { maxDots?: number; mode?: StepDotMode } = {},
+): string {
+	if (total <= 0) return "";
+
+	const maxDots = opts.maxDots ?? STEP_DOT_MAX;
+	const mode = opts.mode ?? "position";
+	const complete = done >= total;
+
+	let displayTotal = total;
+	let displayDone = Math.max(0, Math.min(done, total));
+	let overflowSuffix = "";
+
+	if (total > maxDots) {
+		displayTotal = maxDots;
+		displayDone = Math.max(0, Math.min(displayTotal, Math.round((done / total) * displayTotal)));
+		overflowSuffix = theme.fg("dim", `+${total - maxDots}`);
+	}
+
+	let dots = "";
+	for (let i = 0; i < displayTotal; i++) {
+		const reached = i < displayDone;
+		if (reached) {
+			const isCurrent = !complete && mode === "position" && i === displayDone - 1;
+			const color: ThemeColor = complete ? "success" : isCurrent ? "accent" : "text";
+			dots += theme.fg(color, "●");
+		} else {
+			dots += theme.fg("dim", "○");
+		}
+	}
+	return dots + overflowSuffix;
+}
+
+/** Label + step dots + numeric count, e.g. `tasks ●●●○○ 3/5`. */
+export function formatStepProgress(
+	label: string,
+	done: number,
+	total: number,
+	opts: { maxDots?: number; mode?: StepDotMode; countColor?: ThemeColor } = {},
+): string {
+	const dots = renderStepDots(done, total, opts);
+	const countColor = opts.countColor ?? "dim";
+	return `${theme.fg("dim", label)} ${dots}${theme.fg(countColor, ` ${done}/${total}`)}`;
 }
 
 export function renderFooterStrip(leftSegments: string[], right: string, width: number): string[] {

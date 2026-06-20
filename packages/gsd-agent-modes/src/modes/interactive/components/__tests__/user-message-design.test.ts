@@ -41,7 +41,7 @@ function withEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string | unde
 }
 
 describe("UserMessageComponent plain surface", () => {
-	test("renders a speaker line and unboxed body", () => {
+	test("renders corner opener, speaker line, and unboxed body", () => {
 		const component = new UserMessageComponent(
 			"Can we make the transcript feel like chat?",
 			undefined,
@@ -50,10 +50,10 @@ describe("UserMessageComponent plain surface", () => {
 		);
 		const plain = component.render(100).map((line) => stripVTControlCharacters(line)).join("\n");
 
-		assert.match(plain, /You/);
+		assert.match(plain, /YOU/);
 		assert.match(plain, /feel like chat/);
-		assert.doesNotMatch(plain, /╭/);
-		assert.doesNotMatch(plain, /╰/);
+		assert.match(plain, /╭─ YOU/);
+		assert.doesNotMatch(plain, /╯/);
 		assert.doesNotMatch(plain, /[│┃]/);
 	});
 

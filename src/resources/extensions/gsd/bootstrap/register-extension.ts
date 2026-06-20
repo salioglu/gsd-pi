@@ -16,7 +16,7 @@ import { registerScheduleWakeupTool } from "./schedule-wakeup-tool.js";
 import { registerHooks } from "./register-hooks.js";
 import { registerShortcuts } from "./register-shortcuts.js";
 import { writeCrashLog } from "./crash-log.js";
-import { logWarning } from "../workflow-logger.js";
+import { logWarning, isGsdExtensionStderrEnabled } from "../workflow-logger.js";
 import { UNIT_TOOL_CONTRACTS } from "../unit-tool-contracts.js";
 // Static import so cmux event listeners are registered synchronously during
 // extension bootstrap. Prior implementation used `void import().then()` which
@@ -47,6 +47,7 @@ export const CRITICAL_GSD_WORKFLOW_TOOL_NAMES = [...new Set(
 /** Write to stderr without ever re-throwing — stderr can EPIPE too, which would
  *  re-enter this handler and re-loop. */
 function safeStderr(msg: string): void {
+  if (!isGsdExtensionStderrEnabled()) return;
   try {
     process.stderr.write(msg);
   } catch { /* stderr is also broken; nothing we can do */ }

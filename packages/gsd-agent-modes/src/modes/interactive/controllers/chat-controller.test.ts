@@ -442,6 +442,34 @@ test("handleAgentEvent: agent_start suppresses loader when extension requested n
 	assert.equal(requestedRender, true);
 });
 
+test("setWorkingMessage null starts activity indicator while streaming", async () => {
+	initTheme("dark", false);
+	let addChildCount = 0;
+	const host = {
+		pendingWorkingMessage: undefined,
+		loadingAnimation: undefined,
+		activityLoader: undefined,
+		statusContainer: {
+			clear() {},
+			addChild() {
+				addChildCount++;
+			},
+		},
+		defaultWorkingMessage: "Working...",
+		gsdProgressState: { phase: "Executing slice S01" },
+		session: { isStreaming: true },
+		ui: { requestRender() {} },
+	} as any;
+
+	const { createExtensionUIContext } = await import("./extension-ui-controller.js");
+	const { stopActivityIndicator } = await import("./chat-controller.js");
+	createExtensionUIContext(host).setWorkingMessage(null);
+
+	assert.equal(typeof host.activityLoader, "object");
+	assert.equal(addChildCount, 1);
+	stopActivityIndicator(host);
+});
+
 test("handleAgentEvent: standalone completed tool events roll up incrementally", async () => {
 	initTheme("dark", false);
 	const chatContainer = new Container();

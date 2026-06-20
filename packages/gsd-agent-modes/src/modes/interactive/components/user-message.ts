@@ -1,5 +1,5 @@
 // Project/App: gsd-pi
-// File Purpose: Left-edge user message renderer for interactive chat transcripts (Variant A plain).
+// File Purpose: Left-edge user message renderer for interactive chat transcripts (corner-framed dialog).
 
 import { Container, Markdown, type MarkdownTheme } from "@gsd/pi-tui";
 import { getMarkdownTheme } from "@gsd/pi-coding-agent/theme/theme.js";
@@ -53,7 +53,7 @@ export class UserMessageComponent extends Container {
 				? formatTimestamp(this.timestamp, this.timestampFormat)
 				: undefined;
 		const framed = renderPlainSpeakerMessage(lines, frameWidth, {
-			label: "You",
+			label: "YOU",
 			meta,
 			tone: "user",
 			trailingBlank: false,

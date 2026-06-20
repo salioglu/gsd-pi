@@ -36,7 +36,7 @@ describe("GsdStatusWidget", () => {
 		assert.doesNotMatch(plain, /╭/);
 	});
 
-	test("auto-expands on blocking error", () => {
+	test("shows compact blocked indicator on error without repeating the message", () => {
 		const widget = new GsdStatusWidget(() => ({
 			override: "auto",
 			activeToolCount: 0,
@@ -45,8 +45,29 @@ describe("GsdStatusWidget", () => {
 			manuallyExpanded: false,
 		}));
 		const plain = widget.render(100).map((line) => stripAnsi(line)).join("\n");
-		assert.match(plain, /Recovery signal/);
-		assert.match(plain, /recovery/);
+		assert.match(plain, /Recovery/);
+		assert.match(plain, /blocked/);
+		assert.doesNotMatch(plain, /Recovery signal/);
+	});
+
+	test("shows animated badge while the agent turn is streaming", () => {
+		const widget = new GsdStatusWidget(() => ({
+			override: "auto",
+			activeToolCount: 0,
+			cwd: "/tmp/project",
+			manuallyExpanded: false,
+			isStreaming: true,
+			gsdProgress: {
+				phase: "Executing T03 renderer polish",
+				modeTag: "AUTO",
+				elapsed: "1m 02s",
+				widgetMode: "small",
+			},
+		}));
+		const plain = widget.render(100).map((line) => stripAnsi(line)).join("\n");
+		assert.match(plain, /GSD AUTO/);
+		assert.match(plain, /Executing T03/);
+		assert.doesNotMatch(plain, /● GSD AUTO/);
 	});
 
 	test("renders progress-driven strip lines when gsdProgress is set", () => {
@@ -69,8 +90,36 @@ describe("GsdStatusWidget", () => {
 			},
 		}));
 		const plain = widget.render(120).map((line) => stripAnsi(line)).join("\n");
-		assert.match(plain, /8\/14 tasks/);
+		assert.match(plain, /tasks .* 8\/14/);
+		assert.match(plain, /●/);
+		assert.match(plain, /○/);
+		assert.doesNotMatch(plain, /█/);
 		assert.match(plain, /14m/);
 		assert.doesNotMatch(plain, /╭/);
+	});
+
+	test("renders slice and task step dots when sliceProgress is set", () => {
+		const widget = new GsdStatusWidget(() => ({
+			override: "auto",
+			activeToolCount: 0,
+			cwd: "/tmp/project",
+			manuallyExpanded: true,
+			gsdProgress: {
+				phase: "running UAT S01",
+				modeTag: "AUTO",
+				sliceProgress: { done: 2, total: 6 },
+				taskProgress: { done: 3, total: 3 },
+				sliceLabel: "S01",
+				elapsed: "6m 12s",
+				widgetMode: "small",
+			},
+		}));
+		const lines = widget.render(120).map((line) => stripAnsi(line));
+		const plain = lines.join("\n");
+		assert.match(plain, /slices .* 2\/6/);
+		assert.match(plain, /tasks .* 3\/3/);
+		assert.doesNotMatch(plain, /█/);
+		const head = lines[0] ?? "";
+		assert.ok(head.trimEnd().endsWith("S01"), "slice/task progress should sit on the far right of the header line");
 	});
 });

@@ -50,6 +50,10 @@ export function setupEditorSubmitHandler(host: InteractiveModeStateHost & {
 		text = text.trim();
 		if (!text) return;
 
+		if (!host.session.isStreaming) {
+			host.clearBlockingError();
+		}
+
 		modeInit.dismissStartupHeader(host as Parameters<typeof modeInit.dismissStartupHeader>[0]);
 
 		if (text.startsWith("/") && !looksLikeFilePath(text)) {
