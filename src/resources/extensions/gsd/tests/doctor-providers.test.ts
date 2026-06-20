@@ -607,6 +607,7 @@ test("runProviderChecks reports ok for Google via google-gemini-cli auth.json (#
 
   withEnv({
     HOME: tmpHome,
+    PATH: tmpHome,
     GEMINI_API_KEY: undefined,
     GOOGLE_API_KEY: undefined,
   }, () => {
