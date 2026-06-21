@@ -6,7 +6,7 @@
 // (drift to import). gsd-core is oblivious to this file and ignores it.
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /** Current marker schema version. Bump on breaking format changes + migrate. */
@@ -122,10 +122,16 @@ export function writeCompatMarker(basePath: string, marker: CompatMarker): void 
 }
 
 function quarantine(basePath: string, raw: string): void {
-  const badPath = `${compatMarkerPath(basePath)}.bad-${Date.now()}`;
+  const path = compatMarkerPath(basePath);
+  const badPath = `${path}.bad-${Date.now()}`;
   try {
     mkdirSync(dirname(badPath), { recursive: true });
-    writeFileSync(badPath, raw, "utf-8");
+    try {
+      renameSync(path, badPath);
+    } catch {
+      writeFileSync(badPath, raw, "utf-8");
+      unlinkSync(path);
+    }
   } catch {
     // Best-effort: if we can't quarantine, leave the original in place — next
     // read will quarantine. Never throw out of marker I/O.

@@ -59,8 +59,9 @@ const defaultDeps: ReconciliationDeps = {
  */
 export async function reconcileBeforeDispatch(
   basePath: string,
-  deps: ReconciliationDeps = defaultDeps,
+  partialDeps: Partial<ReconciliationDeps> = {},
 ): Promise<ReconciliationResult> {
+  const deps: ReconciliationDeps = { ...defaultDeps, ...partialDeps };
   const registry = deps.registry ?? DRIFT_REGISTRY;
   const clearParseCache = deps.clearParseCache ?? defaultClearParseCache;
   const repaired: DriftRecord[] = [];
@@ -72,6 +73,30 @@ export async function reconcileBeforeDispatch(
 
     const detection = await detectAllDrift(stateSnapshot, ctx, registry);
     const drift = detection.records;
+    if (deps.dryRun && drift.length > 0) {
+      const wouldRepair: DriftRecord[] = [];
+      const blockers: string[] = [...detection.detectBlockers];
+      for (const record of drift) {
+        const handler = registry.find((h) => h.kind === record.kind);
+        const blocker = handler?.blocker ? await handler.blocker(record, ctx) : null;
+        if (blocker) {
+          blockers.push(blocker);
+        } else {
+          wouldRepair.push(record);
+        }
+      }
+      return {
+        ok: true,
+        stateSnapshot,
+        repaired: wouldRepair,
+        blockers: [
+          ...new Set([
+            ...(stateSnapshot.blockers ?? []),
+            ...blockers,
+          ]),
+        ],
+      };
+    }
     if (drift.length === 0) {
       return {
         ok: true,

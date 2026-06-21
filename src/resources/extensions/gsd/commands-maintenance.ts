@@ -836,9 +836,11 @@ export async function handleSync(
   const lines: string[] = ["gsd sync: reconciling .gsd/ for cross-tool edits…"];
 
   try {
-    const result = await reconcileBeforeDispatch(basePath);
+    const result = await reconcileBeforeDispatch(basePath, { dryRun });
     const repairedExternal = result.repaired.filter((r) => r.kind === "external-markdown-edit");
-    lines.push(`  External edits imported: ${repairedExternal.length}`);
+    lines.push(
+      `  External edits ${dryRun ? "to import" : "imported"}: ${repairedExternal.length}`,
+    );
     for (const r of repairedExternal) {
       const e = r as { kind: "external-markdown-edit"; projectionPath: string };
       lines.push(`    • ${e.projectionPath}`);
@@ -849,7 +851,7 @@ export async function handleSync(
     }
 
     if (dryRun) {
-      lines.push("", "  (dry-run: no projection or marker writes performed)");
+      lines.push("", "  (dry-run: no repairs, projection, or marker writes performed)");
       ctx.ui.notify(lines.join("\n"), "info");
       return;
     }

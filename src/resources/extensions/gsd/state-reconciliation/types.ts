@@ -118,4 +118,6 @@ export interface ReconciliationDeps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   registry?: ReadonlyArray<DriftHandler<any>>;
   deriveStateOptions?: DeriveStateOptions;
+  /** When true, detect drift but do not run repairs (read-only preview). */
+  dryRun?: boolean;
 }
