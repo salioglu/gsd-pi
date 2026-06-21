@@ -25,7 +25,6 @@ export interface UnmergedMilestoneBlocker {
 const BLOCKED_COMMANDS = new Set([
   "auto",
   "next",
-  "parallel",
   "start",
   "workflow",
   "new-milestone",
@@ -55,6 +54,11 @@ const BLOCKED_COMMANDS = new Set([
   "complete-slice",
   "validate-milestone",
   "complete-milestone",
+]);
+
+const UNMERGED_SAFE_PARALLEL_SUBCOMMANDS = new Set([
+  "status",
+  "watch",
 ]);
 
 function isRuntimePath(path: string): boolean {
@@ -109,6 +113,9 @@ export function isUnmergedMilestoneAllowedCommand(trimmed: string): boolean {
   }
   if (name === "docs-update") {
     return hasFlag(command, "--verify-only");
+  }
+  if (name === "parallel") {
+    return UNMERGED_SAFE_PARALLEL_SUBCOMMANDS.has(subcommand ?? "");
   }
   if (name === "phase") {
     return !isMutatingPhaseCommand(subcommand);

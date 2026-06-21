@@ -119,6 +119,8 @@ test("isUnmergedMilestoneAllowedCommand permits inspection and explicit recovery
   assert.equal(isUnmergedMilestoneAllowedCommand("config"), true);
   assert.equal(isUnmergedMilestoneAllowedCommand("progress"), true);
   assert.equal(isUnmergedMilestoneAllowedCommand("progress --forensic"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("parallel status"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("parallel watch"), true);
   assert.equal(isUnmergedMilestoneAllowedCommand("worktree list"), true);
   assert.equal(isUnmergedMilestoneAllowedCommand("dispatch complete"), true);
   assert.equal(isUnmergedMilestoneAllowedCommand("dispatch complete M008"), true);
@@ -146,6 +148,10 @@ test("isUnmergedMilestoneAllowedCommand blocks direct dispatch aliases", () => {
     "resume-work",
     "progress --next",
     'progress --do "fix the login bug"',
+    "parallel start",
+    "parallel resume",
+    "parallel merge",
+    "parallel pause",
   ];
 
   for (const alias of aliases) {

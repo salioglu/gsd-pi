@@ -257,6 +257,30 @@ test("dispatcher keeps manager read-only while completed branch is unmerged", as
   }
 });
 
+test("dispatcher allows read-only workstreams routes while completed branch is unmerged", async () => {
+  const commands = ["workstreams list", "workstreams status", "workstreams progress"];
+
+  for (const command of commands) {
+    const base = makeTempRepo("gsd-dispatch-unmerged-");
+    try {
+      seedCompletedUnmergedMilestone(base);
+      const { ctx } = makeMockCtx(base);
+      const { pi, messages } = makeMockPi();
+
+      await handleGSDCommand(command, ctx, pi);
+
+      assert.equal(messages.length, 1, command);
+      assert.equal(messages[0].customType, "gsd-parallel", command);
+      assert.match(messages[0].content, /No parallel orchestration/, command);
+      assert.doesNotMatch(messages[0].content, /cannot start new workflow work/, command);
+    } finally {
+      closeDatabase();
+      invalidateStateCache();
+      cleanup(base);
+    }
+  }
+});
+
 test("dispatcher allows audit-fix dry-run while completed branch is unmerged", async () => {
   const base = makeTempRepo("gsd-dispatch-unmerged-");
   try {
