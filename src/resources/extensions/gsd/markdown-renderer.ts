@@ -91,8 +91,9 @@ function flushProjectionWritesToMarker(): void {
       marker.lastWriter = "gsd-pi";
       marker.lastProjectedAt = new Date().toISOString();
       writeCompatMarker(basePath, marker);
-    } catch {
+    } catch (e) {
       // Marker I/O must never break projection. Reconcile will heal on next run.
+      logWarning("renderer", `compat marker flush failed: ${(e as Error).message}`);
     }
   }
 }
