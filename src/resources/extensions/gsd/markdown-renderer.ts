@@ -885,6 +885,22 @@ export async function renderAllFromDb(basePath: string): Promise<RenderAllResult
     result.errors.push(`decisions: ${(err as Error).message}`);
   }
 
+  // Project to .planning/ if the compat marker says it's active. Dynamic
+  // import mirrors the regenerateDecisionsMarkdown pattern above to avoid a
+  // static-import cycle. Gated on planning.active so the double-write cost
+  // only hits projects that actually use the .planning/ layout.
+  try {
+    const { readCompatMarker } = await import("./compat/compat-marker.js");
+    const marker = readCompatMarker(basePath);
+    if (marker.planning?.active && marker.planning.layout) {
+      const { writePlanningDirectory } = await import("./migrate/planning-writer.js");
+      await writePlanningDirectory(basePath, marker.planning.layout);
+      result.rendered++;
+    }
+  } catch (err) {
+    result.errors.push(`planning projection: ${(err as Error).message}`);
+  }
+
   return result;
 }
 
