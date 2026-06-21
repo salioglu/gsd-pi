@@ -455,7 +455,9 @@ export async function handleProgress(args: string, ctx: ExtensionCommandContext,
   }
   const doMatch = args.match(/--do\s+"([^"]*)"/);
   if (doMatch) {
-    await dispatchGSDCommand(`do ${doMatch[1]}`, ctx, pi);
+    // Re-dispatch as a quick task so the task actually runs.
+    // `quick` is not in either blocked-command set, so the re-dispatch passes guards cleanly.
+    await dispatchGSDCommand(`quick ${doMatch[1]}`, ctx, pi);
     return;
   }
   const mode = parseProgressMode(args);

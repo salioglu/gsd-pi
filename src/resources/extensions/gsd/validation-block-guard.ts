@@ -44,6 +44,11 @@ const VALIDATION_BLOCKED_COMMANDS = new Set([
   "plan-review-convergence",
   "autonomous",
   "resume-work",
+  "discuss-phase",
+  "import",
+  "ingest-docs",
+  "review-backlog",
+  "secure-phase",
 ]);
 
 const VALIDATION_BLOCKED_PARALLEL_SUBCOMMANDS = new Set([
@@ -94,14 +99,11 @@ export function isValidationBlockAllowedCommand(trimmed: string): boolean {
   if (name === "code-review") {
     return !hasFlag(command, "--fix");
   }
+  if (name === "docs-update") {
+    return hasFlag(command, "--verify-only");
+  }
   if (name === "progress") {
     return !hasFlag(command, "--next") && !hasFlag(command, "--do");
-  }
-  if (name === "code-review") {
-    return !hasFlag(command, "--fix");
-  }
-  if (name === "audit-fix") {
-    return hasFlag(command, "--dry-run");
   }
   return !VALIDATION_BLOCKED_COMMANDS.has(name);
 }

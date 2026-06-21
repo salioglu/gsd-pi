@@ -87,6 +87,8 @@ test("validation block allows recovery, diagnostics, and unrelated commands", ()
     "code-review --depth deep",
     // audit-fix is allowed in dry-run mode (read-only review, no commits)
     "audit-fix --dry-run",
+    // docs-update is allowed in verify-only mode (read-only check, no writes)
+    "docs-update --verify-only",
   ];
 
   for (const command of allowed) {
@@ -132,6 +134,19 @@ test("validation block rejects workflow-start and advancing commands", () => {
     // audit-fix without --dry-run applies fixes and commits
     "audit-fix",
     "audit-fix --verbose",
+    // mutating workflow-advancing commands added in v2
+    "discuss-phase",
+    "discuss-phase M006",
+    "import",
+    "import milestones.json",
+    "ingest-docs",
+    "ingest-docs --path docs/",
+    "review-backlog",
+    "secure-phase",
+    "secure-phase --milestone M006",
+    // docs-update without --verify-only applies writes
+    "docs-update",
+    "docs-update --milestone M006",
   ];
 
   for (const command of blocked) {
