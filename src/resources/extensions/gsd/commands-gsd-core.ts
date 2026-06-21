@@ -13,6 +13,9 @@ import { join } from "node:path";
 
 import { loadPrompt } from "./prompt-loader.js";
 import { currentDirectoryRoot } from "./commands/context.js";
+import { handleWorktree } from "./commands-worktree.js";
+import { handleParallelCommand } from "./commands/handlers/parallel.js";
+import { handleWorkflowCommand } from "./commands/handlers/workflow.js";
 
 /**
  * Catalog entries for commands IMPLEMENTED natively in this module.
@@ -157,6 +160,13 @@ function dispatchPrompt(
     const msg = err instanceof Error ? err.message : String(err);
     ctx.ui.notify(`Failed to dispatch ${args.verb.toLowerCase()}: ${msg}`, "error");
   }
+}
+
+function splitAction(args: string): { action: string; rest: string } {
+  const trimmed = args.trim();
+  if (!trimmed) return { action: "", rest: "" };
+  const [action = "", ...rest] = trimmed.split(/\s+/);
+  return { action: action.toLowerCase(), rest: rest.join(" ") };
 }
 
 // ─── Individual command handlers ─────────────────────────────────────────────
@@ -745,6 +755,19 @@ export async function handleManager(args: string, ctx: ExtensionCommandContext, 
 /** /gsd phase [add|insert|remove|edit|list] <target> */
 export async function handlePhase(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const action = args.trim() || "list";
+  const parsed = splitAction(action);
+  if (parsed.action === "list" || parsed.action === "status") {
+    await handleWorkflowCommand("queue", ctx, pi);
+    return;
+  }
+  if (["add", "create", "insert", "new"].includes(parsed.action)) {
+    await handleWorkflowCommand(`new-milestone ${parsed.rest}`.trim(), ctx, pi);
+    return;
+  }
+  if (parsed.action === "remove" && parsed.rest) {
+    await handleWorkflowCommand(`park ${parsed.rest}`.trim(), ctx, pi);
+    return;
+  }
   dispatchPrompt(
     { prompt: "phase", customType: "gsd-phase", verb: "Phase", vars: { action } },
     ctx,
@@ -765,6 +788,23 @@ export async function handleThread(args: string, ctx: ExtensionCommandContext, p
 /** /gsd workstreams [list|create|switch|progress|pause|resume|complete] [milestone] */
 export async function handleWorkstreams(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const action = args.trim() || "list";
+  const parsed = splitAction(action);
+  let parallelAction = "";
+  if (parsed.action === "list" || parsed.action === "status" || parsed.action === "progress") {
+    parallelAction = "status";
+  } else if (parsed.action === "create") {
+    parallelAction = "start";
+  } else if (parsed.action === "complete") {
+    parallelAction = "merge";
+  } else if (parsed.action === "switch") {
+    parallelAction = "watch";
+  } else if (["start", "stop", "pause", "resume", "merge", "watch"].includes(parsed.action)) {
+    parallelAction = parsed.action;
+  }
+  if (parallelAction) {
+    await handleParallelCommand(`parallel ${parallelAction} ${parsed.rest}`.trim(), ctx, pi);
+    return;
+  }
   dispatchPrompt(
     { prompt: "workstreams", customType: "gsd-workstreams", verb: "Workstreams", vars: { action } },
     ctx,
@@ -775,6 +815,23 @@ export async function handleWorkstreams(args: string, ctx: ExtensionCommandConte
 /** /gsd workspace [--new|--list|--remove] [name] */
 export async function handleWorkspace(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const action = args.trim() || "--list";
+  const parsed = splitAction(action);
+  if (parsed.action === "--list" || parsed.action === "list" || parsed.action === "ls") {
+    await handleWorktree("list", ctx);
+    return;
+  }
+  if (parsed.action === "--remove" || parsed.action === "remove" || parsed.action === "rm") {
+    await handleWorktree(`remove ${parsed.rest}`.trim(), ctx);
+    return;
+  }
+  if (parsed.action === "--merge" || parsed.action === "merge") {
+    await handleWorktree(`merge ${parsed.rest}`.trim(), ctx);
+    return;
+  }
+  if (parsed.action === "--clean" || parsed.action === "clean") {
+    await handleWorktree("clean", ctx);
+    return;
+  }
   dispatchPrompt(
     { prompt: "workspace", customType: "gsd-workspace", verb: "Workspace", vars: { action } },
     ctx,
@@ -817,6 +874,7 @@ export function parseInboxFocus(args: string): string {
 /** /gsd inbox [--issues|--prs] [--label <name>] [--close-incomplete] [--repo owner/repo] */
 export async function handleInbox(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const repoMatch = args.match(/--repo\s+(\S+)/);
+  const labelMatch = args.match(/--label\s+(\S+)/);
   dispatchPrompt(
     {
       prompt: "inbox",
@@ -824,6 +882,7 @@ export async function handleInbox(args: string, ctx: ExtensionCommandContext, pi
       verb: "Inbox",
       vars: {
         focusFlag: parseInboxFocus(args),
+        labelFlag: labelMatch ? labelMatch[1] : "(none)",
         closeIncompleteFlag: flagPhrase(/(?:^|\s)--close-incomplete(?=\s|$)/.test(args)),
         ...(repoMatch ? { repo: repoMatch[1] } : {}),
       },

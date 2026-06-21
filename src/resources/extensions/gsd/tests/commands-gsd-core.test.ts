@@ -3,6 +3,9 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import {
   parseCoreFlags,
@@ -58,6 +61,7 @@ import {
   parseAutonomousScope,
   parseInboxFocus,
 } from "../commands-gsd-core.ts";
+import { handleGSDCommand } from "../commands/dispatcher.ts";
 import { loadPrompt } from "../prompt-loader.ts";
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
@@ -84,6 +88,19 @@ function createMockCtx() {
     },
     shutdown: async () => {},
   };
+}
+
+function createMockCtxWithCwd(cwd: string) {
+  return {
+    ...createMockCtx(),
+    cwd,
+  };
+}
+
+function createTempGsdProject(prefix: string): string {
+  const base = mkdtempSync(join(tmpdir(), prefix));
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  return base;
 }
 
 // ─── Pure helpers ───────────────────────────────────────────────────────────
@@ -578,25 +595,48 @@ describe("Batch 5 handlers dispatch", () => {
     await handleManager("--analyze-deps", ctx as any, pi as any);
     assert.match(pi.sent[0].content, /`--analyze-deps` — ON/);
   });
-  test("handlePhase default list", async () => {
+  test("handlePhase keeps conversational edits prompt-driven", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
-    await handlePhase("", ctx as any, pi as any);
-    assert.match(pi.sent[0].content, /list/);
+    await handlePhase("edit M001", ctx as any, pi as any);
+    assert.equal(pi.sent[0].customType, "gsd-phase");
+    assert.match(pi.sent[0].content, /edit M001/);
   });
   test("handleThread close", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
     await handleThread("close auth-thread", ctx as any, pi as any);
     assert.match(pi.sent[0].content, /close auth-thread/);
   });
-  test("handleWorkstreams default list", async () => {
+  test("handleWorkstreams keeps unknown actions prompt-driven", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
-    await handleWorkstreams("", ctx as any, pi as any);
+    await handleWorkstreams("inspect M001", ctx as any, pi as any);
     assert.equal(pi.sent[0].customType, "gsd-workstreams");
+  });
+  test("dispatcher routes workstreams status through parallel status", async () => {
+    const base = createTempGsdProject("gsd-workstreams-route-");
+    const pi = createMockPi(); const ctx = createMockCtxWithCwd(base);
+    await handleGSDCommand("workstreams status", ctx as any, pi as any);
+    assert.equal(pi.sent.length, 1);
+    assert.equal(pi.sent[0].customType, "gsd-parallel");
+    assert.match(pi.sent[0].content, /No parallel orchestration/);
   });
   test("handleWorkspace new", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
     await handleWorkspace("--new experiment", ctx as any, pi as any);
     assert.match(pi.sent[0].content, /--new experiment/);
+  });
+  test("dispatcher routes workspace list through worktree list", async () => {
+    const base = createTempGsdProject("gsd-workspace-route-");
+    const pi = createMockPi(); const ctx = createMockCtxWithCwd(base);
+    await handleGSDCommand("workspace --list", ctx as any, pi as any);
+    assert.equal(pi.sent.length, 0);
+    assert.match(ctx.notifications.at(-1)?.message ?? "", /No worktrees/);
+  });
+  test("dispatcher routes phase list through queue status", async () => {
+    const base = createTempGsdProject("gsd-phase-route-");
+    const pi = createMockPi(); const ctx = createMockCtxWithCwd(base);
+    await handleGSDCommand("phase list", ctx as any, pi as any);
+    assert.equal(pi.sent.length, 0);
+    assert.match(ctx.notifications.at(-1)?.message ?? "", /No milestones exist/);
   });
   test("handleMilestoneSummary target", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
@@ -613,6 +653,11 @@ describe("Batch 5 handlers dispatch", () => {
     await handleInbox("--issues --repo owner/repo", ctx as any, pi as any);
     assert.match(pi.sent[0].content, /issues only/);
     assert.match(pi.sent[0].content, /owner\/repo/);
+  });
+  test("handleInbox passes label filter into the prompt", async () => {
+    const pi = createMockPi(); const ctx = createMockCtx();
+    await handleInbox("--label customer-bug", ctx as any, pi as any);
+    assert.match(pi.sent[0].content, /customer-bug/);
   });
   test("handleImport from file", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
