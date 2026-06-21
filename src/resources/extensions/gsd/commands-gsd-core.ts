@@ -455,10 +455,7 @@ export async function handleProgress(args: string, ctx: ExtensionCommandContext,
   }
   const doMatch = args.match(/--do\s+"([^"]*)"/);
   if (doMatch) {
-    // Re-dispatch as a quick task rather than tunneling through the progress prompt.
-    // Emitting the target command gives the user a clickable reference and keeps the
-    // guard pipeline clean (the re-dispatched `quick` is guarded normally).
-    ctx.ui.notify(`To run this task, use: /gsd quick ${doMatch[1]}`, "info");
+    await dispatchGSDCommand(`do ${doMatch[1]}`, ctx, pi);
     return;
   }
   const mode = parseProgressMode(args);
