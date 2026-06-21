@@ -180,6 +180,33 @@ export function isDoctorHealActionable(issue: { fixable: boolean; severity: stri
   return issue.fixable && issue.severity !== "info";
 }
 
+/**
+ * Compat-health line for `/gsd doctor`. Reports the gsd-core compat marker's
+ * presence and the count of projection files whose on-disk sha has drifted
+ * from the recorded baseline. Returns "" if the marker module is unavailable
+ * (defensive — doctor must never fail because of compat reporting).
+ */
+async function formatCompatHealthLine(basePath: string): Promise<string> {
+  try {
+    const { readCompatMarker, computeProjectionSha } = await import("./compat/compat-marker.js");
+    const marker = readCompatMarker(basePath);
+    const entries = Object.entries(marker.projections);
+    if (entries.length === 0) {
+      return "  Compat health:      no baseline (run /gsd sync to establish)";
+    }
+    let drifted = 0;
+    for (const [rel, entry] of entries) {
+      const abs = join(basePath, ".gsd", rel);
+      if (!existsSync(abs)) continue;
+      if (computeProjectionSha(readFileSync(abs, "utf-8")) !== entry.sha) drifted++;
+    }
+    const status = drifted === 0 ? "OK" : `${drifted} file(s) drifted — run /gsd sync`;
+    return `  Compat health:      ${status}`;
+  } catch {
+    return "";
+  }
+}
+
 export async function handleDoctor(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const { jsonMode, dryRun, fixFlag, includeBuild, includeTests, mode, requestedScope } = parseDoctorArgs(args);
   const scope = await selectDoctorScope(projectRoot(), requestedScope);
@@ -206,7 +233,13 @@ export async function handleDoctor(args: string, ctx: ExtensionCommandContext, p
     title: mode === "audit" ? "GSD doctor audit." : mode === "heal" ? "GSD doctor heal prep." : undefined,
   });
 
-  ctx.ui.notify(reportText, report.ok ? "info" : "warning");
+  // Compat health: marker presence + drift vs current projections. Appended to
+  // the formatted report so it surfaces in every doctor run without touching
+  // the doctor report internals.
+  const compatLine = await formatCompatHealthLine(projectRoot());
+  const fullReport = compatLine ? `${reportText}\n${compatLine}` : reportText;
+
+  ctx.ui.notify(fullReport, report.ok ? "info" : "warning");
 
   if (mode === "heal") {
     const unresolved = filterDoctorIssues(report.issues, {
