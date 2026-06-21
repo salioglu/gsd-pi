@@ -609,6 +609,7 @@ function loadKnowledge(basePath: string): KnowledgeInfo {
 // ─── Memory Loader ────────────────────────────────────────────────────────────
 
 const VISUALIZER_MEMORY_LIMIT = 20;
+const VISUALIZER_MEMORY_CONTENT_LIMIT = 2000;
 
 function ensureVisualizerDb(basePath: string): void {
   if (isDbAvailable()) return;
@@ -627,7 +628,7 @@ function loadMemories(): MemoryInfo {
     entries: ranked.map((memory) => ({
       id: memory.id,
       category: memory.category,
-      content: memory.content,
+      content: limitMemoryContent(memory.content),
       confidence: memory.confidence,
       hitCount: memory.hit_count,
       scope: memory.scope,
@@ -635,6 +636,11 @@ function loadMemories(): MemoryInfo {
       updatedAt: memory.updated_at,
     })),
   };
+}
+
+function limitMemoryContent(content: string): string {
+  if (content.length <= VISUALIZER_MEMORY_CONTENT_LIMIT) return content;
+  return `${content.slice(0, VISUALIZER_MEMORY_CONTENT_LIMIT).trimEnd()}...`;
 }
 
 // ─── Health Loader ────────────────────────────────────────────────────────────

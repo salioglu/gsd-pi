@@ -144,3 +144,28 @@ test("loadVisualizerData opens the project DB for memory entries when none is op
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("loadVisualizerData caps memory content for visualizer payloads", async () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-visualizer-memory-cap-"));
+  try {
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+    openDatabase(":memory:");
+    const largeContent = "A".repeat(2500);
+    createMemory({
+      category: "gotcha",
+      content: largeContent,
+      confidence: 0.9,
+    });
+
+    const data = await loadVisualizerData(base);
+
+    const content = data.memories.entries[0]?.content ?? "";
+    assert.equal(data.memories.totalCount, 1);
+    assert.ok(content.length < largeContent.length);
+    assert.ok(content.length <= 2003);
+    assert.ok(content.endsWith("..."));
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});

@@ -18,6 +18,7 @@ import { getActiveMemories, getActiveMemoriesRanked } from "./memory-store.js";
 import type { MemoryInfo } from "./visualizer-data.js";
 
 const EXPORT_MEMORY_LIMIT = 20;
+const EXPORT_MEMORY_CONTENT_LIMIT = 2000;
 
 interface ExportVisualizerData {
   totals: any;
@@ -40,7 +41,7 @@ function ensureExportDb(basePath: string): void {
 }
 
 function loadExportMemories(basePath: string, visualizerData?: ExportVisualizerData): MemoryInfo {
-  if (visualizerData?.memories) return visualizerData.memories;
+  if (visualizerData?.memories) return limitMemoryInfo(visualizerData.memories);
   ensureExportDb(basePath);
   try {
     const allActive = getActiveMemories();
@@ -50,7 +51,7 @@ function loadExportMemories(basePath: string, visualizerData?: ExportVisualizerD
       entries: ranked.map((memory) => ({
         id: memory.id,
         category: memory.category,
-        content: memory.content,
+        content: limitMemoryContent(memory.content),
         confidence: memory.confidence,
         hitCount: memory.hit_count,
         scope: memory.scope,
@@ -61,6 +62,21 @@ function loadExportMemories(basePath: string, visualizerData?: ExportVisualizerD
   } catch {
     return { entries: [], totalCount: 0 };
   }
+}
+
+function limitMemoryInfo(memories: MemoryInfo): MemoryInfo {
+  return {
+    totalCount: memories.totalCount,
+    entries: memories.entries.map((memory) => ({
+      ...memory,
+      content: limitMemoryContent(memory.content),
+    })),
+  };
+}
+
+function limitMemoryContent(content: string): string {
+  if (content.length <= EXPORT_MEMORY_CONTENT_LIMIT) return content;
+  return `${content.slice(0, EXPORT_MEMORY_CONTENT_LIMIT).trimEnd()}...`;
 }
 
 function formatMemoryLines(memories: MemoryInfo): string[] {
@@ -123,6 +139,7 @@ export function writeExportFile(
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 
   if (format === "json") {
+    const memories = loadExportMemories(basePath, visualizerData);
     const report = {
       exportedAt: new Date().toISOString(),
       project: projectName,
@@ -130,6 +147,7 @@ export function writeExportFile(
       byPhase: visualizerData?.byPhase ?? aggregateByPhase(units),
       bySlice: visualizerData?.bySlice ?? aggregateBySlice(units),
       byModel: visualizerData?.byModel ?? aggregateByModel(units),
+      memories,
       units,
     };
     const outPath = join(exportDir, `export-${timestamp}.json`);
@@ -326,6 +344,7 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 
   if (format === "json") {
+    const memories = loadExportMemories(basePath);
     const report = {
       exportedAt: new Date().toISOString(),
       project: projectName,
@@ -333,6 +352,7 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
       byPhase: aggregateByPhase(units),
       bySlice: aggregateBySlice(units),
       byModel: aggregateByModel(units),
+      memories,
       units,
     };
     const outPath = join(exportDir, `export-${timestamp}.json`);
