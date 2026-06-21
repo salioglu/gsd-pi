@@ -9,8 +9,9 @@ You are running the GSD **workspace** workflow — manage isolated workspace env
 A workspace is an isolated environment backed by a git worktree. Map workspace actions onto worktrees:
 
 - **--list / list** (default): show all worktrees with state (current, merged, clean, dirty) — `/gsd worktree list`.
-- **--new <name>**: create a new worktree — `/gsd worktree` (create).
 - **--remove <name>**: remove a worktree — `/gsd worktree remove`.
+- **--merge <name>**: merge a worktree — `/gsd worktree merge`.
+- **--clean / clean**: clean stale worktree records — `/gsd worktree clean`.
 
 Route every structural action to `/gsd worktree` rather than hand-managing git worktrees.
 

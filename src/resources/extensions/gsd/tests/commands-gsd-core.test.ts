@@ -619,10 +619,12 @@ describe("Batch 5 handlers dispatch", () => {
     assert.equal(pi.sent[0].customType, "gsd-parallel");
     assert.match(pi.sent[0].content, /No parallel orchestration/);
   });
-  test("handleWorkspace new", async () => {
+  test("handleWorkspace rejects unsupported new action", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
     await handleWorkspace("--new experiment", ctx as any, pi as any);
-    assert.match(pi.sent[0].content, /--new experiment/);
+    assert.equal(pi.sent.length, 0);
+    assert.equal(ctx.notifications[0].level, "warning");
+    assert.match(ctx.notifications[0].message, /Unsupported workspace action/);
   });
   test("dispatcher routes workspace list through worktree list", async () => {
     const base = createTempGsdProject("gsd-workspace-route-");

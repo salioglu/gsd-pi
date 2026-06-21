@@ -191,6 +191,7 @@ test("dispatcher blocks workflow-advancing commands while completed branch is un
     "start",
     "workflow run release",
     "do mark all complete",
+    "audit-fix --severity high",
     "plan-phase",
     "execute-phase --milestone M009",
     "autonomous --from 1",
@@ -214,6 +215,28 @@ test("dispatcher blocks workflow-advancing commands while completed branch is un
       invalidateStateCache();
       cleanup(base);
     }
+  }
+});
+
+test("dispatcher allows audit-fix dry-run while completed branch is unmerged", async () => {
+  const base = makeTempRepo("gsd-dispatch-unmerged-");
+  try {
+    seedCompletedUnmergedMilestone(base);
+    const { ctx, calls } = makeMockCtx(base);
+    const { pi, messages } = makeMockPi();
+
+    await handleGSDCommand("audit-fix --dry-run", ctx, pi);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].kind, "info");
+    assert.match(calls[0].message, /audit-fix/);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].customType, "gsd-audit-fix");
+    assert.doesNotMatch(messages[0].content, /cannot start new workflow work/);
+  } finally {
+    closeDatabase();
+    invalidateStateCache();
+    cleanup(base);
   }
 });
 

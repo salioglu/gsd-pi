@@ -812,7 +812,7 @@ export async function handleWorkstreams(args: string, ctx: ExtensionCommandConte
   );
 }
 
-/** /gsd workspace [--new|--list|--remove] [name] */
+/** /gsd workspace [--list|--remove|--merge|--clean] [name] */
 export async function handleWorkspace(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const action = args.trim() || "--list";
   const parsed = splitAction(action);
@@ -830,6 +830,10 @@ export async function handleWorkspace(args: string, ctx: ExtensionCommandContext
   }
   if (parsed.action === "--clean" || parsed.action === "clean") {
     await handleWorktree("clean", ctx);
+    return;
+  }
+  if (parsed.action === "--new" || parsed.action === "new" || parsed.action === "create") {
+    ctx.ui.notify("Unsupported workspace action. Use /gsd worktree list, remove, merge, or clean.", "warning");
     return;
   }
   dispatchPrompt(

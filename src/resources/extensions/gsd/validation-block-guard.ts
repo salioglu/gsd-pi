@@ -28,6 +28,9 @@ const VALIDATION_BLOCKED_COMMANDS = new Set([
   "ship",
   "complete-milestone",
   "do",
+  "plan-phase",
+  "execute-phase",
+  "autonomous",
 ]);
 
 const VALIDATION_BLOCKED_PARALLEL_SUBCOMMANDS = new Set([

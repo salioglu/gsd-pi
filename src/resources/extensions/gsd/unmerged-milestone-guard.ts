@@ -30,6 +30,7 @@ const BLOCKED_COMMANDS = new Set([
   "workflow",
   "new-milestone",
   "new-project",
+  "audit-fix",
   "do",
   "discuss-phase",
   "plan-phase",
@@ -83,6 +84,9 @@ export function isUnmergedMilestoneAllowedCommand(trimmed: string): boolean {
   const [name, subcommand] = command.split(/\s+/, 2);
   if (name === "dispatch") {
     return subcommand === "complete" || subcommand === "complete-milestone";
+  }
+  if (name === "audit-fix") {
+    return /(?:^|\s)--dry-run(?=\s|$)/.test(command);
   }
   return !BLOCKED_COMMANDS.has(name);
 }

@@ -134,7 +134,7 @@ describe("gsd-core command parity routing", () => {
       "discuss-phase", "plan-phase", "execute-phase", "spec-phase", "mvp-phase",
       "ui-phase", "ai-integration-phase", "ultraplan-phase", "autonomous",
       "pause-work", "resume-work",
-      "manager", "phase", "thread", "workstreams", "workspace", "milestone-summary",
+      "manager", "thread", "workstreams", "milestone-summary",
       "review-backlog", "inbox", "import", "ingest-docs", "profile-user", "settings",
     ];
     const noPrompt: string[] = [];
