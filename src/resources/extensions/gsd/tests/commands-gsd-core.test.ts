@@ -601,6 +601,13 @@ describe("Batch 5 handlers dispatch", () => {
     assert.equal(pi.sent[0].customType, "gsd-phase");
     assert.match(pi.sent[0].content, /edit M001/);
   });
+  test("handlePhase keeps remove prompt-driven for confirmation", async () => {
+    const pi = createMockPi(); const ctx = createMockCtx();
+    await handlePhase("remove M001", ctx as any, pi as any);
+    assert.equal(pi.sent.length, 1);
+    assert.equal(pi.sent[0].customType, "gsd-phase");
+    assert.match(pi.sent[0].content, /remove M001/);
+  });
   test("handleThread close", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
     await handleThread("close auth-thread", ctx as any, pi as any);
@@ -627,6 +634,24 @@ describe("Batch 5 handlers dispatch", () => {
     assert.equal(ctx.notifications[0].level, "warning");
     assert.match(ctx.notifications[0].message, /workstreams create does not accept a milestone target/);
     assert.match(ctx.notifications[0].message, /\/gsd parallel start/);
+  });
+  test("dispatcher rejects targeted workstreams progress", async () => {
+    const base = createTempGsdProject("gsd-workstreams-progress-target-");
+    const pi = createMockPi(); const ctx = createMockCtxWithCwd(base);
+    await handleGSDCommand("workstreams progress M001", ctx as any, pi as any);
+    assert.equal(pi.sent.length, 0);
+    assert.equal(ctx.notifications[0].level, "warning");
+    assert.match(ctx.notifications[0].message, /workstreams progress does not accept a milestone target/);
+    assert.match(ctx.notifications[0].message, /\/gsd parallel status/);
+  });
+  test("dispatcher rejects targeted workstreams switch", async () => {
+    const base = createTempGsdProject("gsd-workstreams-switch-target-");
+    const pi = createMockPi(); const ctx = createMockCtxWithCwd(base);
+    await handleGSDCommand("workstreams switch M001", ctx as any, pi as any);
+    assert.equal(pi.sent.length, 0);
+    assert.equal(ctx.notifications[0].level, "warning");
+    assert.match(ctx.notifications[0].message, /workstreams switch does not accept a milestone target/);
+    assert.match(ctx.notifications[0].message, /\/gsd parallel watch/);
   });
   test("handleWorkspace rejects unsupported new action", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();

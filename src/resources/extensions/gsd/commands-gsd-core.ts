@@ -770,10 +770,6 @@ export async function handlePhase(args: string, ctx: ExtensionCommandContext, pi
     await dispatchGSDCommand(`new-milestone ${parsed.rest}`.trim(), ctx, pi);
     return;
   }
-  if (parsed.action === "remove" && parsed.rest) {
-    await dispatchGSDCommand(`park ${parsed.rest}`.trim(), ctx, pi);
-    return;
-  }
   dispatchPrompt(
     { prompt: "phase", customType: "gsd-phase", verb: "Phase", vars: { action } },
     ctx,
@@ -811,6 +807,20 @@ export async function handleWorkstreams(args: string, ctx: ExtensionCommandConte
     if ((parsed.action === "create" || parsed.action === "start") && parsed.rest) {
       ctx.ui.notify(
         "workstreams create does not accept a milestone target. Run /gsd parallel start to start all eligible milestones.",
+        "warning",
+      );
+      return;
+    }
+    if (parsed.action === "progress" && parsed.rest) {
+      ctx.ui.notify(
+        "workstreams progress does not accept a milestone target. Run /gsd parallel status to show worker status.",
+        "warning",
+      );
+      return;
+    }
+    if (parsed.action === "switch" && parsed.rest) {
+      ctx.ui.notify(
+        "workstreams switch does not accept a milestone target. Run /gsd parallel watch to monitor workers.",
         "warning",
       );
       return;
