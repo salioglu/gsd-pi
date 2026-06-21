@@ -52,30 +52,10 @@ async function detectExternalPlanningEdit(
 ): Promise<ExternalPlanningEditDrift[]> {
   const marker = readCompatMarker(ctx.basePath);
   if (!marker.planning?.active) {
-    // Auto-activate: .planning/ exists on disk but the marker has not recorded
-    // it yet. Parse → detect layout → stamp planning.active so renderAllFromDb
-    // and subsequent reconcile passes see it immediately, without requiring a
-    // manual /gsd sync. Returns [] so this pass is a no-op on drift records;
-    // the next reconcile pass (or the same call's second pass if other repairs
-    // fired) will detect and import real SHA drift.
-    const planningDir = join(ctx.basePath, ".planning");
-    if (!existsSync(planningDir)) return [];
-    try {
-      const { parsePlanningDirectory } = await import("../../migrate/parser.js");
-      const { detectPlanningLayout } = await import("../../migrate/layout-detect.js");
-      const parsed = await parsePlanningDirectory(planningDir);
-      const layout = detectPlanningLayout(parsed);
-      if (layout) {
-        const m = readCompatMarker(ctx.basePath);
-        m.planning = { active: true, layout, projections: {}, passthrough: {} };
-        writeCompatMarker(ctx.basePath, m);
-      }
-    } catch (e) {
-      logWarning(
-        "reconcile",
-        `planning layout auto-detection failed: ${(e as Error).message}`,
-      );
-    }
+    // Not yet activated. Activation (layout parse + DB import + SHA seeding) is
+    // owned by capturePlanningCompatIfNeeded, called from reconcileBeforeDispatch
+    // before the detect loop when !dryRun. detect() must never write the marker
+    // — it is called in both dry-run and non-dry-run contexts.
     return [];
   }
   return [

@@ -11,6 +11,7 @@ import {
   writeCompatMarker,
   type PlanningLayout,
 } from "./compat-marker.js";
+import { logWarning } from "../workflow-logger.js";
 
 export interface PlanningProjectionWrite {
   relPath: string;
@@ -99,8 +100,12 @@ function seedPlanningShasFromDisk(basePath: string): void {
 }
 
 /**
- * Capture-on-first-read: infer `.planning/` layout from disk and seed marker
- * shas so external-edit drift detection has a baseline.
+ * Capture-on-first-read: infer `.planning/` layout from disk, import content
+ * into the DB so gsd-pi's projection reflects gsd-core's tree instead of
+ * overwriting it, then activate the compat marker so drift detection has a
+ * baseline on the next reconcile pass.
+ *
+ * Must only be called when !dryRun — it writes both the DB and the marker.
  */
 export async function capturePlanningCompatIfNeeded(basePath: string): Promise<void> {
   const planningDir = join(basePath, ".planning");
@@ -113,21 +118,52 @@ export async function capturePlanningCompatIfNeeded(basePath: string): Promise<v
 
   if (marker.planning?.active && marker.planning.layout) {
     if (!mapsEmpty) return;
+    // Layout is known and SHAs are absent. This can happen when activation
+    // completed on a prior run but writePlanningDirectory hasn't populated
+    // applyPlanningProjectionWrites yet. Seed from disk so the next detect
+    // pass has something to compare against.
     seedPlanningShasFromDisk(basePath);
     return;
   }
 
+  // First encounter: parse layout, import .planning/ content into the DB, then
+  // activate the marker. We import before writing to disk so that
+  // writePlanningDirectory (called later by renderAllFromDb) reconstructs the
+  // .planning/ tree from a DB that already reflects gsd-core's content rather
+  // than overwriting it with stale or empty DB state.
   const { parsePlanningDirectory } = await import("../migrate/parser.js");
   const { detectPlanningLayout } = await import("../migrate/layout-detect.js");
   const parsed = await parsePlanningDirectory(planningDir);
   const layout: PlanningLayout | null = detectPlanningLayout(parsed);
   if (!layout) return;
 
-  if (!marker.planning) {
-    marker.planning = { active: false, layout: null, projections: {}, passthrough: {} };
+  // Import .planning/ into the DB. Dynamic imports break the module-init cycle
+  // (planning-compat ← reconcile ← state ← md-importer). Matches the import
+  // pattern in repairExternalPlanningEdit.
+  try {
+    const { transformToGSD } = await import("../migrate/transformer.js");
+    const { writeGSDDirectory } = await import("../migrate/writer.js");
+    const { migrateHierarchyToDb } = await import("../md-importer.js");
+    const { invalidateStateCache } = await import("../state.js");
+    const gsdProject = transformToGSD(parsed);
+    await writeGSDDirectory(gsdProject, basePath);
+    migrateHierarchyToDb(basePath);
+    invalidateStateCache();
+  } catch (e) {
+    logWarning(
+      "compat",
+      `planning DB import failed on initial capture — writePlanningDirectory may overwrite gsd-core content: ${(e as Error).message}`,
+    );
   }
-  marker.planning.active = true;
-  marker.planning.layout = layout;
-  writeCompatMarker(basePath, marker);
-  seedPlanningShasFromDisk(basePath);
+
+  // Activate the marker. Leave projections/passthrough empty: the next
+  // writePlanningDirectory → applyPlanningProjectionWrites call will seed
+  // accurate SHAs from the normalized output rather than the raw gsd-core files.
+  const freshMarker = readCompatMarker(basePath);
+  if (!freshMarker.planning) {
+    freshMarker.planning = { active: false, layout: null, projections: {}, passthrough: {} };
+  }
+  freshMarker.planning.active = true;
+  freshMarker.planning.layout = layout;
+  writeCompatMarker(basePath, freshMarker);
 }

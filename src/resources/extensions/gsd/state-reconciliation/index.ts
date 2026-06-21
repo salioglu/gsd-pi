@@ -66,8 +66,13 @@ export async function reconcileBeforeDispatch(
   const clearParseCache = deps.clearParseCache ?? defaultClearParseCache;
   const repaired: DriftRecord[] = [];
 
-  const { capturePlanningCompatIfNeeded } = await import("../compat/planning-compat.js");
-  await capturePlanningCompatIfNeeded(basePath);
+  // Capture-on-first-read: infer .planning/ layout, import content into DB, and
+  // seed compat marker SHAs so drift detection has a baseline. Skipped in
+  // dry-run mode to keep the reconcile pass fully read-only — no marker writes.
+  if (!deps.dryRun) {
+    const { capturePlanningCompatIfNeeded } = await import("../compat/planning-compat.js");
+    await capturePlanningCompatIfNeeded(basePath);
+  }
 
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     deps.invalidateStateCache();
