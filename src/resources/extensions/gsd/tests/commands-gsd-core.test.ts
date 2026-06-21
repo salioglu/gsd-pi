@@ -410,7 +410,12 @@ describe("Batch 2 handlers dispatch", () => {
       const pi = createMockPi();
       const ctx = createMockCtxWithCwd(base);
       await handleProgress('--do "fix the login bug"', ctx as any, pi as any);
-      assert.equal(pi.sent.length, 0);
+      // handleProgress must not emit a progress prompt itself — it re-dispatches
+      // through the guarded dispatcher to /gsd do, which routes to /gsd quick.
+      // quick legitimately sends its own prompt, so assert no *progress* prompt
+      // was emitted (rather than zero sends total).
+      const sentProgress = pi.sent.filter((m: any) => m.customType === "gsd-progress");
+      assert.equal(sentProgress.length, 0);
       assert.match(ctx.notifications[0].message, /\/gsd quick fix the login bug/);
     } finally {
       rmSync(base, { recursive: true, force: true });
