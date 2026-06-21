@@ -615,6 +615,13 @@ describe("Batch 5 handlers dispatch", () => {
     assert.equal(pi.sent[0].customType, "gsd-phase");
     assert.match(pi.sent[0].content, /insert M002 after M001/);
   });
+  test("handlePhase keeps targeted add prompt-driven", async () => {
+    const pi = createMockPi(); const ctx = createMockCtx();
+    await handlePhase("add M002 after M001", ctx as any, pi as any);
+    assert.equal(pi.sent.length, 1);
+    assert.equal(pi.sent[0].customType, "gsd-phase");
+    assert.match(pi.sent[0].content, /add M002 after M001/);
+  });
   test("handleThread close", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
     await handleThread("close auth-thread", ctx as any, pi as any);
@@ -693,9 +700,9 @@ describe("Batch 5 handlers dispatch", () => {
   });
   test("handleInbox repo + focus", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
-    await handleInbox("--issues --repo owner/repo", ctx as any, pi as any);
+    await handleInbox("--issues --repo open-gsd/other", ctx as any, pi as any);
     assert.match(pi.sent[0].content, /issues only/);
-    assert.match(pi.sent[0].content, /owner\/repo/);
+    assert.match(pi.sent[0].content, /open-gsd\/other/);
   });
   test("handleInbox passes label filter into the prompt", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();

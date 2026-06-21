@@ -766,8 +766,8 @@ export async function handlePhase(args: string, ctx: ExtensionCommandContext, pi
     await dispatchGSDCommand("queue", ctx, pi);
     return;
   }
-  if (["add", "create", "new"].includes(parsed.action)) {
-    await dispatchGSDCommand(`new-milestone ${parsed.rest}`.trim(), ctx, pi);
+  if (["add", "create", "new"].includes(parsed.action) && !parsed.rest) {
+    await dispatchGSDCommand("new-milestone", ctx, pi);
     return;
   }
   dispatchPrompt(
@@ -912,7 +912,7 @@ function parseFlagValue(args: string, flag: string): string | null {
 
 /** /gsd inbox [--issues|--prs] [--label <name>] [--close-incomplete] [--repo owner/repo] */
 export async function handleInbox(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
-  const repoMatch = args.match(/--repo\s+(\S+)/);
+  const repo = parseFlagValue(args, "--repo");
   const label = parseFlagValue(args, "--label");
   dispatchPrompt(
     {
@@ -923,7 +923,7 @@ export async function handleInbox(args: string, ctx: ExtensionCommandContext, pi
         focusFlag: parseInboxFocus(args),
         labelFlag: label ?? "(none)",
         closeIncompleteFlag: flagPhrase(/(?:^|\s)--close-incomplete(?=\s|$)/.test(args)),
-        ...(repoMatch ? { repo: repoMatch[1] } : {}),
+        repo: repo ?? "the project's repo",
       },
     },
     ctx,

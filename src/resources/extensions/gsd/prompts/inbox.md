@@ -5,7 +5,7 @@ You are running the GSD **inbox** workflow — triage and review open GitHub iss
 - `--issues` / `--prs` — {{focusFlag}} (which to review; default both)
 - `--label <name>` — {{labelFlag}}
 - `--close-incomplete` — {{closeIncompleteFlag}} (close items that don't meet contribution requirements)
-- `--repo owner/repo` — target repo (default: the project's repo)
+- `--repo <owner/repo>` — {{repo}}
 
 ## Process
 
