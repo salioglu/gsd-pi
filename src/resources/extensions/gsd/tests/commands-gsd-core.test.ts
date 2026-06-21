@@ -342,6 +342,22 @@ describe("Batch 2 handlers dispatch", () => {
     assert.equal(pi.sent[0].customType, "gsd-map-codebase");
     assert.match(pi.sent[0].content, /src/);
   });
+  test("handleMapCodebase --focus captures quoted multi-word string", async () => {
+    const pi = createMockPi();
+    await withTempCommandCwd(async (ctx) => {
+      await handleMapCodebase('--focus "auth and routing layer"', ctx as any, pi as any);
+    });
+    assert.match(pi.sent[0].content, /auth and routing layer/);
+  });
+  test("handleMapCodebase --focus captures unquoted multi-word string before next flag", async () => {
+    const pi = createMockPi();
+    await withTempCommandCwd(async (ctx) => {
+      await handleMapCodebase("--focus auth layer --paths src", ctx as any, pi as any);
+    });
+    // The focus text "auth layer" must appear in full; the next flag must not bleed in
+    assert.match(pi.sent[0].content, /auth layer/);
+    assert.doesNotMatch(pi.sent[0].content, /auth layer --paths/);
+  });
 
   test("handleDocsUpdate reflects verify-only mode", async () => {
     const pi = createMockPi();
@@ -655,6 +671,16 @@ describe("Batch 5 handlers dispatch", () => {
     const pi = createMockPi(); const ctx = createMockCtx();
     await handleManager("--analyze-deps", ctx as any, pi as any);
     assert.match(pi.sent[0].content, /`--analyze-deps` — ON/);
+  });
+  test("handleManager dispatches without ctx.cwd (no early exit)", async () => {
+    // Regression: resolveManagerVars previously returned early when ctx.cwd was absent,
+    // skipping the blocker check entirely. Verify the manager still dispatches normally
+    // when ctx.cwd is undefined (no blockers active → normal prompt).
+    const pi = createMockPi();
+    const ctx = { ...createMockCtx(), cwd: undefined };
+    await handleManager("", ctx as any, pi as any);
+    assert.equal(pi.sent.length, 1);
+    assert.equal(pi.sent[0].customType, "gsd-manager");
   });
   test("handlePhase keeps conversational edits prompt-driven", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();

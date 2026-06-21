@@ -226,22 +226,28 @@ async function resolveManagerVars(
     managerSuccessCriteria: MANAGER_SUCCESS_NORMAL,
   };
 
-  if (!ctx.cwd) return vars;
+  // Use ctx.cwd when set; when absent fall back to process.cwd() so that the read-only
+  // downgrade still fires even if the caller did not populate ctx.cwd. Wrap in try/catch
+  // so that a missing project context (no .gsd/) returns the normal vars gracefully.
+  try {
+    return await withCommandCwd(ctx.cwd, async () => {
+      const base = projectRoot();
+      const blocker =
+        await getUnmergedMilestoneBlockMessageForBase(base, "manager") ??
+        await getValidationBlockMessageForBase(base, "manager");
+      if (!blocker) return vars;
 
-  return withCommandCwd(ctx.cwd, async () => {
-    const base = projectRoot();
-    const blocker =
-      await getUnmergedMilestoneBlockMessageForBase(base, "manager") ??
-      await getValidationBlockMessageForBase(base, "manager");
-    if (!blocker) return vars;
-
-    return {
-      ...vars,
-      managerActions: managerReadOnlyActions(blocker),
-      managerSelectionStep: MANAGER_SELECTION_READ_ONLY,
-      managerSuccessCriteria: MANAGER_SUCCESS_READ_ONLY,
-    };
-  });
+      return {
+        ...vars,
+        managerActions: managerReadOnlyActions(blocker),
+        managerSelectionStep: MANAGER_SELECTION_READ_ONLY,
+        managerSuccessCriteria: MANAGER_SUCCESS_READ_ONLY,
+      };
+    });
+  } catch {
+    // No project context available — return normal vars (can't determine blocker state).
+    return vars;
+  }
 }
 
 // ─── Individual command handlers ─────────────────────────────────────────────
@@ -334,8 +340,9 @@ export async function handleMapCodebase(args: string, ctx: ExtensionCommandConte
   const outputDir = join(basePath, ".gsd", "codebase");
   mkdirSync(outputDir, { recursive: true });
   const paths = parsePathsFlag(args);
-  const focusMatch = args.match(/--focus\s+(\S+)/i);
-  const focus = focusMatch ? focusMatch[1] : "";
+  // Support --focus "quoted multi-word" or --focus unquoted-words (up to the next flag).
+  const focusMatch = args.match(/--focus\s+"([^"]*)"/i) ?? args.match(/--focus\s+(.+?)(?=\s+--|$)/i);
+  const focus = focusMatch ? focusMatch[1].trim() : "";
   const scopeParts: string[] = [];
   if (paths) scopeParts.push(`Incremental remap — scope exploration to: ${paths}`);
   else scopeParts.push("Whole-repo scan.");
