@@ -9,6 +9,7 @@ import {
   diskSliceIdDivergenceHandler,
 } from "./drift/artifact-db.js";
 import { mergeStateHandler } from "./drift/merge-state.js";
+import { externalMarkdownEditHandler } from "./drift/external-markdown-edit.js";
 import { unregisteredMilestoneHandler } from "./drift/project-md.js";
 import { roadmapDivergenceHandler } from "./drift/roadmap.js";
 import { sketchFlagHandler } from "./drift/sketch-flag.js";
@@ -32,4 +33,5 @@ export const DRIFT_REGISTRY: ReadonlyArray<DriftHandler<any>> = [
   completedMilestoneReopenedHandler,
   artifactDbStatusDivergenceHandler,
   completionTimestampHandler,
+  externalMarkdownEditHandler,
 ];
