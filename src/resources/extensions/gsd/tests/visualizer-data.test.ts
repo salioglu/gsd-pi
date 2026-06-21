@@ -120,3 +120,27 @@ test("loadVisualizerData includes active memory-store entries", async () => {
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("loadVisualizerData opens the project DB for memory entries when none is open", async () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-visualizer-memories-db-"));
+  try {
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    createMemory({
+      category: "gotcha",
+      content: "Browser visualizer child processes must open the project DB",
+      confidence: 0.88,
+      tags: ["browser", "visualizer"],
+    });
+    closeDatabase();
+
+    const data = await loadVisualizerData(base);
+
+    assert.equal(data.memories.totalCount, 1);
+    assert.equal(data.memories.entries[0]?.id, "MEM001");
+    assert.equal(data.memories.entries[0]?.content, "Browser visualizer child processes must open the project DB");
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});

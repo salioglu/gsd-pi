@@ -2,7 +2,7 @@
 // Generate shareable reports of milestone work in JSON or markdown format.
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, basename } from "node:path";
 import { execFile } from "node:child_process";
 import {
@@ -13,6 +13,71 @@ import type { UnitMetrics } from "./metrics.js";
 import { gsdRoot } from "./paths.js";
 import { formatDuration, fileLink } from "../shared/format-utils.js";
 import { getErrorMessage } from "./error-utils.js";
+import { isDbAvailable, openDatabase } from "./gsd-db.js";
+import { getActiveMemories, getActiveMemoriesRanked } from "./memory-store.js";
+import type { MemoryInfo } from "./visualizer-data.js";
+
+const EXPORT_MEMORY_LIMIT = 20;
+
+interface ExportVisualizerData {
+  totals: any;
+  byPhase: any[];
+  bySlice: any[];
+  byModel: any[];
+  units: any[];
+  criticalPath?: any;
+  remainingSliceCount?: number;
+  memories?: MemoryInfo;
+}
+
+function ensureExportDb(basePath: string): void {
+  if (isDbAvailable()) return;
+  const dbPath = join(gsdRoot(basePath), "gsd.db");
+  if (!existsSync(dbPath)) return;
+  try {
+    openDatabase(dbPath);
+  } catch { /* non-fatal */ }
+}
+
+function loadExportMemories(basePath: string, visualizerData?: ExportVisualizerData): MemoryInfo {
+  if (visualizerData?.memories) return visualizerData.memories;
+  ensureExportDb(basePath);
+  try {
+    const allActive = getActiveMemories();
+    const ranked = getActiveMemoriesRanked(EXPORT_MEMORY_LIMIT);
+    return {
+      totalCount: allActive.length,
+      entries: ranked.map((memory) => ({
+        id: memory.id,
+        category: memory.category,
+        content: memory.content,
+        confidence: memory.confidence,
+        hitCount: memory.hit_count,
+        scope: memory.scope,
+        tags: memory.tags,
+        updatedAt: memory.updated_at,
+      })),
+    };
+  } catch {
+    return { entries: [], totalCount: 0 };
+  }
+}
+
+function formatMemoryLines(memories: MemoryInfo): string[] {
+  if (memories.entries.length === 0) return [];
+  return [
+    `## Memories`,
+    ``,
+    `Active memories: ${memories.totalCount}`,
+    ``,
+    ...memories.entries.map((memory) => {
+      const scope = memory.scope ? `, scope ${memory.scope}` : "";
+      const tags = memory.tags.length > 0 ? `, tags ${memory.tags.join(", ")}` : "";
+      return `- **${memory.id}** (${memory.category}, confidence ${Math.round(memory.confidence * 100)}%, hits ${memory.hitCount}${scope}${tags}): ${memory.content}`;
+    }),
+    ``,
+  ];
+}
 
 /**
  * Open a file in the user's default browser.
@@ -37,7 +102,7 @@ export function openInBrowser(filePath: string): void {
 export function writeExportFile(
   basePath: string,
   format: "markdown" | "json",
-  visualizerData?: { totals: any; byPhase: any[]; bySlice: any[]; byModel: any[]; units: any[]; criticalPath?: any; remainingSliceCount?: number },
+  visualizerData?: ExportVisualizerData,
 ): string | null {
   const ledger = getLedger();
   let units: UnitMetrics[];
@@ -75,6 +140,8 @@ export function writeExportFile(
     const phases = visualizerData?.byPhase ?? aggregateByPhase(units);
     const slices = visualizerData?.bySlice ?? aggregateBySlice(units);
 
+    const memories = loadExportMemories(basePath, visualizerData);
+
     const md = [
       `# GSD Session Report — ${projectName}`,
       ``,
@@ -101,6 +168,7 @@ export function writeExportFile(
         `| ${s.sliceId} | ${s.units} | ${formatCost(s.cost)} | ${formatTokenCount(s.tokens.total)} | ${formatDuration(s.duration)} |`,
       ),
       ``,
+      ...formatMemoryLines(memories),
     ].join("\n");
 
     const outPath = join(exportDir, `export-${timestamp}.md`);
@@ -274,6 +342,7 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
     const totals = getProjectTotals(units);
     const phases = aggregateByPhase(units);
     const slices = aggregateBySlice(units);
+    const memories = loadExportMemories(basePath);
 
     const md = [
       `# GSD Session Report — ${projectName}`,
@@ -301,6 +370,7 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
         `| ${s.sliceId} | ${s.units} | ${formatCost(s.cost)} | ${formatTokenCount(s.tokens.total)} | ${formatDuration(s.duration)} |`,
       ),
       ``,
+      ...formatMemoryLines(memories),
       `## Unit History`,
       ``,
       `| Type | ID | Model | Cost | Tokens | Duration |`,
