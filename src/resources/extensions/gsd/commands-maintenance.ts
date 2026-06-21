@@ -807,10 +807,86 @@ export async function rebuildMarkdownProjectionsFromDb(
 }
 
 /**
+ * `/gsd sync` — pull in external (gsd-core) markdown edits and re-project.
+ *
+ * Non-destructive cousin of `/gsd recover`: does NOT clear the DB. Runs the
+ * ADR-017 reconcile pipeline (which picks up the external-markdown-edit handler
+ * automatically), then re-projects via renderAllFromDb, then refreshes the
+ * compat marker. Use this when switching from gsd-core mid-session.
+ *
+ * Accepts `--dry-run` to report what would change without writing.
+ */
+export async function handleSync(
+  ctx: ExtensionCommandContext,
+  basePath: string,
+  args = "",
+): Promise<void> {
+  const { isDbAvailable } = await import("./gsd-db.js");
+  const { reconcileBeforeDispatch } = await import("./state-reconciliation/index.js");
+  const { renderAllFromDb } = await import("./markdown-renderer.js");
+  const { writeCompatMarker, readCompatMarker } = await import("./compat/compat-marker.js");
+
+  const dryRun = args.trim() === "--dry-run";
+
+  if (!isDbAvailable()) {
+    ctx.ui.notify("gsd sync: No database open. Run a GSD command first to initialize the DB.", "error");
+    return;
+  }
+
+  const lines: string[] = ["gsd sync: reconciling .gsd/ for cross-tool edits…"];
+
+  try {
+    const result = await reconcileBeforeDispatch(basePath);
+    const repairedExternal = result.repaired.filter((r) => r.kind === "external-markdown-edit");
+    lines.push(`  External edits imported: ${repairedExternal.length}`);
+    for (const r of repairedExternal) {
+      const e = r as { kind: "external-markdown-edit"; projectionPath: string };
+      lines.push(`    • ${e.projectionPath}`);
+    }
+    if (result.blockers.length > 0) {
+      lines.push("", "  ⚠ Blockers:");
+      for (const b of result.blockers) lines.push(`    • ${b}`);
+    }
+
+    if (dryRun) {
+      lines.push("", "  (dry-run: no projection or marker writes performed)");
+      ctx.ui.notify(lines.join("\n"), "info");
+      return;
+    }
+
+    const renderResult = await renderAllFromDb(basePath);
+    if (renderResult.errors.length > 0) {
+      lines.push("", "  ⚠ Projection errors:");
+      for (const e of renderResult.errors) lines.push(`    • ${e}`);
+    }
+
+    // Refresh the marker to reflect the freshly re-projected state.
+    const marker = readCompatMarker(basePath);
+    marker.lastWriter = "gsd-pi";
+    marker.lastProjectedAt = new Date().toISOString();
+    writeCompatMarker(basePath, marker);
+
+    const state = await deriveState(basePath);
+    lines.push(
+      "",
+      `  Phase:  ${state.phase}`,
+      `  Marker: .gsd/.compat.json refreshed`,
+    );
+    if (state.activeMilestone) {
+      lines.push(`  Active: ${state.activeMilestone.id}: ${state.activeMilestone.title}`);
+    }
+
+    ctx.ui.notify(lines.join("\n"), "info");
+  } catch (err) {
+    ctx.ui.notify(`gsd sync failed: ${(err as Error).message}`, "error");
+  }
+}
+
+/**
  * `gsd rebuild markdown` — Re-render markdown projections from the authoritative DB.
  *
- * This is the DB-first realignment command. It does not import markdown into
- * the DB. Completion SUMMARY files that contradict open DB rows are preserved
+ * This is the DB-first realignment command. It does not import markdown into the
+ * DB. Completion SUMMARY files that contradict open DB rows are preserved
  * under `.gsd/quarantine/projections/` before DB projections are rendered.
  */
 export async function handleRebuild(ctx: ExtensionCommandContext, basePath: string, args = ""): Promise<void> {
