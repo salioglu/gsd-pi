@@ -43,6 +43,13 @@ export type DriftRecord =
       kind: "missing-completion-timestamp";
       entity: "task" | "slice" | "milestone";
       ids: string[];
+    }
+  | {
+      kind: "external-markdown-edit";
+      projectionPath: string;       // relative to basePath, e.g. "m1/plan.md"
+      expectedSha: string;          // sha recorded in .compat.json
+      actualSha: string;            // freshly computed from disk
+      entities: string[];           // DB entity ids to re-import
     };
 
 /**
