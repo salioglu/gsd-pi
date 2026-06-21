@@ -285,7 +285,11 @@ describe("Batch 2 prompt templates resolve", () => {
     assert.match(out, /\.gsd\/codebase/);
   });
   test("docs-update.md loads with mode", () => {
-    const out = loadPrompt("docs-update", { mode: "Default mode" });
+    const out = loadPrompt("docs-update", {
+      mode: "Default mode",
+      process: "Process steps",
+      successCriteria: "Success criteria",
+    });
     assert.match(out, /Default mode/);
   });
   test("graphify.md loads with action", () => {
@@ -326,6 +330,8 @@ describe("Batch 2 handlers dispatch", () => {
     await handleDocsUpdate("--verify-only", ctx as any, pi as any);
     assert.equal(pi.sent[0].customType, "gsd-docs-update");
     assert.match(pi.sent[0].content, /Verify-only/);
+    assert.doesNotMatch(pi.sent[0].content, /Write missing canonical docs/);
+    assert.doesNotMatch(pi.sent[0].content, /Correct verified inaccuracies directly/);
   });
 
   test("handleGraphify defaults to build action", async () => {
@@ -714,6 +720,13 @@ describe("Batch 5 handlers dispatch", () => {
     await handleInbox('--label "help wanted" --close-incomplete', ctx as any, pi as any);
     assert.match(pi.sent[0].content, /help wanted/);
     assert.doesNotMatch(pi.sent[0].content, /"help/);
+  });
+  test("handleInbox warns when label value is missing before another flag", async () => {
+    const pi = createMockPi(); const ctx = createMockCtx();
+    await handleInbox("--label --close-incomplete", ctx as any, pi as any);
+    assert.equal(pi.sent.length, 0);
+    assert.equal(ctx.notifications[0].level, "warning");
+    assert.match(ctx.notifications[0].message, /--label requires a value/);
   });
   test("handleImport from file", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();

@@ -123,6 +123,7 @@ test("isUnmergedMilestoneAllowedCommand permits inspection and explicit recovery
   assert.equal(isUnmergedMilestoneAllowedCommand("dispatch complete-milestone"), true);
   assert.equal(isUnmergedMilestoneAllowedCommand("dispatch complete-milestone M008"), true);
   assert.equal(isUnmergedMilestoneAllowedCommand("docs-update --verify-only"), true);
+  assert.equal(isUnmergedMilestoneAllowedCommand("phase list"), true);
 });
 
 test("isUnmergedMilestoneAllowedCommand blocks direct dispatch aliases", () => {
@@ -140,5 +141,20 @@ test("isUnmergedMilestoneAllowedCommand blocks direct dispatch aliases", () => {
 
   for (const alias of aliases) {
     assert.equal(isUnmergedMilestoneAllowedCommand(alias), false, alias);
+  }
+});
+
+test("isUnmergedMilestoneAllowedCommand blocks mutating phase subcommands", () => {
+  const commands = [
+    "phase add M009",
+    "phase create M009",
+    "phase new M009",
+    "phase insert M009 after M008",
+    "phase remove M008",
+    "phase edit M008",
+  ];
+
+  for (const command of commands) {
+    assert.equal(isUnmergedMilestoneAllowedCommand(command), false, command);
   }
 });

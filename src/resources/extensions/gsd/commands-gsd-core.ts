@@ -292,8 +292,49 @@ export async function handleDocsUpdate(args: string, ctx: ExtensionCommandContex
     : force
       ? "Force — regenerate all canonical docs even if they look current."
       : "Default — generate missing docs, update stale ones, verify existing claims.";
+  const docsProcess = verifyOnly
+    ? [
+        "1. **Detect the doc structure.** Find existing Markdown docs (README, docs/, ADRs, API docs, CONTRIBUTING, etc.) and any doc tooling (docusaurus, vitepress, mkdocs, storybook). Detect project type (monorepo, cli-tool, saas, open-source-library, generic) from manifests and routes.",
+        "",
+        "2. **Assemble a read-only review manifest.** List existing hand-written docs to review for accuracy. Note missing canonical docs as gaps only; do not create them.",
+        "",
+        "3. **Verify existing docs.** For each existing doc, check factual claims against the codebase: function signatures, file paths, configuration keys, CLI flags, environment variables. Flag inaccuracies and gaps.",
+        "",
+        "4. **Summarize.** Report verified docs, inaccuracies found, missing-doc gaps, and fixes that would need a writable follow-up. Do not edit files.",
+      ].join("\n")
+    : [
+        "1. **Detect the doc structure.** Find existing Markdown docs (README, docs/, ADRs, API docs, CONTRIBUTING, etc.) and any doc tooling (docusaurus, vitepress, mkdocs, storybook). Detect project type (monorepo, cli-tool, saas, open-source-library, generic) from manifests and routes.",
+        "",
+        "2. **Assemble a work manifest.** List every doc item to touch: canonical doc types the project is missing, and existing hand-written docs to review for accuracy. Track each item so nothing is lost between steps.",
+        "",
+        "3. **Write missing canonical docs.** For the detected project type, create the docs that should exist (e.g. README, CONTRIBUTING, ARCHITECTURE, API reference, CHANGELOG). Ground every claim in the live code.",
+        "",
+        "4. **Verify existing docs.** For each existing doc, check factual claims against the codebase: function signatures, file paths, configuration keys, CLI flags, environment variables. Flag inaccuracies and gaps.",
+        "",
+        "5. **Fix loop (bounded).** Correct verified inaccuracies directly. Do not rewrite docs wholesale — fix the specific wrong claims.",
+        "",
+        "6. **Summarize.** Report: docs created, docs updated, inaccuracies fixed, gaps that need a human decision.",
+      ].join("\n");
+  const docsSuccessCriteria = verifyOnly
+    ? [
+        "- Every existing doc claim that references code (paths, signatures, flags, env vars) is checked against the live codebase.",
+        "- Missing docs and inaccuracies are reported as findings only.",
+        "- No documentation files are created, edited, renamed, or deleted.",
+        "- No work item from the manifest is silently dropped.",
+      ].join("\n")
+    : [
+        "- Every doc claim that references code (paths, signatures, flags, env vars) is verified against the live codebase.",
+        "- New docs match the project's detected type and existing style.",
+        "- Fixes are surgical, not rewrites.",
+        "- No work item from the manifest is silently dropped.",
+      ].join("\n");
   dispatchPrompt(
-    { prompt: "docs-update", customType: "gsd-docs-update", verb: "Docs update", vars: { mode } },
+    {
+      prompt: "docs-update",
+      customType: "gsd-docs-update",
+      verb: "Docs update",
+      vars: { mode, process: docsProcess, successCriteria: docsSuccessCriteria },
+    },
     ctx,
     pi,
   );
@@ -902,6 +943,7 @@ function parseFlagValue(args: string, flag: string): string | null {
   const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(
     `(?:^|\\s)${escaped}\\s+` +
+      `(?!--)` +
       `(?:"([^"]*)"|'([^']*)'|([^\\s].*?))` +
       `(?=\\s--[\\w-]+|$)`,
   );
@@ -914,6 +956,10 @@ function parseFlagValue(args: string, flag: string): string | null {
 export async function handleInbox(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const repo = parseFlagValue(args, "--repo");
   const label = parseFlagValue(args, "--label");
+  if (/(?:^|\s)--label(?=\s|$)/.test(args) && !label) {
+    ctx.ui.notify("--label requires a value. Example: /gsd inbox --label \"help wanted\"", "warning");
+    return;
+  }
   dispatchPrompt(
     {
       prompt: "inbox",

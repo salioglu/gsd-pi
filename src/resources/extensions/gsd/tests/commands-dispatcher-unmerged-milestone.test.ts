@@ -199,6 +199,11 @@ test("dispatcher blocks workflow-advancing commands while completed branch is un
     "execute-phase --milestone M009",
     "autonomous --from 1",
     "phase add M009",
+    "phase create M009",
+    "phase new M009",
+    "phase insert M009 after M008",
+    "phase remove M008",
+    "phase edit M008",
     "workstreams create",
   ];
 

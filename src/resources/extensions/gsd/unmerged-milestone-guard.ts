@@ -66,6 +66,11 @@ function hasFlag(command: string, flag: string): boolean {
   return new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`).test(command);
 }
 
+function isMutatingPhaseCommand(subcommand: string | undefined): boolean {
+  if (!subcommand) return false;
+  return ["add", "create", "new", "insert", "remove", "edit"].includes(subcommand);
+}
+
 function resolveIntegrationBranch(base: string, milestoneId: string): string | null {
   const prefs = loadEffectiveGSDPreferences(base)?.preferences?.git ?? {};
   const resolution = resolveMilestoneIntegrationBranch(base, milestoneId, prefs);
@@ -99,6 +104,9 @@ export function isUnmergedMilestoneAllowedCommand(trimmed: string): boolean {
   }
   if (name === "docs-update") {
     return hasFlag(command, "--verify-only");
+  }
+  if (name === "phase") {
+    return !isMutatingPhaseCommand(subcommand);
   }
   return !BLOCKED_COMMANDS.has(name);
 }
