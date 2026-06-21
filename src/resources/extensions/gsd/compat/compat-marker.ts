@@ -10,7 +10,27 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync, mkdirS
 import { dirname, join } from "node:path";
 
 /** Current marker schema version. Bump on breaking format changes + migrate. */
-export const COMPAT_MARKER_SCHEMA = 1;
+export const COMPAT_MARKER_SCHEMA = 2;
+
+/**
+ * Which `.planning/` layout a project uses. Captured on first read so the
+ * round-trip writer recreates the same structure gsd-core wrote. Priority
+ * matches migrate/transformer.ts transformToGSD.
+ */
+export type PlanningLayout = "flat-phases" | "multi-milestone" | "legacy-milestone-dir";
+
+/**
+ * `.planning/` projection tracking. `projections` are modeled files (roadmap,
+ * plans, summaries, state) that get re-imported on drift; `passthrough` are
+ * un-modeled docs (DISCUSSION-LOG, PATTERNS, REVIEWS, codebase/) that get sha-
+ * refreshed only — content never re-rendered.
+ */
+export interface PlanningMarker {
+  active: boolean;
+  layout: PlanningLayout | null;
+  projections: Record<string, ProjectionEntry>;
+  passthrough: Record<string, ProjectionEntry>;
+}
 
 /**
  * Per-file projection entry. `sha` is a normalized-content SHA-256; `entities`
@@ -27,6 +47,8 @@ export interface CompatMarker {
   lastWriter: "gsd-pi";
   lastProjectedAt: string;
   projections: Record<string, ProjectionEntry>;
+  /** Optional: `.planning/` layout tracking for gsd-core parity. */
+  planning?: PlanningMarker;
   piVersion: string;
 }
 
@@ -36,6 +58,7 @@ export const EMPTY_MARKER: CompatMarker = {
   lastWriter: "gsd-pi",
   lastProjectedAt: "",
   projections: {},
+  planning: { active: false, layout: null, projections: {}, passthrough: {} },
   piVersion: "",
 };
 
@@ -86,10 +109,13 @@ export function readCompatMarker(basePath: string): CompatMarker {
     quarantine(basePath, raw);
     return emptyMarker();
   }
-  if (parsed.schema !== COMPAT_MARKER_SCHEMA) {
-    // Future schema: refuse rather than guess. Re-running reconcile regenerates.
-    quarantine(basePath, raw);
-    return emptyMarker();
+  // Promote older markers by defaulting absent fields. Schema 1 → 2 only adds
+  // the optional `planning` field; treat its absence as planning-inactive so
+  // existing PR #802 users upgrade transparently. (A future schema 3 would
+  // need an explicit migration here; for now anything that passes isValidMarker
+  // is safe to read.)
+  if (!parsed.planning) {
+    parsed.planning = { active: false, layout: null, projections: {}, passthrough: {} };
   }
   return parsed;
 }
@@ -105,6 +131,7 @@ function emptyMarker(): CompatMarker {
     lastWriter: EMPTY_MARKER.lastWriter,
     lastProjectedAt: EMPTY_MARKER.lastProjectedAt,
     projections: {},
+    planning: { active: false, layout: null, projections: {}, passthrough: {} },
     piVersion: EMPTY_MARKER.piVersion,
   };
 }
@@ -138,6 +165,37 @@ function quarantine(basePath: string, raw: string): void {
   }
 }
 
+function isValidProjectionEntry(x: unknown): x is ProjectionEntry {
+  if (typeof x !== "object" || x === null) return false;
+  const e = x as Record<string, unknown>;
+  if (typeof e.sha !== "string") return false;
+  if (!Array.isArray(e.entities) || !e.entities.every((s) => typeof s === "string")) return false;
+  return true;
+}
+
+function isValidProjectionMap(x: unknown): boolean {
+  if (typeof x !== "object" || x === null) return false;
+  for (const v of Object.values(x as Record<string, unknown>)) {
+    if (!isValidProjectionEntry(v)) return false;
+  }
+  return true;
+}
+
+function isValidPlanningMarker(x: unknown): x is PlanningMarker {
+  if (typeof x !== "object" || x === null) return false;
+  const p = x as Record<string, unknown>;
+  if (typeof p.active !== "boolean") return false;
+  if (
+    p.layout !== null &&
+    !["flat-phases", "multi-milestone", "legacy-milestone-dir"].includes(p.layout as string)
+  ) {
+    return false;
+  }
+  if (!isValidProjectionMap(p.projections)) return false;
+  if (!isValidProjectionMap(p.passthrough)) return false;
+  return true;
+}
+
 function isValidMarker(x: unknown): x is CompatMarker {
   if (typeof x !== "object" || x === null) return false;
   const m = x as Record<string, unknown>;
@@ -145,12 +203,8 @@ function isValidMarker(x: unknown): x is CompatMarker {
   if (typeof m.schema !== "number") return false;
   if (typeof m.lastProjectedAt !== "string") return false;
   if (typeof m.piVersion !== "string") return false;
-  if (typeof m.projections !== "object" || m.projections === null) return false;
-  for (const v of Object.values(m.projections as Record<string, unknown>)) {
-    if (typeof v !== "object" || v === null) return false;
-    const e = v as Record<string, unknown>;
-    if (typeof e.sha !== "string") return false;
-    if (!Array.isArray(e.entities) || !e.entities.every((s) => typeof s === "string")) return false;
-  }
+  if (!isValidProjectionMap(m.projections)) return false;
+  // planning is optional; when present, must validate.
+  if (m.planning !== undefined && !isValidPlanningMarker(m.planning)) return false;
   return true;
 }

@@ -41,12 +41,13 @@ test("readCompatMarker returns EMPTY_MARKER when file is missing", () => {
 test("writeCompatMarker then readCompatMarker round-trips", () => {
   const base = makeTmpBase();
   const marker = {
-    schema: 1,
+    schema: 2,
     lastWriter: "gsd-pi" as const,
     lastProjectedAt: "2026-06-21T00:00:00.000Z",
     projections: {
       "roadmap.md": { sha: "abc123", entities: ["m1"] },
     },
+    planning: { active: false, layout: null, projections: {}, passthrough: {} },
     piVersion: "1.4.0",
   };
   writeCompatMarker(base, marker);

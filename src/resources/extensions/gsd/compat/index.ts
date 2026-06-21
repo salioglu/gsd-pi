@@ -9,4 +9,4 @@ export {
   readCompatMarker,
   writeCompatMarker,
 } from "./compat-marker.js";
-export type { CompatMarker, ProjectionEntry } from "./compat-marker.js";
+export type { CompatMarker, PlanningLayout, PlanningMarker, ProjectionEntry } from "./compat-marker.js";
