@@ -608,6 +608,13 @@ describe("Batch 5 handlers dispatch", () => {
     assert.equal(pi.sent[0].customType, "gsd-phase");
     assert.match(pi.sent[0].content, /remove M001/);
   });
+  test("handlePhase keeps insert prompt-driven for queue positioning", async () => {
+    const pi = createMockPi(); const ctx = createMockCtx();
+    await handlePhase("insert M002 after M001", ctx as any, pi as any);
+    assert.equal(pi.sent.length, 1);
+    assert.equal(pi.sent[0].customType, "gsd-phase");
+    assert.match(pi.sent[0].content, /insert M002 after M001/);
+  });
   test("handleThread close", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
     await handleThread("close auth-thread", ctx as any, pi as any);
@@ -694,6 +701,12 @@ describe("Batch 5 handlers dispatch", () => {
     const pi = createMockPi(); const ctx = createMockCtx();
     await handleInbox("--label customer-bug", ctx as any, pi as any);
     assert.match(pi.sent[0].content, /customer-bug/);
+  });
+  test("handleInbox passes quoted multi-word label filter into the prompt", async () => {
+    const pi = createMockPi(); const ctx = createMockCtx();
+    await handleInbox('--label "help wanted" --close-incomplete', ctx as any, pi as any);
+    assert.match(pi.sent[0].content, /help wanted/);
+    assert.doesNotMatch(pi.sent[0].content, /"help/);
   });
   test("handleImport from file", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();

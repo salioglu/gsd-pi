@@ -766,7 +766,7 @@ export async function handlePhase(args: string, ctx: ExtensionCommandContext, pi
     await dispatchGSDCommand("queue", ctx, pi);
     return;
   }
-  if (["add", "create", "insert", "new"].includes(parsed.action)) {
+  if (["add", "create", "new"].includes(parsed.action)) {
     await dispatchGSDCommand(`new-milestone ${parsed.rest}`.trim(), ctx, pi);
     return;
   }
@@ -898,10 +898,22 @@ export function parseInboxFocus(args: string): string {
   return "issues and PRs (default)";
 }
 
+function parseFlagValue(args: string, flag: string): string | null {
+  const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `(?:^|\\s)${escaped}\\s+` +
+      `(?:"([^"]*)"|'([^']*)'|([^\\s].*?))` +
+      `(?=\\s--[\\w-]+|$)`,
+  );
+  const match = args.match(pattern);
+  if (!match) return null;
+  return (match[1] ?? match[2] ?? match[3] ?? "").trim();
+}
+
 /** /gsd inbox [--issues|--prs] [--label <name>] [--close-incomplete] [--repo owner/repo] */
 export async function handleInbox(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const repoMatch = args.match(/--repo\s+(\S+)/);
-  const labelMatch = args.match(/--label\s+(\S+)/);
+  const label = parseFlagValue(args, "--label");
   dispatchPrompt(
     {
       prompt: "inbox",
@@ -909,7 +921,7 @@ export async function handleInbox(args: string, ctx: ExtensionCommandContext, pi
       verb: "Inbox",
       vars: {
         focusFlag: parseInboxFocus(args),
-        labelFlag: labelMatch ? labelMatch[1] : "(none)",
+        labelFlag: label ?? "(none)",
         closeIncompleteFlag: flagPhrase(/(?:^|\s)--close-incomplete(?=\s|$)/.test(args)),
         ...(repoMatch ? { repo: repoMatch[1] } : {}),
       },

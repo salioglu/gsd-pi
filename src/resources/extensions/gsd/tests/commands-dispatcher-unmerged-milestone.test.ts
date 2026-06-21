@@ -193,6 +193,7 @@ test("dispatcher blocks workflow-advancing commands while completed branch is un
     "do mark all complete",
     "audit-fix --severity high",
     "code-review --fix",
+    "docs-update",
     "validate-phase",
     "plan-phase",
     "execute-phase --milestone M009",

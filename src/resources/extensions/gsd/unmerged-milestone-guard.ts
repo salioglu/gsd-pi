@@ -40,6 +40,7 @@ const BLOCKED_COMMANDS = new Set([
   "ai-integration-phase",
   "ultraplan-phase",
   "validate-phase",
+  "docs-update",
   "autonomous",
   "execute-task",
   "research-milestone",
@@ -95,6 +96,9 @@ export function isUnmergedMilestoneAllowedCommand(trimmed: string): boolean {
   }
   if (name === "code-review") {
     return !hasFlag(command, "--fix");
+  }
+  if (name === "docs-update") {
+    return hasFlag(command, "--verify-only");
   }
   return !BLOCKED_COMMANDS.has(name);
 }
