@@ -190,18 +190,41 @@ async function formatCompatHealthLine(basePath: string): Promise<string> {
   try {
     const { readCompatMarker, computeProjectionSha } = await import("./compat/compat-marker.js");
     const marker = readCompatMarker(basePath);
-    const entries = Object.entries(marker.projections);
-    if (entries.length === 0) {
+
+    const countDrifted = (
+      entries: Record<string, { sha: string }>,
+      root: string,
+    ): number => {
+      let drifted = 0;
+      for (const [rel, entry] of Object.entries(entries)) {
+        const abs = join(basePath, root, rel);
+        if (!existsSync(abs)) continue;
+        if (computeProjectionSha(readFileSync(abs, "utf-8")) !== entry.sha) drifted++;
+      }
+      return drifted;
+    };
+
+    const lines: string[] = [];
+    const gsdEntries = Object.entries(marker.projections);
+    if (gsdEntries.length === 0 && !marker.planning?.active) {
       return "  Compat health:      no baseline (run /gsd sync to establish)";
     }
-    let drifted = 0;
-    for (const [rel, entry] of entries) {
-      const abs = join(basePath, ".gsd", rel);
-      if (!existsSync(abs)) continue;
-      if (computeProjectionSha(readFileSync(abs, "utf-8")) !== entry.sha) drifted++;
+    const gsdDrifted = countDrifted(marker.projections, ".gsd");
+    lines.push(
+      `  Compat health (.gsd):    ${gsdDrifted === 0 ? "OK" : `${gsdDrifted} file(s) drifted — run /gsd sync`}`,
+    );
+
+    if (marker.planning?.active) {
+      const planningDrifted =
+        countDrifted(marker.planning.projections, ".planning") +
+        countDrifted(marker.planning.passthrough, ".planning");
+      lines.push(
+        `  Compat health (.planning): ${planningDrifted === 0 ? "OK" : `${planningDrifted} file(s) drifted — run /gsd sync`}`,
+      );
+    } else {
+      lines.push(`  Compat health (.planning): not active`);
     }
-    const status = drifted === 0 ? "OK" : `${drifted} file(s) drifted — run /gsd sync`;
-    return `  Compat health:      ${status}`;
+    return lines.join("\n");
   } catch {
     return "";
   }

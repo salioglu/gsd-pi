@@ -839,11 +839,22 @@ export async function handleSync(
     const result = await reconcileBeforeDispatch(basePath, { dryRun });
     const repairedExternal = result.repaired.filter((r) => r.kind === "external-markdown-edit");
     lines.push(
-      `  External edits ${dryRun ? "to import" : "imported"}: ${repairedExternal.length}`,
+      `  External .gsd/ edits ${dryRun ? "to import" : "imported"}: ${repairedExternal.length}`,
     );
     for (const r of repairedExternal) {
       const e = r as { kind: "external-markdown-edit"; projectionPath: string };
       lines.push(`    • ${e.projectionPath}`);
+    }
+    const repairedPlanningExternal = result.repaired.filter((r) => r.kind === "external-planning-edit");
+    if (repairedPlanningExternal.length > 0) {
+      lines.push(
+        `  External .planning/ edits ${dryRun ? "to import" : "imported"}: ${repairedPlanningExternal.length}`,
+      );
+      for (const r of repairedPlanningExternal) {
+        const e = r as { kind: "external-planning-edit"; projectionPath: string; passthrough: boolean };
+        const tag = e.passthrough ? " (passthrough)" : "";
+        lines.push(`    • ${e.projectionPath}${tag}`);
+      }
     }
     if (result.blockers.length > 0) {
       lines.push("", "  ⚠ Blockers:");
