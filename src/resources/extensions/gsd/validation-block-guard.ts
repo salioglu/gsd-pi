@@ -108,13 +108,10 @@ export function isValidationBlockAllowedCommand(trimmed: string): boolean {
     return hasFlag(command, "--verify-only");
   }
   if (name === "phase") {
-    return !isMutatingPhaseSubcommand(subcommand);
+    return !isMutatingPhaseCommand(subcommand);
   }
   if (name === "progress") {
     return !hasFlag(command, "--next") && !hasFlag(command, "--do");
-  }
-  if (name === "phase") {
-    return !isMutatingPhaseCommand(subcommand);
   }
   return !VALIDATION_BLOCKED_COMMANDS.has(name);
 }
