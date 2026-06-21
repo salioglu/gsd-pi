@@ -7,11 +7,15 @@
 // with a clear error until fixtures exist to validate them.
 
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import { getAllMilestones, getMilestoneSlices, getSliceTasks } from "../gsd-db.js";
 import { saveFile } from "../files.js";
 import type { PlanningLayout } from "../compat/compat-marker.js";
+import {
+  applyPlanningProjectionWrites,
+  type PlanningProjectionWrite,
+} from "../compat/planning-compat.js";
 
 export interface PlanningWrittenFiles {
   paths: string[];
@@ -145,6 +149,9 @@ export async function writePlanningDirectory(
   const root = planningRoot(basePath);
   mkdirSync(root, { recursive: true });
   const paths: string[] = [];
+  const projectionWrites: PlanningProjectionWrite[] = [];
+  const toPlanningRel = (absPath: string): string =>
+    relative(root, absPath).replace(/\\/g, "/");
 
   const milestones = getAllMilestones();
   if (milestones.length === 0) {
@@ -181,6 +188,10 @@ export async function writePlanningDirectory(
           formatPlanningPlan(phaseNum, 1, slice.title || slice.id, []),
         );
         paths.push(planPath);
+        projectionWrites.push({
+          relPath: toPlanningRel(planPath),
+          entities: [`${milestone.id}/${slice.id}`],
+        });
       } else {
         for (let ti = 0; ti < tasks.length; ti++) {
           const task = tasks[ti]!;
@@ -197,6 +208,10 @@ export async function writePlanningDirectory(
             ]),
           );
           paths.push(planPath);
+          projectionWrites.push({
+            relPath: toPlanningRel(planPath),
+            entities: [`${milestone.id}/${slice.id}/${task.id}`],
+          });
         }
       }
     }
@@ -211,13 +226,19 @@ export async function writePlanningDirectory(
     const planPath = join(phaseDir, `${pad(1)}-01-PLAN.md`);
     await saveFile(planPath, formatPlanningPlan(1, 1, milestones[0]!.title || milestones[0]!.id, []));
     paths.push(planPath);
+    projectionWrites.push({
+      relPath: toPlanningRel(planPath),
+      entities: [milestones[0]!.id],
+    });
     roadmapEntries.push({ number: 1, title: milestones[0]!.title || milestones[0]!.id, done: false });
   }
 
   // Root files
+  const milestoneEntities = milestones.map((m) => m.id);
   const roadmapPath = join(root, "ROADMAP.md");
   await saveFile(roadmapPath, formatPlanningRoadmapFlat(roadmapEntries));
   paths.push(roadmapPath);
+  projectionWrites.push({ relPath: toPlanningRel(roadmapPath), entities: milestoneEntities });
 
   const completedPhases = roadmapEntries.filter((e) => e.done).length;
   const statePath = join(root, "STATE.md");
@@ -226,10 +247,13 @@ export async function writePlanningDirectory(
     formatPlanningState(milestones[0]!.id, roadmapEntries.length, completedPhases),
   );
   paths.push(statePath);
+  projectionWrites.push({ relPath: toPlanningRel(statePath), entities: [milestones[0]!.id] });
 
   const projectPath = join(root, "PROJECT.md");
   await saveFile(projectPath, formatPlanningProject(milestones[0]!.title || milestones[0]!.id));
   paths.push(projectPath);
+  projectionWrites.push({ relPath: toPlanningRel(projectPath), entities: [milestones[0]!.id] });
 
+  applyPlanningProjectionWrites(basePath, projectionWrites);
   return { paths, layout };
 }

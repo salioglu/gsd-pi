@@ -205,22 +205,37 @@ async function formatCompatHealthLine(basePath: string): Promise<string> {
     };
 
     const lines: string[] = [];
-    const gsdEntries = Object.entries(marker.projections);
-    if (gsdEntries.length === 0 && !marker.planning?.active) {
+    const gsdEntryCount = Object.keys(marker.projections).length;
+    const planningActive = marker.planning?.active ?? false;
+    const planningEntryCount = planningActive
+      ? Object.keys(marker.planning!.projections).length +
+        Object.keys(marker.planning!.passthrough).length
+      : 0;
+
+    if (gsdEntryCount === 0 && !planningActive) {
       return "  Compat health:      no baseline (run /gsd sync to establish)";
     }
-    const gsdDrifted = countDrifted(marker.projections, ".gsd");
-    lines.push(
-      `  Compat health (.gsd):    ${gsdDrifted === 0 ? "OK" : `${gsdDrifted} file(s) drifted — run /gsd sync`}`,
-    );
 
-    if (marker.planning?.active) {
-      const planningDrifted =
-        countDrifted(marker.planning.projections, ".planning") +
-        countDrifted(marker.planning.passthrough, ".planning");
+    if (gsdEntryCount === 0) {
+      lines.push("  Compat health (.gsd):    no baseline (run /gsd sync to establish)");
+    } else {
+      const gsdDrifted = countDrifted(marker.projections, ".gsd");
       lines.push(
-        `  Compat health (.planning): ${planningDrifted === 0 ? "OK" : `${planningDrifted} file(s) drifted — run /gsd sync`}`,
+        `  Compat health (.gsd):    ${gsdDrifted === 0 ? "OK" : `${gsdDrifted} file(s) drifted — run /gsd sync`}`,
       );
+    }
+
+    if (planningActive) {
+      if (planningEntryCount === 0) {
+        lines.push("  Compat health (.planning): no baseline (run /gsd sync to establish)");
+      } else {
+        const planningDrifted =
+          countDrifted(marker.planning!.projections, ".planning") +
+          countDrifted(marker.planning!.passthrough, ".planning");
+        lines.push(
+          `  Compat health (.planning): ${planningDrifted === 0 ? "OK" : `${planningDrifted} file(s) drifted — run /gsd sync`}`,
+        );
+      }
     } else {
       lines.push(`  Compat health (.planning): not active`);
     }

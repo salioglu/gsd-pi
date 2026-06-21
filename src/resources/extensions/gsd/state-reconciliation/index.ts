@@ -66,6 +66,9 @@ export async function reconcileBeforeDispatch(
   const clearParseCache = deps.clearParseCache ?? defaultClearParseCache;
   const repaired: DriftRecord[] = [];
 
+  const { capturePlanningCompatIfNeeded } = await import("../compat/planning-compat.js");
+  await capturePlanningCompatIfNeeded(basePath);
+
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     deps.invalidateStateCache();
     const stateSnapshot = await deps.deriveState(basePath, deps.deriveStateOptions);

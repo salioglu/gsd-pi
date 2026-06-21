@@ -890,6 +890,8 @@ export async function renderAllFromDb(basePath: string): Promise<RenderAllResult
   // static-import cycle. Gated on planning.active so the double-write cost
   // only hits projects that actually use the .planning/ layout.
   try {
+    const { capturePlanningCompatIfNeeded } = await import("./compat/planning-compat.js");
+    await capturePlanningCompatIfNeeded(basePath);
     const { readCompatMarker } = await import("./compat/compat-marker.js");
     const marker = readCompatMarker(basePath);
     if (marker.planning?.active && marker.planning.layout) {
