@@ -7,6 +7,9 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { handleGSDCommand } from "../commands/dispatcher.ts";
 
@@ -22,9 +25,10 @@ function createMockPi() {
   };
 }
 
-function createMockCtx() {
+function createMockCtx(cwd?: string) {
   const notifications: { message: string; level: string }[] = [];
   return {
+    cwd,
     notifications,
     ui: {
       notify(message: string, level: string) {
@@ -34,6 +38,12 @@ function createMockCtx() {
     },
     shutdown: async () => {},
   };
+}
+
+function createTempGsdProject(): string {
+  const base = mkdtempSync(join(tmpdir(), "gsd-core-parity-"));
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  return base;
 }
 
 // The complete list of gsd-core command names (from ~/github/open-gsd/gsd-core/commands/gsd/*.md).
@@ -104,19 +114,24 @@ describe("gsd-core command parity routing", () => {
   // assert they don't fall through to "Unknown".
   test("every gsd-core command is handled (no 'Unknown' fallthrough)", async () => {
     const unhandled: string[] = [];
-    for (const cmd of GSD_CORE_COMMANDS) {
-      const pi = createMockPi();
-      const ctx = createMockCtx();
-      try {
-        await handleGSDCommand(cmd, ctx as any, pi as any);
-      } catch {
-        // Some commands throw GSDNoProjectError etc. in a mock env — that still
-        // means they were recognized and routed, not "Unknown".
+    const base = createTempGsdProject();
+    try {
+      for (const cmd of GSD_CORE_COMMANDS) {
+        const pi = createMockPi();
+        const ctx = createMockCtx(base);
+        try {
+          await handleGSDCommand(cmd, ctx as any, pi as any);
+        } catch {
+          // Some commands throw GSDNoProjectError etc. in a mock env — that still
+          // means they were recognized and routed, not "Unknown".
+        }
+        const fellThrough = ctx.notifications.some(
+          (n) => n.message.startsWith("Unknown:") && n.message.includes(`/gsd ${cmd}`),
+        );
+        if (fellThrough) unhandled.push(cmd);
       }
-      const fellThrough = ctx.notifications.some(
-        (n) => n.message.startsWith("Unknown:") && n.message.includes(`/gsd ${cmd}`),
-      );
-      if (fellThrough) unhandled.push(cmd);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
     }
     assert.deepStrictEqual(
       unhandled,
@@ -138,11 +153,26 @@ describe("gsd-core command parity routing", () => {
       "review-backlog", "inbox", "import", "ingest-docs", "profile-user", "settings",
     ];
     const noPrompt: string[] = [];
-    for (const cmd of implemented) {
-      const pi = createMockPi();
-      const ctx = createMockCtx();
-      await handleGSDCommand(cmd, ctx as any, pi as any);
-      if (pi.sent.length !== 1) noPrompt.push(`${cmd} (sent ${pi.sent.length})`);
+    const base = createTempGsdProject();
+    const processCwd = createTempGsdProject();
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(processCwd);
+      for (const cmd of implemented) {
+        const pi = createMockPi();
+        const ctx = createMockCtx(base);
+        await handleGSDCommand(cmd, ctx as any, pi as any);
+        if (pi.sent.length !== 1) noPrompt.push(`${cmd} (sent ${pi.sent.length})`);
+      }
+      assert.equal(existsSync(join(processCwd, ".gsd", "spikes")), false);
+      assert.equal(existsSync(join(processCwd, ".gsd", "sketches")), false);
+      assert.equal(existsSync(join(processCwd, ".gsd", "codebase")), false);
+      assert.equal(existsSync(join(processCwd, ".gsd", "knowledge")), false);
+      assert.equal(existsSync(join(processCwd, ".gsd", "reviews")), false);
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(base, { recursive: true, force: true });
+      rmSync(processCwd, { recursive: true, force: true });
     }
     assert.deepStrictEqual(
       noPrompt,

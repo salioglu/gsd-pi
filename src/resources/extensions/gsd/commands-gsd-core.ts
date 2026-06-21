@@ -956,6 +956,10 @@ function parseFlagValue(args: string, flag: string): string | null {
 export async function handleInbox(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const repo = parseFlagValue(args, "--repo");
   const label = parseFlagValue(args, "--label");
+  if (/(?:^|\s)--repo(?=\s|$)/.test(args) && !repo) {
+    ctx.ui.notify("--repo requires a value. Example: /gsd inbox --repo owner/repo", "warning");
+    return;
+  }
   if (/(?:^|\s)--label(?=\s|$)/.test(args) && !label) {
     ctx.ui.notify("--label requires a value. Example: /gsd inbox --label \"help wanted\"", "warning");
     return;

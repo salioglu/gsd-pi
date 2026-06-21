@@ -754,6 +754,13 @@ describe("Batch 5 handlers dispatch", () => {
     assert.equal(ctx.notifications[0].level, "warning");
     assert.match(ctx.notifications[0].message, /--label requires a value/);
   });
+  test("handleInbox warns when repo value is missing before another flag", async () => {
+    const pi = createMockPi(); const ctx = createMockCtx();
+    await handleInbox("--repo --close-incomplete", ctx as any, pi as any);
+    assert.equal(pi.sent.length, 0);
+    assert.equal(ctx.notifications[0].level, "warning");
+    assert.match(ctx.notifications[0].message, /--repo requires a value/);
+  });
   test("handleImport from file", async () => {
     const pi = createMockPi(); const ctx = createMockCtx();
     await handleImport("--from plan.md", ctx as any, pi as any);

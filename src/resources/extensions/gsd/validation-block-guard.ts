@@ -30,6 +30,11 @@ const VALIDATION_BLOCKED_COMMANDS = new Set([
   "do",
   "plan-phase",
   "execute-phase",
+  "spec-phase",
+  "mvp-phase",
+  "ui-phase",
+  "ai-integration-phase",
+  "ultraplan-phase",
   "autonomous",
 ]);
 
