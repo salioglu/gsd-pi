@@ -29,6 +29,14 @@ export function isPlanningPassthroughRelPath(relPath: string): boolean {
   return false;
 }
 
+export function gsdTreeHasContent(basePath: string): boolean {
+  const gsdDir = join(basePath, ".gsd");
+  return (
+    existsSync(gsdDir) &&
+    readdirSync(gsdDir).some((name) => name !== ".compat.json" && !name.startsWith("."))
+  );
+}
+
 export function walkPlanningRelPaths(planningDir: string, prefix = ""): string[] {
   const paths: string[] = [];
   let entries;
@@ -116,14 +124,10 @@ export async function capturePlanningCompatIfNeeded(
   // Import into the DB. Dynamic imports break the module-init cycle
   // (planning-compat ← reconcile ← state ← md-importer). Matches the import
   // pattern in repairExternalPlanningEdit.
-  const gsdDir = join(basePath, ".gsd");
-  const gsdTreeHasContent =
-    existsSync(gsdDir) &&
-    readdirSync(gsdDir).some((name) => name !== ".compat.json" && !name.startsWith("."));
   try {
     const { migrateHierarchyToDb } = await import("../md-importer.js");
     const { invalidateStateCache } = await import("../state.js");
-    if (!gsdTreeHasContent) {
+    if (!gsdTreeHasContent(basePath)) {
       const { transformToGSD } = await import("../migrate/transformer.js");
       const { writeGSDDirectory } = await import("../migrate/writer.js");
       const gsdProject = transformToGSD(parsed);

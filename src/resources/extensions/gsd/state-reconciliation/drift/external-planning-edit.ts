@@ -15,6 +15,7 @@ import {
   writeCompatMarker,
 } from "../../compat/compat-marker.js";
 import {
+  gsdTreeHasContent,
   isPlanningPassthroughRelPath,
   walkPlanningRelPaths,
 } from "../../compat/planning-compat.js";
@@ -107,14 +108,16 @@ async function detectExternalPlanningEdit(
     }
     return [];
   }
+  const projections = marker.planning.projections;
+  const passthrough = marker.planning.passthrough;
+  const hasBaselines =
+    Object.keys(projections).length > 0 || Object.keys(passthrough).length > 0;
   return [
-    ...detectOne(ctx, marker.planning.projections, false),
-    ...detectOne(ctx, marker.planning.passthrough, true),
-    ...detectUnseededPlanningFiles(
-      ctx,
-      marker.planning.projections,
-      marker.planning.passthrough,
-    ),
+    ...detectOne(ctx, projections, false),
+    ...detectOne(ctx, passthrough, true),
+    // No baseline yet (post-capture, pre-writePlanningDirectory): skip unseeded
+    // detection so every on-disk file is not treated as drift in the same pass.
+    ...(hasBaselines ? detectUnseededPlanningFiles(ctx, projections, passthrough) : []),
   ];
 }
 
@@ -136,9 +139,10 @@ async function repairExternalPlanningEdit(
 
   // Modeled: re-import via the migrate read path. Dynamic imports break the
   // module-init cycle (this handler ← registry ← state.ts ← guided-flow.ts
-  // ← md-importer.ts). parsePlanningDirectory reads .planning/, transformToGSD
-  // produces the .gsd/ model, writeGSDDirectory materializes it, then
-  // migrateHierarchyToDb upserts into the DB.
+  // ← md-importer.ts). parsePlanningDirectory reads .planning/; when `.gsd/` is
+  // empty, transformToGSD + writeGSDDirectory materialize it first. When
+  // `.gsd/` already has content (coexistence), skip the write and import from
+  // disk via migrateHierarchyToDb only.
   try {
     const { parsePlanningDirectory } = await import("../../migrate/parser.js");
     const { transformToGSD } = await import("../../migrate/transformer.js");
@@ -147,8 +151,10 @@ async function repairExternalPlanningEdit(
     const { invalidateStateCache } = await import("../../state.js");
 
     const parsed = await parsePlanningDirectory(join(ctx.basePath, ".planning"));
-    const gsdProject = transformToGSD(parsed);
-    await writeGSDDirectory(gsdProject, ctx.basePath);
+    if (!gsdTreeHasContent(ctx.basePath)) {
+      const gsdProject = transformToGSD(parsed);
+      await writeGSDDirectory(gsdProject, ctx.basePath);
+    }
     migrateHierarchyToDb(ctx.basePath);
     invalidateStateCache();
   } catch (err) {
