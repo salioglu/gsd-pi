@@ -15,7 +15,6 @@ import {
   writeCompatMarker,
 } from "../../compat/compat-marker.js";
 import {
-  gsdTreeHasContent,
   isPlanningPassthroughRelPath,
   walkPlanningRelPaths,
 } from "../../compat/planning-compat.js";
@@ -139,10 +138,12 @@ async function repairExternalPlanningEdit(
 
   // Modeled: re-import via the migrate read path. Dynamic imports break the
   // module-init cycle (this handler ← registry ← state.ts ← guided-flow.ts
-  // ← md-importer.ts). parsePlanningDirectory reads .planning/; when `.gsd/` is
-  // empty, transformToGSD + writeGSDDirectory materialize it first. When
-  // `.gsd/` already has content (coexistence), skip the write and import from
-  // disk via migrateHierarchyToDb only.
+  // ← md-importer.ts). parsePlanningDirectory reads .planning/; always
+  // transform + writeGSDDirectory so .gsd/ reflects the edited .planning/ file
+  // before migrateHierarchyToDb ingests it. In coexistence, .planning/ is the
+  // gsd-core native format and takes precedence: writing .gsd/ here propagates
+  // the edit that must survive future projections. external-markdown-edit (index
+  // 0) runs before this handler, so .gsd/-only drift is already imported first.
   try {
     const { parsePlanningDirectory } = await import("../../migrate/parser.js");
     const { transformToGSD } = await import("../../migrate/transformer.js");
@@ -151,10 +152,8 @@ async function repairExternalPlanningEdit(
     const { invalidateStateCache } = await import("../../state.js");
 
     const parsed = await parsePlanningDirectory(join(ctx.basePath, ".planning"));
-    if (!gsdTreeHasContent(ctx.basePath)) {
-      const gsdProject = transformToGSD(parsed);
-      await writeGSDDirectory(gsdProject, ctx.basePath);
-    }
+    const gsdProject = transformToGSD(parsed);
+    await writeGSDDirectory(gsdProject, ctx.basePath);
     migrateHierarchyToDb(ctx.basePath);
     invalidateStateCache();
   } catch (err) {

@@ -29,11 +29,24 @@ export function isPlanningPassthroughRelPath(relPath: string): boolean {
   return false;
 }
 
+// Files that gsd-pi creates in .gsd/ at startup and that do not constitute
+// markdown content written by gsd-core. Excluded from the content check so a
+// .planning/-only project that already has a gsd.db (but no milestone markdown)
+// is not mistakenly treated as a coexistence project.
+const KNOWN_NON_CONTENT_FILES = new Set([
+  "gsd.db",
+  "gsd.db-wal",
+  "gsd.db-shm",
+  "completed-units.json",
+]);
+
 export function gsdTreeHasContent(basePath: string): boolean {
   const gsdDir = join(basePath, ".gsd");
   return (
     existsSync(gsdDir) &&
-    readdirSync(gsdDir).some((name) => name !== ".compat.json" && !name.startsWith("."))
+    readdirSync(gsdDir).some(
+      (name) => !name.startsWith(".") && !KNOWN_NON_CONTENT_FILES.has(name),
+    )
   );
 }
 
