@@ -232,6 +232,31 @@ test("dispatcher blocks workflow-advancing commands while completed branch is un
   }
 });
 
+test("dispatcher keeps manager read-only while completed branch is unmerged", async () => {
+  const base = makeTempRepo("gsd-dispatch-unmerged-");
+  try {
+    seedCompletedUnmergedMilestone(base);
+    const { ctx, calls } = makeMockCtx(base);
+    const { pi, messages } = makeMockPi();
+
+    await handleGSDCommand("manager", ctx, pi);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].kind, "info");
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].customType, "gsd-manager");
+    assert.match(messages[0].content, /read-only/i);
+    assert.match(messages[0].content, /M008 is complete but not merged/);
+    assert.doesNotMatch(messages[0].content, /Start\/stop auto-mode/);
+    assert.doesNotMatch(messages[0].content, /Run parallel milestones/);
+    assert.doesNotMatch(messages[0].content, /Act on the selection/);
+  } finally {
+    closeDatabase();
+    invalidateStateCache();
+    cleanup(base);
+  }
+});
+
 test("dispatcher allows audit-fix dry-run while completed branch is unmerged", async () => {
   const base = makeTempRepo("gsd-dispatch-unmerged-");
   try {

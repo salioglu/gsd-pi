@@ -10,19 +10,12 @@ You are running the GSD **manager** workflow — an interactive command center f
 
 2. **Present the dashboard.** Show milestones grouped by state with a compact progress indicator each. Highlight the active milestone and any blockers.
 
-3. **Offer actions**, one at a time:
-   - Switch the active milestone (`/gsd queue`).
-   - Reorder queued milestones (`/gsd queue`).
-   - Park or unpark a milestone (`/gsd park` / `/gsd unpark`).
-   - Start/stop auto-mode on the active milestone (`/gsd auto` / `/gsd stop`).
-   - Run parallel milestones (`/gsd parallel`).
+{{managerActions}}
 
 4. **`--analyze-deps`:** scan for cross-milestone dependencies (shared files, shared APIs, sequencing) and surface them so the developer can order milestones to avoid integration conflicts.
 
-5. **Act on the selection** by routing to the matching gsd-pi command — do not reimplement queue/park/parallel logic inline.
+{{managerSelectionStep}}
 
 ## Success criteria
 
-- The dashboard reflects canonical milestone state, not memory.
-- Actions route to the real gsd-pi commands, not duplicates.
-- Dependency analysis (when requested) is grounded in actual file/API overlap.
+{{managerSuccessCriteria}}

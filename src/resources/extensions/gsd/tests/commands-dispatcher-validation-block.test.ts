@@ -176,6 +176,31 @@ test("dispatcher blocks workflow-advancing aliases while validation is blocked",
   }
 });
 
+test("dispatcher keeps manager read-only while validation is blocked", async () => {
+  const base = makeBase();
+  try {
+    seedValidationBlockedMilestone(base);
+    const { ctx, calls } = makeMockCtx(base);
+    const { pi, messages } = makeMockPi();
+
+    await handleGSDCommand("manager", ctx, pi);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].kind, "info");
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].customType, "gsd-manager");
+    assert.match(messages[0].content, /read-only/i);
+    assert.match(messages[0].content, /active milestone is blocked by validation/);
+    assert.doesNotMatch(messages[0].content, /Start\/stop auto-mode/);
+    assert.doesNotMatch(messages[0].content, /Run parallel milestones/);
+    assert.doesNotMatch(messages[0].content, /Act on the selection/);
+  } finally {
+    closeDatabase();
+    invalidateStateCache();
+    cleanup(base);
+  }
+});
+
 test("dispatcher allows reassess dispatch while validation needs remediation", async () => {
   const base = makeBase();
   try {

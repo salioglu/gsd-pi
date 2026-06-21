@@ -12,7 +12,9 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { loadPrompt } from "./prompt-loader.js";
-import { currentDirectoryRoot } from "./commands/context.js";
+import { currentDirectoryRoot, projectRoot, withCommandCwd } from "./commands/context.js";
+import { getUnmergedMilestoneBlockMessageForBase } from "./unmerged-milestone-guard.js";
+import { getValidationBlockMessageForBase } from "./validation-block-guard.js";
 
 /**
  * Catalog entries for commands IMPLEMENTED natively in this module.
@@ -166,6 +168,33 @@ function splitAction(args: string): { action: string; rest: string } {
   return { action: action.toLowerCase(), rest: rest.join(" ") };
 }
 
+const MANAGER_ACTIONS_NORMAL = [
+  "3. **Offer actions**, one at a time:",
+  "   - Switch the active milestone (`/gsd queue`).",
+  "   - Reorder queued milestones (`/gsd queue`).",
+  "   - Park or unpark a milestone (`/gsd park` / `/gsd unpark`).",
+  "   - Start/stop auto-mode on the active milestone (`/gsd auto` / `/gsd stop`).",
+  "   - Run parallel milestones (`/gsd parallel`).",
+].join("\n");
+
+const MANAGER_SUCCESS_NORMAL = [
+  "- The dashboard reflects canonical milestone state, not memory.",
+  "- Actions route to the real gsd-pi commands, not duplicates.",
+  "- Dependency analysis (when requested) is grounded in actual file/API overlap.",
+].join("\n");
+
+const MANAGER_SUCCESS_READ_ONLY = [
+  "- The dashboard reflects canonical milestone state, not memory.",
+  "- Read-only mode does not route to any gsd-pi command.",
+  "- Dependency analysis (when requested) is grounded in actual file/API overlap.",
+].join("\n");
+
+const MANAGER_SELECTION_NORMAL =
+  "5. **Act on the selection** by routing to the matching gsd-pi command — do not reimplement queue/park/parallel logic inline.";
+
+const MANAGER_SELECTION_READ_ONLY =
+  "5. **Skip action routing.** Do not act on selections or invoke gsd-pi commands while this blocker is present.";
+
 async function dispatchGSDCommand(
   command: string,
   ctx: ExtensionCommandContext,
@@ -173,6 +202,46 @@ async function dispatchGSDCommand(
 ): Promise<void> {
   const { handleGSDCommand } = await import("./commands/dispatcher.js");
   await handleGSDCommand(command, ctx, pi);
+}
+
+function managerReadOnlyActions(blocker: string): string {
+  return [
+    "3. **Stay read-only.** Only display the dashboard and blockers.",
+    "",
+    "Do not offer actions or route to queue, park, auto-mode, or parallel commands until the blocker is resolved.",
+    "",
+    "Blocked state:",
+    blocker,
+  ].join("\n");
+}
+
+async function resolveManagerVars(
+  args: string,
+  ctx: ExtensionCommandContext,
+): Promise<Record<string, string>> {
+  const vars: Record<string, string> = {
+    analyzeDepsFlag: flagPhrase(/(?:^|\s)--analyze-deps(?=\s|$)/.test(args)),
+    managerActions: MANAGER_ACTIONS_NORMAL,
+    managerSelectionStep: MANAGER_SELECTION_NORMAL,
+    managerSuccessCriteria: MANAGER_SUCCESS_NORMAL,
+  };
+
+  if (!ctx.cwd) return vars;
+
+  return withCommandCwd(ctx.cwd, async () => {
+    const base = projectRoot();
+    const blocker =
+      await getUnmergedMilestoneBlockMessageForBase(base, "manager") ??
+      await getValidationBlockMessageForBase(base, "manager");
+    if (!blocker) return vars;
+
+    return {
+      ...vars,
+      managerActions: managerReadOnlyActions(blocker),
+      managerSelectionStep: MANAGER_SELECTION_READ_ONLY,
+      managerSuccessCriteria: MANAGER_SUCCESS_READ_ONLY,
+    };
+  });
 }
 
 // ─── Individual command handlers ─────────────────────────────────────────────
@@ -796,12 +865,13 @@ export async function handleResumeWork(_args: string, ctx: ExtensionCommandConte
 
 /** /gsd manager [--analyze-deps] */
 export async function handleManager(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
+  const vars = await resolveManagerVars(args, ctx);
   dispatchPrompt(
     {
       prompt: "manager",
       customType: "gsd-manager",
       verb: "Manager",
-      vars: { analyzeDepsFlag: flagPhrase(/(?:^|\s)--analyze-deps(?=\s|$)/.test(args)) },
+      vars,
     },
     ctx,
     pi,
