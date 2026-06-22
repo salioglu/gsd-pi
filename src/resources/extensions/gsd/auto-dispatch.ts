@@ -1542,6 +1542,8 @@ export const DISPATCH_RULES: DispatchRule[] = [
         existsSync(slicePlanPath) &&
         (slicePlanPath === phasesRoot || slicePlanPath.startsWith(`${phasesRoot}${sep}`)),
       );
+      // tasksEmbeddedInSlicePlan is true when the slice plan lives under phases/
+      // (flat-phase layout where tasks are checkboxes inside the plan file).
       const projectionTaskPlanPath = join(
         gsdProjectionRoot(artifactBasePath),
         "milestones",
