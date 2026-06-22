@@ -368,11 +368,14 @@ function importHierarchyArtifacts(gsdDir: string): number {
     // Find the phase directory (flat-phase: NN-slug, or legacy M001-slug)
     let phaseDirName: string | null = null;
     const phaseNum = milestoneIdToPhaseNum(milestoneId);
-    const flatPrefix = `${String(phaseNum).padStart(2, '0')}-`;
+    const paddedPhase = String(phaseNum).padStart(2, '0');
     try {
       for (const entry of readdirSync(phasesDir, { withFileTypes: true })) {
         if (entry.isDirectory()) {
-          if (entry.name.startsWith(flatPrefix)) { phaseDirName = entry.name; break; }
+          // Exact numeric prefix match: extract the leading digits before the first '-'
+          // and compare to the padded phase number.  Avoids '01-' matching '010-foo'.
+          const numMatch = entry.name.match(/^(\d+)-/);
+          if (numMatch && numMatch[1] === paddedPhase) { phaseDirName = entry.name; break; }
           if (entry.name.startsWith(milestoneId)) { phaseDirName = entry.name; break; }
         }
       }
@@ -635,9 +638,10 @@ function findFileByPrefixAndSuffix(dir: string, idPrefix: string, suffix: string
     const target = `${idPrefix}-${suffix}.md`.toUpperCase();
     const direct = entries.find(e => e.toUpperCase() === target);
     if (direct) return direct;
-    // Legacy: ID-DESCRIPTOR-SUFFIX.md
+    // Legacy: ID-DESCRIPTOR-SUFFIX.md — exclude double-numbered (NN-NN-*) slice
+    // files so a phase-prefix like "01" never matches a slice file "01-01-SUMMARY.md".
     const pattern = new RegExp(`^${idPrefix}-.*-${suffix}\\.md$`, 'i');
-    const match = entries.find(e => pattern.test(e));
+    const match = entries.find(e => pattern.test(e) && !/^\d+-\d+-/.test(e));
     return match ?? null;
   } catch {
     return null;

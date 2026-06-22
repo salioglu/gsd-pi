@@ -613,10 +613,15 @@ function resolvePhaseDir(basePath: string, milestoneId: string): string | null {
   const phasesDir = milestonesDir(basePath);
   if (existsSync(phasesDir)) {
     const phaseNum = milestoneIdToPhaseNum(milestoneId);
-    const prefix = `${String(phaseNum).padStart(2, "0")}-`;
+    const padded = String(phaseNum).padStart(2, "0");
     try {
       for (const entry of readdirSync(phasesDir, { withFileTypes: true })) {
-        if (entry.isDirectory() && entry.name.startsWith(prefix)) {
+        if (!entry.isDirectory()) continue;
+        // Exact numeric prefix match: extract the digits before the first '-' and
+        // compare directly.  startsWith("01-") is technically safe but a regex
+        // makes the intent unambiguous and prevents any edge-case ambiguity.
+        const numMatch = entry.name.match(/^(\d+)-/);
+        if (numMatch && numMatch[1] === padded) {
           return join(phasesDir, entry.name);
         }
       }
@@ -779,8 +784,13 @@ export function resolveTaskFile(
  * Build relative .gsd/ path to a milestone directory.
  * Uses the actual directory name on disk if it exists, otherwise the canonical
  * flat-phase dir name the renderer will create (NN-slug).
+ *
+ * Pass `title` when the milestone title is available so the fallback slug
+ * matches what the renderer will create.  Without a title the phase number is
+ * used as a placeholder (no DB import is allowed here — db/engine uses
+ * import.meta.url which breaks the Next.js SSR build path).
  */
-export function relMilestonePath(basePath: string, milestoneId: string): string {
+export function relMilestonePath(basePath: string, milestoneId: string, title?: string): string {
   // resolvePhaseDir handles both flat-phase (phases/NN-*) and legacy (milestones/M001).
   const phaseDir = resolvePhaseDir(basePath, milestoneId);
   if (phaseDir) {
@@ -792,9 +802,11 @@ export function relMilestonePath(basePath: string, milestoneId: string): string 
     }
     return `.gsd/${LAYOUT_SEGMENTS.level1}/${name}`;
   }
-  // No dir on disk yet — derive canonical flat-phase name without a DB lookup
-  // (avoids importing db/queries which pulls in import.meta via db/engine).
-  return `.gsd/${LAYOUT_SEGMENTS.level1}/${canonicalPhaseDirName(milestoneId)}`;
+  // No dir on disk yet — derive canonical flat-phase name.
+  // If the caller provides the milestone title, the slug will match what the
+  // renderer creates (e.g. "01-foundation").  Without a title, falls back to
+  // the milestone ID as the slug placeholder (e.g. "01-m001").
+  return `.gsd/${LAYOUT_SEGMENTS.level1}/${canonicalPhaseDirName(milestoneId, title)}`;
 }
 
 /**

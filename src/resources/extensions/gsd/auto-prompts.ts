@@ -1960,7 +1960,7 @@ export async function buildResearchMilestonePrompt(mid: string, midTitle: string
   return loadPrompt("research-milestone", {
     workingDirectory: base,
     milestoneId: mid, milestoneTitle: midTitle,
-    milestonePath: relMilestonePath(base, mid),
+    milestonePath: relMilestonePath(base, mid, midTitle),
     contextPath: relMilestoneFile(base, mid, "CONTEXT"),
     outputPath: join(base, outputRelPath),
     inlinedContext,
@@ -2117,7 +2117,7 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
   return loadPrompt("plan-milestone", {
     workingDirectory: base,
     milestoneId: mid, milestoneTitle: midTitle,
-    milestonePath: relMilestonePath(base, mid),
+    milestonePath: relMilestonePath(base, mid, midTitle),
     contextPath: contextRel,
     researchPath: researchRel,
     researchOutputPath,
@@ -3178,9 +3178,9 @@ export async function buildCompleteMilestonePrompt(
   );
   emitPromptContextTelemetry("complete-milestone", contextTelemetry, inlinedContext);
 
-  const milestoneSummaryPath = join(base, `${relMilestonePath(base, mid)}/${mid}-SUMMARY.md`);
+  const milestoneSummaryPath = join(base, `${relMilestonePath(base, mid, midTitle)}/${mid}-SUMMARY.md`);
 
-  const learningsRelPath = join(relMilestonePath(base, mid), `${mid}-LEARNINGS.md`);
+  const learningsRelPath = join(relMilestonePath(base, mid, midTitle), `${mid}-LEARNINGS.md`);
   const learningsAbsPath = join(base, learningsRelPath);
   const extractLearningsSteps = buildExtractionStepsBlock({
     milestoneId: mid,
@@ -3417,8 +3417,8 @@ export async function buildValidateMilestonePrompt(
   );
   emitPromptContextTelemetry("validate-milestone", contextTelemetry, inlinedContext);
 
-  const validationOutputPath = join(base, `${relMilestonePath(base, mid)}/${mid}-VALIDATION.md`);
-  const roadmapOutputPath = `${relMilestonePath(base, mid)}/${mid}-ROADMAP.md`;
+  const validationOutputPath = join(base, `${relMilestonePath(base, mid, midTitle)}/${mid}-VALIDATION.md`);
+  const roadmapOutputPath = `${relMilestonePath(base, mid, midTitle)}/${mid}-ROADMAP.md`;
 
   // Every milestone validation turn owns MV01–MV04 unconditionally: the
   // registry is the source of truth for which gates the validator must
