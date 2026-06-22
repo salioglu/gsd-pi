@@ -16,6 +16,8 @@ import {
   relMilestoneFile,
   relSliceFile,
   buildTaskFileName,
+  resolveSlicePath,
+  resolveTasksDir,
 } from "./paths.js";
 import { milestoneIdToPhaseNum } from "./layout-policy.js";
 import { parseUnitId } from "./unit-id.js";
@@ -173,10 +175,12 @@ export function resolveExpectedArtifactPath(
       return resolveSliceArtifactPath(base, mid, sid!, "ASSESSMENT");
     }
     case "execute-task": {
-      const dir = resolveProjectedSlicePath(base, mid, sid!) ?? resolveProjectSlicePath(base, mid, sid!);
-      return dir && tid
-        ? join(dir, "tasks", buildTaskFileName(tid, "SUMMARY"))
-        : null;
+      const slicePath = resolveProjectedSlicePath(base, mid, sid!)
+        ?? resolveProjectSlicePath(base, mid, sid!)
+        ?? resolveSlicePath(base, mid, sid!);
+      if (!slicePath || !tid) return null;
+      const tasksDir = resolveTasksDir(base, mid, sid!) ?? slicePath;
+      return join(tasksDir, buildTaskFileName(tid, "SUMMARY"));
     }
     case "complete-slice": {
       return resolveSliceArtifactPath(base, mid, sid!, "SUMMARY");

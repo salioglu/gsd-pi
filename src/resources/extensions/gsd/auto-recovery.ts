@@ -57,6 +57,7 @@ import {
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 
+import { LAYOUT_SEGMENTS } from "./layout-policy.js";
 import { dirname, join } from "node:path";
 import {
   resolveExpectedArtifactPath,
@@ -321,8 +322,9 @@ function escapeRegExp(value: string): string {
 }
 
 function hasCheckedTaskCompletionOnDisk(base: string, mid: string, sid: string, tid: string): boolean {
-  const tasksDir = resolveTasksDir(base, mid, sid);
-  if (!tasksDir) return false;
+  const slicePath = resolveSlicePath(base, mid, sid);
+  if (!slicePath) return false;
+  const tasksDir = resolveTasksDir(base, mid, sid) ?? slicePath;
   if (!existsSync(join(tasksDir, `${tid}-SUMMARY.md`))) return false;
 
   const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
@@ -610,16 +612,17 @@ export function verifyExpectedArtifact(
         // plan files are projections, not the source of truth (#plan-slice-db-primary).
         if (!dbPrimary && taskIds && taskIds.length > 0) {
           const tasksDir = join(dirname(absPath), "tasks");
-          if (!existsSync(tasksDir)) {
+          if (existsSync(tasksDir)) {
+            for (const tid of taskIds) {
+              const taskPlanFile = join(tasksDir, `${tid}-PLAN.md`);
+              if (!existsSync(taskPlanFile)) {
+                logWarning("recovery", `verify-fail ${unitType} ${unitId}: task plan missing ${taskPlanFile}`);
+                return false;
+              }
+            }
+          } else if (!absPath.includes(join(".gsd", LAYOUT_SEGMENTS.level1))) {
             logWarning("recovery", `verify-fail ${unitType} ${unitId}: tasks dir missing at ${tasksDir}`);
             return false;
-          }
-          for (const tid of taskIds) {
-            const taskPlanFile = join(tasksDir, `${tid}-PLAN.md`);
-            if (!existsSync(taskPlanFile)) {
-              logWarning("recovery", `verify-fail ${unitType} ${unitId}: task plan missing ${taskPlanFile}`);
-              return false;
-            }
           }
         }
       } catch (err) {
