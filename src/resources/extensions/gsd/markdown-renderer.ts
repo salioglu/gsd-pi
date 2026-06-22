@@ -541,12 +541,18 @@ export async function renderMilestoneArtifactsFromDb(
     );
   mkdirSync(phaseDir, { recursive: true });
 
+  const legacyBase = legacyMilestonesDir(basePath);
+  const isLegacy = phaseDir.startsWith(legacyBase + "/") || phaseDir.startsWith(legacyBase + "\\");
+
   let wrote = false;
   for (const artifact of artifacts) {
     if (artifact.artifact_type === "ROADMAP") continue;
     if (!artifact.full_content.trim()) continue;
 
-    const absPath = join(phaseDir, buildMilestoneFileName(milestoneId, artifact.artifact_type));
+    const fileName = isLegacy
+      ? `${milestoneId}-${artifact.artifact_type}.md`
+      : buildMilestoneFileName(milestoneId, artifact.artifact_type);
+    const absPath = join(phaseDir, fileName);
     const artifactPath = toArtifactPath(absPath, basePath);
     await writeAndStore(absPath, artifactPath, artifact.full_content, {
       artifact_type: artifact.artifact_type,

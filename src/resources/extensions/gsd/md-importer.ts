@@ -365,6 +365,7 @@ function importHierarchyArtifacts(gsdDir: string): number {
   const phasesDir = milestonesDir(gsdDir);
 
   for (const milestoneId of milestoneIds) {
+    const legacyDir = legacyMilestonesDir(gsdDir);
     // Find the phase directory (flat-phase: NN-slug, or legacy M001-slug)
     let phaseDirName: string | null = null;
     const phaseNum = milestoneIdToPhaseNum(milestoneId);
@@ -382,12 +383,19 @@ function importHierarchyArtifacts(gsdDir: string): number {
     } catch { logWarning("migration", `phases dir unreadable for ${milestoneId} — skipping phase scan`); }
 
     if (!phaseDirName) {
-      const legacyDir = legacyMilestonesDir(gsdDir);
       const milestoneDirName = findDirByPrefix(legacyDir, milestoneId);
       if (!milestoneDirName) continue;
       count += importLegacyMilestoneArtifacts(
         join(legacyDir, milestoneDirName),
         milestoneDirName,
+        milestoneId,
+      );
+      continue;
+    }
+    if (phasesDir === legacyDir) {
+      count += importLegacyMilestoneArtifacts(
+        join(legacyDir, phaseDirName),
+        phaseDirName,
         milestoneId,
       );
       continue;
@@ -498,7 +506,6 @@ function importHierarchyArtifacts(gsdDir: string): number {
     }
 
     // Partial migration may leave nested milestones/M00N/ content alongside phases/.
-    const legacyDir = legacyMilestonesDir(gsdDir);
     const milestoneDirName = findDirByPrefix(legacyDir, milestoneId);
     if (milestoneDirName) {
       count += importLegacyMilestoneArtifacts(

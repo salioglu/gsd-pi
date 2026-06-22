@@ -48,7 +48,6 @@ import {
   buildMilestoneFileName,
   buildTaskFileName,
   gsdProjectionRoot,
-  milestonesDir,
 } from "./paths.js";
 import { validateArtifact } from "./schemas/validate.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
@@ -1536,7 +1535,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // skip recovery when the plan lives under phases/.
       const taskPlanPath = resolveTaskFile(artifactBasePath, mid, sid, tid, "PLAN");
       const slicePlanPath = resolveSliceFile(artifactBasePath, mid, sid, "PLAN");
-      const phasesRoot = milestonesDir(artifactBasePath);
+      const phasesRoot = join(gsdProjectionRoot(artifactBasePath), "phases");
       const tasksEmbeddedInSlicePlan = Boolean(
         slicePlanPath &&
         existsSync(slicePlanPath) &&
