@@ -240,7 +240,11 @@ function _parsePlanImpl(content: string): SlicePlan {
     let currentTask: TaskPlanEntry | null = null;
 
     for (const line of lines) {
-      const cbMatch = line.match(/^-\s+\[([ xX])\]\s+\*\*([\w.]+):\s+(.+?)\*\*\s*(.*)/);
+      // Match both formats:
+      //   Legacy:  - [x] **T01: Title** `est:30m`
+      //   Flat-phase: - [x] **T01**: Title _(30m)_
+      const cbMatch = line.match(/^-\s+\[([ xX])\]\s+\*\*([\w.]+):\s+(.+?)\*\*\s*(.*)/)
+        || line.match(/^-\s+\[([ xX])\]\s+\*\*([\w.]+)\*\*:\s+(.+?)\s*(?:_\(([^)]*)\)_\s*)?$/);
       // Heading-style: ### T01 -- Title, ### T01: Title, ### T01 — Title
       const hdMatch = !cbMatch
         ? line.match(/^#{2,4}\s+([A-Z]+\d+(?:\.[A-Z]+\d+)*)\s*(?:--|—|:)\s*(.+)/)
@@ -255,15 +259,27 @@ function _parsePlanImpl(content: string): SlicePlan {
         if (currentTask) tasks.push(currentTask);
 
         if (cbMatch) {
-          const rest = cbMatch[4] || '';
-          const estMatch = rest.match(/`est:([^`]+)`/);
-          const estimate = estMatch ? estMatch[1] : '';
+          // Two regex alternatives — distinguish by the shape of group 4.
+          // Legacy: group 4 = trailing text (may contain `est:X`). Title in group 3.
+          // Flat-phase: group 4 = estimate value directly (e.g. "30m"). Title in group 3.
+          const group4 = cbMatch[4] || '';
+          const title = (cbMatch[3] || '').trim();
+          let estimate = '';
+
+          // Legacy `est:X` tag
+          const estMatch = group4.match(/`est:([^`]+)`/);
+          if (estMatch) {
+            estimate = estMatch[1]!;
+          } else if (group4) {
+            // Flat-phase: the estimate value was captured directly
+            estimate = group4;
+          }
 
           currentTask = {
             id: cbMatch[2],
-            title: cbMatch[3],
+            title,
             description: '',
-            done: cbMatch[1].toLowerCase() === 'x',
+            done: cbMatch[1]!.toLowerCase() === 'x',
             estimate,
           };
         } else {
