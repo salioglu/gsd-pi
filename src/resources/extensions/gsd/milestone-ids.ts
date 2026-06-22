@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { logWarning } from "./workflow-logger.js";
 import { readdirSync, existsSync } from "node:fs";
 import { milestonesDir, gsdProjectionRoot } from "./paths.js";
+import { LAYOUT_SEGMENTS } from "./layout-policy.js";
 import { loadQueueOrder, sortByQueueOrder } from "./queue-order.js";
 import { getErrorMessage } from "./error-utils.js";
 
@@ -166,9 +167,12 @@ function scanMilestoneIdsFromDir(dir: string): string[] {
 
 /** Scan the milestones directory and return IDs sorted by queue order (or numeric fallback). */
 export function findMilestoneIds(basePath: string): string[] {
+  const root = gsdProjectionRoot(basePath);
   const dirs = [milestonesDir(basePath)];
-  const legacyDir = join(gsdProjectionRoot(basePath), "milestones");
+  const legacyDir = join(root, "milestones");
   if (legacyDir !== dirs[0] && existsSync(legacyDir)) dirs.push(legacyDir);
+  const phasesDir = join(root, LAYOUT_SEGMENTS.level1);
+  if (phasesDir !== dirs[0] && existsSync(phasesDir)) dirs.push(phasesDir);
 
   const ids = new Set<string>();
   for (const dir of dirs) {

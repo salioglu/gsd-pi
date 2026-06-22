@@ -612,8 +612,9 @@ export function legacyMilestonesDir(basePath: string): string {
  * Returns the full path or null if not found.
  */
 function resolvePhaseDir(basePath: string, milestoneId: string): string | null {
-  // Try flat-phase layout first: phases/NN-slug/
-  const phasesDir = milestonesDir(basePath);
+  // Try flat-phase layout first: phases/NN-slug/ (always scan phases/, even when
+  // legacy milestones/ coexists during partial migration).
+  const phasesDir = join(gsdProjectionRoot(basePath), LAYOUT_SEGMENTS.level1);
   if (existsSync(phasesDir)) {
     const phaseNum = milestoneIdToPhaseNum(milestoneId);
     const padded = String(phaseNum).padStart(2, "0");
