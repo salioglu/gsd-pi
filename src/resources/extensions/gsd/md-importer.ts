@@ -722,16 +722,27 @@ export function migrateHierarchyToDb(basePath: string): {
         let taskStatus: string = taskEntry.done ? 'complete' : 'pending';
 
         // Pre-migration consistency: if task is marked done in the plan but has
-        // no summary file on disk, import as 'pending' so it gets re-executed
-        // rather than silently importing bad state as the new DB authority.
+        // no completion evidence on disk, import as 'pending' so it gets
+        // re-executed rather than silently importing bad state as the new DB authority.
         if (taskStatus === 'complete') {
           const tDir = resolveTasksDir(basePath, milestoneId, sliceEntry.id);
           if (tDir) {
+            // Legacy layout: each task has its own SUMMARY.md as completion evidence.
             const summaryFile = join(tDir, `${taskEntry.id}-SUMMARY.md`);
             if (!existsSync(summaryFile)) {
               taskStatus = 'pending';
               process.stderr.write(
                 `gsd-migrate: ${milestoneId}/${sliceEntry.id}/${taskEntry.id} marked done but missing summary — importing as pending\n`,
+              );
+            }
+          } else {
+            // Flat-phase layout: no per-task summary files. The slice-level SUMMARY
+            // is the completion evidence — if it's absent the task may not truly be done.
+            const sliceSummaryPath = resolveSliceFile(basePath, milestoneId, sliceEntry.id, 'SUMMARY');
+            if (!sliceSummaryPath) {
+              taskStatus = 'pending';
+              process.stderr.write(
+                `gsd-migrate: ${milestoneId}/${sliceEntry.id}/${taskEntry.id} marked done but slice has no SUMMARY — importing as pending\n`,
               );
             }
           }
