@@ -146,6 +146,13 @@ export function findMilestoneIds(basePath: string): string[] {
     const ids = readdirSync(dir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => {
+        // Flat-phase layout: NN-slug → M00N
+        const flatMatch = d.name.match(/^(\d+)-/);
+        if (flatMatch) {
+          const phaseNum = parseInt(flatMatch[1]!, 10);
+          return `M${String(phaseNum).padStart(3, "0")}`;
+        }
+        // Legacy layout: M001 or M001-abcdef
         const match = d.name.match(/^(M\d+(?:-[a-z0-9]{6})?)/);
         return match ? match[1] : null;
       })
@@ -155,9 +162,8 @@ export function findMilestoneIds(basePath: string): string[] {
     const customOrder = loadQueueOrder(basePath);
     return sortByQueueOrder(ids, customOrder);
   } catch (err) {
-    // Log why milestone scanning failed — silent [] here causes infinite loops (#456)
     if (existsSync(dir)) {
-      logWarning("engine", `findMilestoneIds: .gsd/milestones/ exists but readdirSync failed — ${getErrorMessage(err)}`);
+      logWarning("engine", `findMilestoneIds: ${dir} exists but readdirSync failed — ${getErrorMessage(err)}`);
     }
     return [];
   }

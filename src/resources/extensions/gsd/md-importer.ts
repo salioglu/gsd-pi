@@ -359,74 +359,113 @@ function importHierarchyArtifacts(gsdDir: string): number {
     }
   }
 
-  // Walk milestones
+  // Walk phases (flat-phase layout: phases/NN-slug/)
   const milestoneIds = findMilestoneIds(gsdDir);
-  const msDir = milestonesDir(gsdDir);
+  const phasesDir = milestonesDir(gsdDir);
 
   for (const milestoneId of milestoneIds) {
-    // Find the actual milestone directory name (handles legacy naming)
-    const milestoneDirName = findDirByPrefix(msDir, milestoneId);
-    if (!milestoneDirName) continue;
-    const milestoneFullPath = join(msDir, milestoneDirName);
+    // Find the phase directory (flat-phase: NN-slug, or legacy M001-slug)
+    let phaseDirName: string | null = null;
+    const phaseNum = parseInt(milestoneId.match(/^M0*(\d+)$/i)?.[1] || '0', 10);
+    const flatPrefix = `${String(phaseNum).padStart(2, '0')}-`;
+    try {
+      for (const entry of readdirSync(phasesDir, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          // Flat-phase: NN-slug
+          if (entry.name.startsWith(flatPrefix)) { phaseDirName = entry.name; break; }
+          // Legacy: M001-slug
+          if (entry.name.startsWith(milestoneId)) { phaseDirName = entry.name; break; }
+        }
+      }
+    } catch { /* unreadable */ }
+    if (!phaseDirName) continue;
+    const phaseFullPath = join(phasesDir, phaseDirName);
 
-    // Milestone-level files
+    // Phase-level files (flat-phase: NN-SUFFIX.md, legacy: M001-SUFFIX.md)
     count += importFilesAtLevel(
-      milestoneFullPath,
+      phaseFullPath,
       milestoneId,
       MILESTONE_SUFFIXES,
-      `milestones/${milestoneDirName}`,
+      `phases/${phaseDirName}`,
       milestoneId,
       null,
       null,
     );
 
-    // Walk slices
-    const slicesDir = join(milestoneFullPath, 'slices');
-    if (!existsSync(slicesDir)) continue;
-
-    const sliceDirs = readdirSync(slicesDir, { withFileTypes: true })
-      .filter(d => d.isDirectory() && /^S\d+/.test(d.name))
-      .map(d => d.name)
+    // Flat-phase: plan files are NN-MM-SUFFIX.md inside the phase dir.
+    // Also check legacy slices/ subdir for backward compat.
+    const planFiles = readdirSync(phaseFullPath, { withFileTypes: true })
+      .filter(f => f.isFile() && /^\d+-\d+-/.test(f.name))
+      .map(f => f.name)
       .sort();
 
-    for (const sliceDirName of sliceDirs) {
-      const sliceId = sliceDirName.match(/^(S\d+)/)?.[1] ?? sliceDirName;
-      const sliceFullPath = join(slicesDir, sliceDirName);
+    for (const planFile of planFiles) {
+      const planMatch = planFile.match(/^\d+-(\d+)-(\w+)\.md$/i);
+      if (!planMatch) continue;
+      const planNum = parseInt(planMatch[1]!, 10);
+      const sliceId = `S${String(planNum).padStart(2, '0')}`;
+      const suffix = planMatch[2]!.toUpperCase();
+      const filePath = join(phaseFullPath, planFile);
+      if (!existsSync(filePath)) continue;
 
-      // Slice-level files
-      count += importFilesAtLevel(
-        sliceFullPath,
-        sliceId,
-        SLICE_SUFFIXES,
-        `milestones/${milestoneDirName}/slices/${sliceDirName}`,
-        milestoneId,
-        sliceId,
-        null,
-      );
+      const content = readFileSync(filePath, 'utf-8');
+      insertArtifact({
+        path: `phases/${phaseDirName}/${planFile}`,
+        artifact_type: suffix,
+        milestone_id: milestoneId,
+        slice_id: sliceId,
+        task_id: null,
+        full_content: content,
+      });
+      count++;
+    }
 
-      // Walk tasks
-      const tasksDir = join(sliceFullPath, 'tasks');
-      if (!existsSync(tasksDir)) continue;
+    // Legacy fallback: walk slices/ subdir if it exists
+    const slicesDir = join(phaseFullPath, 'slices');
+    if (existsSync(slicesDir)) {
+      const sliceDirs = readdirSync(slicesDir, { withFileTypes: true })
+        .filter(d => d.isDirectory() && /^S\d+/.test(d.name))
+        .map(d => d.name)
+        .sort();
 
-      for (const suffix of TASK_SUFFIXES) {
-        const taskFiles = resolveTaskFiles(tasksDir, suffix);
-        for (const taskFileName of taskFiles) {
-          const taskId = taskFileName.match(/^(T\d+)/)?.[1] ?? null;
-          const taskFilePath = join(tasksDir, taskFileName);
-          if (!existsSync(taskFilePath)) continue;
+      for (const sliceDirName of sliceDirs) {
+        const sliceId = sliceDirName.match(/^(S\d+)/)?.[1] ?? sliceDirName;
+        const sliceFullPath = join(slicesDir, sliceDirName);
 
-          const content = readFileSync(taskFilePath, 'utf-8');
-          const relPath = `milestones/${milestoneDirName}/slices/${sliceDirName}/tasks/${taskFileName}`;
+        count += importFilesAtLevel(
+          sliceFullPath,
+          sliceId,
+          SLICE_SUFFIXES,
+          `phases/${phaseDirName}/slices/${sliceDirName}`,
+          milestoneId,
+          sliceId,
+          null,
+        );
 
-          insertArtifact({
-            path: relPath,
-            artifact_type: suffix,
-            milestone_id: milestoneId,
-            slice_id: sliceId,
-            task_id: taskId,
-            full_content: content,
-          });
-          count++;
+        // Legacy tasks walk
+        const tasksDir = join(sliceFullPath, 'tasks');
+        if (!existsSync(tasksDir)) continue;
+
+        for (const suffix of TASK_SUFFIXES) {
+          const taskFiles = resolveTaskFiles(tasksDir, suffix);
+          for (const taskFileName of taskFiles) {
+            const taskId = taskFileName.match(/^(T\d+)/)?.[1] ?? null;
+            const taskFilePath = join(tasksDir, taskFileName);
+            if (!existsSync(taskFilePath)) continue;
+
+            const content = readFileSync(taskFilePath, 'utf-8');
+            const relPath = `phases/${phaseDirName}/slices/${sliceDirName}/tasks/${taskFileName}`;
+
+            insertArtifact({
+              path: relPath,
+              artifact_type: suffix,
+              milestone_id: milestoneId,
+              slice_id: sliceId,
+              task_id: taskId,
+              full_content: content,
+            });
+            count++;
+          }
         }
       }
     }
