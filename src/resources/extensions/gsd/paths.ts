@@ -640,9 +640,10 @@ function resolvePhaseDir(basePath: string, milestoneId: string): string | null {
 
 /**
  * Derive the canonical phase dir name for a milestone when it doesn't exist yet.
- * Used by the renderer to create new phase dirs.
+ * Used by the renderer to create new phase dirs, and by ensurePreconditions to
+ * scaffold the correct NN-slug directory on disk before the first render.
  */
-function canonicalPhaseDirName(milestoneId: string, title?: string): string {
+export function canonicalPhaseDirName(milestoneId: string, title?: string): string {
   const phaseNum = milestoneIdToPhaseNum(milestoneId);
   const slug = derivePhaseSlug(title || milestoneId);
   return phaseDirName(phaseNum, slug);

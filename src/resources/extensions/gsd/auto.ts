@@ -3008,6 +3008,9 @@ export function ensurePreconditions(
     const legacyBase = legacyMilestonesDir(base);
     const isLegacyLayout = existsSync(legacyBase);
     const targetBase = isLegacyLayout ? legacyBase : milestonesDir(base);
+    // Flat-phase: look up the milestone title to build the canonical NN-slug dir name
+    // (e.g. "01-foundation") that resolveMilestonePath will later find by prefix.
+    // Legacy layout keeps the raw milestone id (e.g. "M001").
     const dirName = isLegacyLayout
       ? mid
       : phaseDirName(
@@ -3022,6 +3025,7 @@ export function ensurePreconditions(
   if (sid !== undefined) {
     const legacyBase = legacyMilestonesDir(base);
     const isLegacyLayout = existsSync(legacyBase);
+    // Flat-phase: tasks are checkboxes in NN-MM-PLAN.md — no slices/ subdir needed.
     if (!isLegacyLayout) return;
 
     const mDirResolved = resolveMilestonePath(base, mid);
