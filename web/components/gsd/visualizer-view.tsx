@@ -1566,22 +1566,34 @@ function ChangesTab({ data }: { data: VisualizerData }) {
 
 // ─── Knowledge Tab ────────────────────────────────────────────────────────────
 
-function KnowledgeTab({ data }: { data: VisualizerData }) {
+function KnowledgeTab({ data, unfilteredData }: { data: VisualizerData; unfilteredData: VisualizerData }) {
   const knowledge = data.knowledge
   const memories = data.memories
+  const sourceKnowledge = unfilteredData.knowledge
+  const sourceMemories = unfilteredData.memories
 
-  if (!knowledge.exists && memories.entries.length === 0) {
+  if (!sourceKnowledge.exists && sourceMemories.entries.length === 0) {
     return <EmptyState message="No project knowledge file found." icon={BookOpen} />
   }
 
   if (
-    knowledge.exists &&
-    knowledge.rules.length === 0 &&
-    knowledge.patterns.length === 0 &&
-    knowledge.lessons.length === 0 &&
-    memories.entries.length === 0
+    sourceKnowledge.exists &&
+    sourceKnowledge.rules.length === 0 &&
+    sourceKnowledge.patterns.length === 0 &&
+    sourceKnowledge.lessons.length === 0 &&
+    sourceMemories.entries.length === 0
   ) {
     return <EmptyState message="Project knowledge exists but has no entries yet." icon={BookOpen} />
+  }
+
+  const hasFilteredContent =
+    knowledge.rules.length > 0 ||
+    knowledge.patterns.length > 0 ||
+    knowledge.lessons.length > 0 ||
+    memories.entries.length > 0
+
+  if (!hasFilteredContent) {
+    return <EmptyState message="No knowledge entries match your search." icon={BookOpen} />
   }
 
   return (
@@ -2209,7 +2221,7 @@ export function VisualizerView() {
               <ChangesTab data={visibleData} />
             </TabsPrimitive.Content>
             <TabsPrimitive.Content value="knowledge" className="outline-none">
-              <KnowledgeTab data={visibleData} />
+              <KnowledgeTab data={visibleData} unfilteredData={data} />
             </TabsPrimitive.Content>
             <TabsPrimitive.Content value="captures" className="outline-none">
               <CapturesTab data={visibleData} />
