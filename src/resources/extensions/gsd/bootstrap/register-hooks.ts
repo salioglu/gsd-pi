@@ -12,7 +12,7 @@ import { ALWAYS_PRESERVED_SHIM_TOOL_NAMES } from "@gsd/pi-ai";
 import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-extension-api.js";
 import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
 
-import { buildMilestoneFileName, clearPathCache, milestonesDir, legacyMilestonesDir, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
+import { buildMilestoneFileName, canonicalPhaseDirName, clearPathCache, milestonesDir, legacyMilestonesDir, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
 import { applyAskUserQuestionsGateResult, clearDiscussionFlowState, formatPendingAskUserQuestionsGateMessage, hostWriteGateAdapter, isApprovalGateVerifiedInSnapshot, isDepthConfirmationAnswer, isMilestoneDepthVerified, isMilestoneDepthVerifiedInSnapshot, isQueuePhaseActive, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeBash, shouldBlockWorktreeWrite, isGateQuestionId, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
 import { canonicalToolName } from "../engine-hook-contract.js";
 import { resolveManifest } from "../unit-context-manifest.js";
@@ -737,9 +737,13 @@ async function ensureMilestoneShell(basePath: string, milestoneId: string): Prom
   // When no milestone dir exists yet, prefer the legacy container when it is
   // already present on disk; otherwise fall back to the flat-phase container.
   const legacy = legacyMilestonesDir(basePath);
-  const container = existsSync(legacy) ? legacy : milestonesDir(basePath);
+  const isLegacyLayout = existsSync(legacy);
+  const container = isLegacyLayout ? legacy : milestonesDir(basePath);
+  const fallbackDirName = isLegacyLayout
+    ? milestoneId
+    : canonicalPhaseDirName(milestoneId, `New milestone ${milestoneId}`);
   const milestoneDir = resolveMilestonePath(basePath, milestoneId)
-    ?? join(container, milestoneId);
+    ?? join(container, fallbackDirName);
   mkdirSync(milestoneDir, { recursive: true });
   clearPathCache();
 

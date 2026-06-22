@@ -633,6 +633,8 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
         // Pending slices haven't been planned yet — tasks/ is created on demand.
         // Skipped slices may legitimately never create tasks/.
         if (slice.pending || slice.skipped) continue;
+        // Flat-phase: tasks are embedded in plan files; no tasks/ subdir expected.
+        if (!existsSync(legacyMilestonesDir(basePath))) continue;
         issues.push({
           severity: slice.done ? "warning" : "error",
           code: "missing_tasks_dir",
