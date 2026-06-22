@@ -7,8 +7,13 @@ import { join } from "node:path";
 
 import { renderAllFromDb } from "./markdown-renderer.js";
 import { getAllMilestones } from "./gsd-db.js";
+import { countDbHierarchy } from "./migration-auto-check.js";
 import { logWarning } from "./workflow-logger.js";
 import { LAYOUT_SEGMENTS } from "./layout-policy.js";
+
+function rollbackPartialMigration(basePath: string): void {
+  rmSync(join(basePath, ".gsd", LAYOUT_SEGMENTS.level1), { recursive: true, force: true });
+}
 
 /**
  * Detect whether the project uses the legacy nested layout.
@@ -35,6 +40,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
   const ts = Date.now();
   const backupDir = join(basePath, ".gsd-backups", `migrate-${ts}`);
   const milestonesPath = join(basePath, ".gsd", "milestones");
+  const phasesPath = join(basePath, ".gsd", LAYOUT_SEGMENTS.level1);
 
   // 1. Backup
   try {
@@ -45,44 +51,72 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
     throw err;
   }
 
-  // 2. Render flat-phase from DB
+  // 2. Refuse when the DB has no milestone rows — legacy milestones/ is the
+  // only on-disk hierarchy and must not be dropped without a projection.
   const milestonesBefore = getAllMilestones().length;
-  const phasesPath = join(basePath, ".gsd", LAYOUT_SEGMENTS.level1);
+  if (milestonesBefore === 0) {
+    logWarning(
+      "migration",
+      "flat-phase migration refused: legacy milestones/ exists but DB has no milestone rows",
+    );
+    throw new Error("flat-phase migration refused: no milestone data in DB");
+  }
+
+  // 3. Remove legacy tree before rendering so path resolvers target phases/
+  // instead of writing back into the nested milestones/ layout.
+  try {
+    rmSync(milestonesPath, { recursive: true, force: true });
+  } catch (err) {
+    logWarning("migration", `failed to remove legacy milestones/ before render: ${(err as Error).message}`);
+    throw err;
+  }
+
+  // 4. Render flat-phase from DB
   let renderResult: { rendered: number; skipped: number; errors: string[] };
   try {
     renderResult = await renderAllFromDb(basePath);
   } catch (err) {
     logWarning("migration", `flat-phase render failed: ${(err as Error).message}`);
-    // Restore from backup on failure — remove partial phases/ dir
-    rmSync(phasesPath, { recursive: true, force: true });
+    rollbackPartialMigration(basePath);
     throw err;
   }
 
-  // 3. Verify: no render errors and phases/ contains the expected number of dirs.
-  // (getAllMilestones() is unchanged by rendering — always use the disk count.)
+  // 5. Verify render succeeded and flat-phase projection was written
   if (renderResult.errors.length > 0) {
-    logWarning("migration", `flat-phase render errors: ${renderResult.errors.join("; ")}`);
-    rmSync(phasesPath, { recursive: true, force: true });
-    throw new Error(`flat-phase migration render failed with ${renderResult.errors.length} error(s): ${renderResult.errors[0]}`);
+    logWarning(
+      "migration",
+      `flat-phase render had ${renderResult.errors.length} error(s): ${renderResult.errors.join("; ")}`,
+    );
+    rollbackPartialMigration(basePath);
+    throw new Error(
+      `flat-phase migration render failed: ${renderResult.errors.slice(0, 3).join("; ")}`,
+    );
   }
+
+  const db = countDbHierarchy();
   let renderedDirCount = 0;
   try {
     renderedDirCount = readdirSync(phasesPath, { withFileTypes: true })
-      .filter(d => d.isDirectory()).length;
+      .filter((entry) => entry.isDirectory() && /^\d{2}-/.test(entry.name)).length;
   } catch {
     // phases/ doesn't exist or is unreadable — same as zero dirs
   }
-  if (milestonesBefore > 0 && renderedDirCount !== milestonesBefore) {
-    logWarning("migration", `phases/ dir count mismatch: expected ${milestonesBefore}, found ${renderedDirCount}`);
-    rmSync(phasesPath, { recursive: true, force: true });
+  if (db.milestones > 0 && renderedDirCount !== db.milestones) {
+    logWarning(
+      "migration",
+      `phases/ dir count mismatch: expected ${db.milestones}, found ${renderedDirCount}`,
+    );
+    rollbackPartialMigration(basePath);
     throw new Error("flat-phase migration verification failed: phases dir milestone count mismatch");
   }
-
-  // 4. Remove old tree (backup exists; phases/ is verified written)
-  try {
-    rmSync(milestonesPath, { recursive: true, force: true });
-  } catch (err) {
-    logWarning("migration", `failed to remove legacy milestones/: ${(err as Error).message}`);
-    // Non-fatal: the backup exists and phases/ is written; user can clean up manually.
+  if (db.slices > 0 && renderResult.rendered === 0) {
+    logWarning(
+      "migration",
+      "flat-phase migration verification failed: render produced no artifacts for populated DB",
+    );
+    rollbackPartialMigration(basePath);
+    throw new Error("flat-phase migration verification failed: no artifacts rendered");
   }
+
+  // Legacy milestones/ was removed before render; nothing further to clean up.
 }

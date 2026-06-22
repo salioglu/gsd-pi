@@ -6,9 +6,6 @@
 // had zero callers in production code — wiring it through
 // reconcileBeforeDispatch closes that gap.
 
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import {
   detectStaleRenders,
   renderPlanCheckboxes,
