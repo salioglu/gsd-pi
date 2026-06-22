@@ -522,9 +522,6 @@ function backfillMissingAssessmentsFromSummaries(basePath: string, mid: string):
     const summaryPath = resolveSliceFile(basePath, mid, sliceId, "SUMMARY");
     if (!summaryPath || !existsSync(summaryPath)) continue;
 
-    const slicePath = resolveSlicePath(basePath, mid, sliceId);
-    // Use relSliceFile as the "not yet created" fallback — buildSliceFileName lacks the
-    // phase number so it produces MM-SUFFIX.md, which is wrong for both layouts.
     const assessmentPath = resolveSliceFile(basePath, mid, sliceId, "ASSESSMENT")
       ?? join(basePath, relSliceFile(basePath, mid, sliceId, "ASSESSMENT"));
     if (!assessmentPath) continue;

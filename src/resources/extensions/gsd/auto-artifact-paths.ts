@@ -56,13 +56,9 @@ function resolveSliceArtifactPath(
   // Flat-phase: plan files live at phases/NN-slug/NN-MM-SUFFIX.md — resolveSliceFile handles both layouts.
   const flatPhase = resolveSliceFile(base, mid, sid, suffix);
   if (flatPhase) return flatPhase;
-  // File doesn't exist yet — use relSliceFile for the canonical "where to create it" path.
-  // buildSliceFileName only has sliceId, so it emits MM-SUFFIX.md, wrong for both layouts.
-  const dir = resolveProjectedSlicePath(base, mid, sid) ?? resolveProjectSlicePath(base, mid, sid);
   // File doesn't exist yet — use relSliceFile for the layout-aware canonical path.
   // buildSliceFileName(sid) only has sliceId → MM-SUFFIX.md, wrong for both layouts.
-  if (dir) return join(base, relSliceFile(base, mid, sid, suffix));
-  return null;
+  return join(base, relSliceFile(base, mid, sid, suffix));
 }
 
 function resolveProjectMilestonePath(base: string, mid: string): string | null {
