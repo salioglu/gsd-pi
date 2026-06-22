@@ -596,23 +596,40 @@ export function milestonesDir(basePath: string): string {
 }
 
 /**
+ * Legacy milestones directory (pre-flat-phase). Used as a fallback for
+ * projects that haven't been migrated yet. The migration (flat-phase-migration.ts)
+ * moves content from here to phases/ on startup.
+ */
+function legacyMilestonesDir(basePath: string): string {
+  return join(gsdProjectionRoot(basePath), "milestones");
+}
+
+/**
  * Resolve a phase directory by milestone id using the flat-phase layout.
  * Scans phases/ for a dir whose zero-padded number prefix matches the milestone.
  * Returns the full path or null if not found.
  */
 function resolvePhaseDir(basePath: string, milestoneId: string): string | null {
+  // Try flat-phase layout first: phases/NN-slug/
   const phasesDir = milestonesDir(basePath);
-  if (!existsSync(phasesDir)) return null;
-  const phaseNum = milestoneIdToPhaseNum(milestoneId);
-  const prefix = `${String(phaseNum).padStart(2, "0")}-`;
-  try {
-    for (const entry of readdirSync(phasesDir, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name.startsWith(prefix)) {
-        return join(phasesDir, entry.name);
+  if (existsSync(phasesDir)) {
+    const phaseNum = milestoneIdToPhaseNum(milestoneId);
+    const prefix = `${String(phaseNum).padStart(2, "0")}-`;
+    try {
+      for (const entry of readdirSync(phasesDir, { withFileTypes: true })) {
+        if (entry.isDirectory() && entry.name.startsWith(prefix)) {
+          return join(phasesDir, entry.name);
+        }
       }
+    } catch {
+      // unreadable — fall through
     }
-  } catch {
-    // unreadable — fall through
+  }
+  // Legacy fallback: milestones/M001/ (pre-flat-phase layout)
+  const legacyDir = legacyMilestonesDir(basePath);
+  if (existsSync(legacyDir)) {
+    const legacy = resolveDir(legacyDir, milestoneId);
+    if (legacy) return join(legacyDir, legacy);
   }
   return null;
 }

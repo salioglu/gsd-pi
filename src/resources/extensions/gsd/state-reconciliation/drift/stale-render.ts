@@ -16,7 +16,7 @@ import {
   renderSliceSummary,
   renderTaskSummary,
 } from "../../markdown-renderer.js";
-import { getMilestone, getSlice, setSliceSummaryMd } from "../../gsd-db.js";
+import { getMilestone, getMilestoneSlices, getSlice, getSliceTasks, setSliceSummaryMd } from "../../gsd-db.js";
 import { buildSliceFileName } from "../../paths.js";
 import type { GSDState } from "../../types.js";
 import { logWarning } from "../../workflow-logger.js";
@@ -70,11 +70,21 @@ function canonicalizeMilestoneId(dirSegment: string): string {
   const baseId = dirSegment.match(/^(M\d+)(?:$|-)/i)?.[1];
   if (baseId && getMilestone(baseId)) return baseId;
 
+  // Flat-phase: e.g. 01-test → M001
+  const phaseMatch = dirSegment.match(/^(\d+)-/);
+  if (phaseMatch) {
+    const flatId = `M${String(parseInt(phaseMatch[1]!, 10)).padStart(3, "0")}`;
+    if (getMilestone(flatId)) return flatId;
+  }
+
   return suffixId ?? baseId ?? dirSegment;
 }
 
 function resolveRoadmapMilestoneIdFromPath(normPath: string): string {
-  const milestoneMatch = normPath.match(/milestones\/([^/]+)\//);
+  // Flat-phase: phases/NN-slug/NN-ROADMAP.md
+  // Legacy: milestones/MID/MID-ROADMAP.md
+  const milestoneMatch = normPath.match(/phases\/([^/]+)\//)
+    || normPath.match(/milestones\/([^/]+)\//);
   if (!milestoneMatch) {
     throw new Error(
       `stale-render drift: roadmap path missing milestone segment: ${normPath}`,
@@ -82,11 +92,15 @@ function resolveRoadmapMilestoneIdFromPath(normPath: string): string {
   }
 
   const fileMatch = normPath.match(/(?:^|\/)([^/]+)-ROADMAP\.md$/i);
+  // For flat-phase, derive milestone id from phase number prefix
+  const phaseNumMatch = milestoneMatch[1]!.match(/^(\d+)-/);
+  const phaseDerivedId = phaseNumMatch ? `M${String(parseInt(phaseNumMatch[1]!, 10)).padStart(3, "0")}` : null;
   const candidates = [
     fileMatch?.[1],
     milestoneMatch[1],
+    phaseDerivedId,
     fileMatch?.[1]?.match(/^(M\d+)/i)?.[1],
-    milestoneMatch[1].match(/^(M\d+)/i)?.[1],
+    milestoneMatch[1]!.match(/^(M\d+)/i)?.[1],
   ].filter((candidate): candidate is string => !!candidate);
 
   for (const candidate of candidates) {
@@ -112,17 +126,23 @@ async function repairStaleRenderFromBasePath(
   }
 
   if (reason.includes("in plan")) {
-    const pathMatch = normPath.match(/milestones\/([^/]+)\/slices\/([^/]+)\//);
+    // Flat-phase: phases/NN-slug/NN-MM-PLAN.md
+    // Legacy: milestones/X/slices/Y/PLAN.md
+    const pathMatch = normPath.match(/phases\/([^/]+)\/(\d+)-(\d+)-PLAN/)
+      || normPath.match(/milestones\/([^/]+)\/slices\/([^/]+)\//);
     if (!pathMatch) {
       throw new Error(
         `stale-render drift: plan path missing milestone/slice segments: ${record.renderPath}`,
       );
     }
-    const milestoneId = canonicalizeMilestoneId(pathMatch[1]);
+    const milestoneId = canonicalizeMilestoneId(pathMatch[1]!);
+    const sliceId = pathMatch[2] && pathMatch[3] && /^\d+$/.test(pathMatch[2])
+      ? `S${String(parseInt(pathMatch[3]!, 10)).padStart(2, "0")}`
+      : pathMatch[2]!;
     const wrote = await renderPlanCheckboxes(
       basePath,
       milestoneId,
-      pathMatch[2],
+      sliceId,
       record.renderPath,
     );
     if (!wrote) {
@@ -135,21 +155,38 @@ async function repairStaleRenderFromBasePath(
   }
 
   if (reason.includes("SUMMARY.md missing") && /^T\d+/.test(reason)) {
-    const pathMatch = normPath.match(
-      /milestones\/([^/]+)\/slices\/([^/]+)\/tasks\//,
-    );
+    // Flat-phase: phases/NN-slug/ (no tasks/ subdir, task summaries in phase dir)
+    // Legacy: milestones/X/slices/Y/tasks/
+    const pathMatch = normPath.match(/phases\/([^/]+)\//)
+      || normPath.match(
+        /milestones\/([^/]+)\/slices\/([^/]+)\/tasks\//,
+      );
     const taskMatch = reason.match(/^(T\d+)/);
     if (!pathMatch || !taskMatch) {
       throw new Error(
         `stale-render drift: task summary path/reason malformed: ${record.renderPath} reason=${reason}`,
       );
     }
-    const milestoneId = canonicalizeMilestoneId(pathMatch[1]);
-    const wrote = await renderTaskSummary(basePath, milestoneId, pathMatch[2], taskMatch[1]);
+    const milestoneId = canonicalizeMilestoneId(pathMatch[1]!);
+    // In flat-phase there's no slice segment in the path; find the task's slice from DB.
+    let sliceId: string;
+    if (pathMatch[2]) {
+      sliceId = pathMatch[2];
+    } else {
+      // Flat-phase: scan milestone's slices for the task
+      sliceId = "S01";
+      for (const s of getMilestoneSlices(milestoneId)) {
+        if (getSliceTasks(milestoneId, s.id).some(t => t.id === taskMatch[1])) {
+          sliceId = s.id;
+          break;
+        }
+      }
+    }
+    const wrote = await renderTaskSummary(basePath, milestoneId, sliceId, taskMatch[1]!);
     if (!wrote) {
       throw new Error(
         `stale-render drift: task summary re-render wrote nothing for ` +
-          `${milestoneId}/${pathMatch[2]}/${taskMatch[1]} (${record.renderPath}); ` +
+          `${milestoneId}/${sliceId}/${taskMatch[1]} (${record.renderPath}); ` +
           `task has no summary in DB or its slice path is unresolvable`,
       );
     }
@@ -157,14 +194,34 @@ async function repairStaleRenderFromBasePath(
   }
 
   if (reason.includes("SUMMARY.md missing") && /^S\d+/.test(reason)) {
-    const pathMatch = normPath.match(/milestones\/([^/]+)\/slices\/([^/]+)\//);
+    // Flat-phase: phases/NN-slug/NN-MM-SUMMARY.md or phases/NN-slug/NN-SUMMARY.md
+    // Legacy: milestones/X/slices/Y/SUMMARY.md
+    const pathMatch = normPath.match(/phases\/([^/]+)\/(\d+)-(\d+)-SUMMARY/)
+      || normPath.match(/phases\/([^/]+)\/(\d+)-SUMMARY/)
+      || normPath.match(/milestones\/([^/]+)\/slices\/([^/]+)\//);
     if (!pathMatch) {
       throw new Error(
         `stale-render drift: slice summary path missing milestone/slice segments: ${record.renderPath}`,
       );
     }
-    const milestoneId = canonicalizeMilestoneId(pathMatch[1]);
-    const sliceId = pathMatch[2];
+    // Flat-phase: groups are (phaseDir, phaseNum, planNum) for NN-MM-SUMMARY,
+    // or (phaseDir, phaseNum) for NN-SUMMARY (phase-level). In the latter case,
+    // derive slice from the reason text which starts with S\d+.
+    // Legacy: groups are (milestoneDir, sliceDir).
+    let milestoneId: string;
+    let sliceId: string;
+    milestoneId = canonicalizeMilestoneId(pathMatch[1]!);
+    if (pathMatch[3] && /^\d+$/.test(pathMatch[2]!)) {
+      // NN-MM-SUMMARY: pathMatch[3] is the plan number
+      sliceId = `S${String(parseInt(pathMatch[3]!, 10)).padStart(2, "0")}`;
+    } else if (pathMatch[2] && /^S\d+/.test(pathMatch[2])) {
+      // Legacy: pathMatch[2] is the slice dir name
+      sliceId = pathMatch[2];
+    } else {
+      // NN-SUMMARY (phase-level): derive slice from reason
+      const reasonSlice = reason.match(/^(S\d+)/);
+      sliceId = reasonSlice ? reasonSlice[1] : "S01";
+    }
     const slice = getSlice(milestoneId, sliceId);
     const uatPath = join(dirname(record.renderPath), buildSliceFileName(sliceId, "UAT"));
     // renderSliceSummary writes both artifacts, so clear deleted UAT first.
@@ -183,16 +240,26 @@ async function repairStaleRenderFromBasePath(
   }
 
   if (reason.includes("UAT.md missing")) {
-    const pathMatch = normPath.match(/milestones\/([^/]+)\/slices\/([^/]+)\//);
+    // Flat-phase: phases/NN-slug/NN-MM-UAT.md or phases/NN-slug/NN-UAT.md
+    // Legacy: milestones/X/slices/Y/UAT.md
+    const pathMatch = normPath.match(/phases\/([^/]+)\/(\d+)-(\d+)-UAT/)
+      || normPath.match(/phases\/([^/]+)\/(\d+)-UAT/)
+      || normPath.match(/milestones\/([^/]+)\/slices\/([^/]+)\//);
     if (!pathMatch) {
       throw new Error(
         `stale-render drift: UAT path missing milestone/slice segments: ${record.renderPath}`,
       );
     }
-    // When UAT.md is removed from disk, mirror that intent by clearing stale
-    // persisted UAT content instead of rehydrating it back onto disk.
-    const milestoneId = canonicalizeMilestoneId(pathMatch[1]);
-    const sliceId = pathMatch[2];
+    const milestoneId = canonicalizeMilestoneId(pathMatch[1]!);
+    let sliceId: string;
+    if (pathMatch[3] && /^\d+$/.test(pathMatch[2]!)) {
+      sliceId = `S${String(parseInt(pathMatch[3]!, 10)).padStart(2, "0")}`;
+    } else if (pathMatch[2] && /^S\d+/.test(pathMatch[2])) {
+      sliceId = pathMatch[2];
+    } else {
+      const reasonSlice = reason.match(/(S\d+)/);
+      sliceId = reasonSlice ? reasonSlice[1] : "S01";
+    }
     const slice = getSlice(milestoneId, sliceId);
     if (!slice) {
       throw new Error(
