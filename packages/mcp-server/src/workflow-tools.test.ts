@@ -1975,10 +1975,10 @@ export const executeTaskComplete = async (params, projectDir) => {
       });
 
       assert.match((result as any).content[0].text as string, /Planned task T11/);
-      // Flat-phase: M010 "Inline task planning DB reopen" → phases/10-inline-task-planning-db-reopen/
-      // S10 → 10-10-PLAN.md; T11 is a checkbox inside the slice plan, no per-task T11-PLAN.md
+      // Flat-phase: renderTaskPlanFromDb writes TID-PLAN.md into the phase dir (not a tasks/ subdir).
+      // M010 "Inline task planning DB reopen" → phases/10-inline-task-planning-db-reopen/T11-PLAN.md
       assert.ok(
-        existsSync(join(base, ".gsd", "phases", "10-inline-task-planning-db-reopen", "10-10-PLAN.md")),
+        existsSync(join(base, ".gsd", "phases", "10-inline-task-planning-db-reopen", "T11-PLAN.md")),
         "T11 plan should be written after reopening the DB",
       );
     } finally {
