@@ -66,15 +66,19 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
     throw err;
   }
 
-  // 2. Refuse when the DB has no milestone rows — legacy milestones/ is the
-  // only on-disk hierarchy and must not be dropped without a projection.
+  // 2. Skip (not throw) when the DB has no milestone rows — legacy milestones/
+  // exists but there is nothing in the DB to project into flat-phase.  Throwing
+  // here leaves the project permanently stuck: needsFlatPhaseMigration stays
+  // true on every startup and the migration never runs.  A graceful return lets
+  // the project continue in legacy layout until the DB is populated (e.g. via
+  // `/gsd recover --confirm`), at which point the next startup can migrate.
   const milestonesBefore = getAllMilestones().length;
   if (milestonesBefore === 0) {
     logWarning(
       "migration",
-      "flat-phase migration refused: legacy milestones/ exists but DB has no milestone rows",
+      "flat-phase migration skipped: legacy milestones/ exists but DB has no milestone rows — will retry when DB is populated",
     );
-    throw new Error("flat-phase migration refused: no milestone data in DB");
+    return;
   }
 
   // 3. Remove legacy tree before rendering so path resolvers target phases/

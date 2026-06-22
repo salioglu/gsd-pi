@@ -3178,9 +3178,11 @@ export async function buildCompleteMilestonePrompt(
   );
   emitPromptContextTelemetry("complete-milestone", contextTelemetry, inlinedContext);
 
-  const milestoneSummaryPath = join(base, `${relMilestonePath(base, mid, midTitle)}/${mid}-SUMMARY.md`);
+  // Use relMilestoneFile to get the layout-aware filename (NN-SUFFIX.md for flat-phase,
+  // M001-SUFFIX.md for legacy) rather than manually appending the raw milestone id.
+  const milestoneSummaryPath = join(base, relMilestoneFile(base, mid, "SUMMARY"));
 
-  const learningsRelPath = join(relMilestonePath(base, mid, midTitle), `${mid}-LEARNINGS.md`);
+  const learningsRelPath = relMilestoneFile(base, mid, "LEARNINGS");
   const learningsAbsPath = join(base, learningsRelPath);
   const extractLearningsSteps = buildExtractionStepsBlock({
     milestoneId: mid,
@@ -3417,8 +3419,9 @@ export async function buildValidateMilestonePrompt(
   );
   emitPromptContextTelemetry("validate-milestone", contextTelemetry, inlinedContext);
 
-  const validationOutputPath = join(base, `${relMilestonePath(base, mid, midTitle)}/${mid}-VALIDATION.md`);
-  const roadmapOutputPath = `${relMilestonePath(base, mid, midTitle)}/${mid}-ROADMAP.md`;
+  // Use relMilestoneFile for layout-aware filenames (NN-SUFFIX.md flat-phase, M001-SUFFIX.md legacy).
+  const validationOutputPath = join(base, relMilestoneFile(base, mid, "VALIDATION"));
+  const roadmapOutputPath = relMilestoneFile(base, mid, "ROADMAP");
 
   // Every milestone validation turn owns MV01–MV04 unconditionally: the
   // registry is the source of truth for which gates the validator must

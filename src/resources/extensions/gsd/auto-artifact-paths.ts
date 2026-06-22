@@ -12,6 +12,7 @@ import {
   resolveDir,
   resolveFile,
   resolveMilestonePath,
+  resolveSliceFile,
   relMilestoneFile,
   relSliceFile,
   buildMilestoneFileName,
@@ -54,6 +55,9 @@ function resolveSliceArtifactPath(
 ): string | null {
   const existing = resolveProjectedSliceFile(base, mid, sid, suffix) ?? resolveProjectSliceFile(base, mid, sid, suffix);
   if (existing) return existing;
+  // Flat-phase: plan files live at phases/NN-slug/NN-MM-SUFFIX.md — resolveSliceFile handles both layouts.
+  const flatPhase = resolveSliceFile(base, mid, sid, suffix);
+  if (flatPhase) return flatPhase;
   const dir = resolveProjectedSlicePath(base, mid, sid) ?? resolveProjectSlicePath(base, mid, sid);
   return dir ? join(dir, buildSliceFileName(sid, suffix)) : null;
 }
