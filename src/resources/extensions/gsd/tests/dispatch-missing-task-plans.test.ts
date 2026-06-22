@@ -152,7 +152,10 @@ test("dispatch: present task plan proceeds to execute-task normally", async (t) 
 
   scaffoldMilestoneContext(tmp, "M002");
   scaffoldSlicePlan(tmp, "M002", "S03");
-  scaffoldTaskPlan(tmp, "M002", "S03", "T01");
+  // Flat-phase: tasks are checkboxes inside the slice plan (no per-task PLAN files).
+  // scaffoldTaskPlan is intentionally NOT called here — creating a milestones/ dir
+  // as a side effect would confuse milestonesDir() into treating this as a legacy
+  // layout, breaking slice plan resolution and causing discuss-milestone dispatch.
 
   const ctx = makeContext(tmp);
   const result = await resolveDispatch(ctx);
