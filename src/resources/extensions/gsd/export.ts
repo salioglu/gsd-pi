@@ -2,7 +2,7 @@
 // Generate shareable reports of milestone work in JSON or markdown format.
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { execFile } from "node:child_process";
 import {
@@ -13,7 +13,8 @@ import type { UnitMetrics } from "./metrics.js";
 import { gsdRoot } from "./paths.js";
 import { formatDuration, fileLink } from "../shared/format-utils.js";
 import { getErrorMessage } from "./error-utils.js";
-import { isDbAvailable, openDatabase } from "./gsd-db.js";
+import { isDbAvailable } from "./gsd-db.js";
+import { openExistingWorkflowDatabase } from "./db-workspace.js";
 import { getActiveMemories, getActiveMemoriesRanked } from "./memory-store.js";
 import type { MemoryInfo } from "./visualizer-data.js";
 
@@ -33,11 +34,7 @@ interface ExportVisualizerData {
 
 function ensureExportDb(basePath: string): void {
   if (isDbAvailable()) return;
-  const dbPath = join(gsdRoot(basePath), "gsd.db");
-  if (!existsSync(dbPath)) return;
-  try {
-    openDatabase(dbPath);
-  } catch { /* non-fatal */ }
+  openExistingWorkflowDatabase(basePath);
 }
 
 function loadExportMemories(basePath: string, visualizerData?: ExportVisualizerData): MemoryInfo {
