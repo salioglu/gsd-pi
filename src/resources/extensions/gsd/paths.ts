@@ -667,12 +667,15 @@ export function relGsdRootFile(key: GSDRootFileKey): string {
  */
 export function resolveMilestonePath(basePath: string, milestoneId: string): string | null {
   // Flat-phase: scan phases/ for NN-slug dir matching the milestone number.
-  // Falls back to legacy resolveDir for backward compat with old layouts.
   const phaseDir = resolvePhaseDir(basePath, milestoneId);
   if (phaseDir) return phaseDir;
-  // Legacy fallback: try old milestones/ dir structure
-  const legacyDir = resolveDir(milestonesDir(basePath), milestoneId);
-  return legacyDir ? join(milestonesDir(basePath), legacyDir) : null;
+  // Legacy fallback: try old milestones/ dir (pre-flat-phase layout)
+  const oldMilestonesDir = join(gsdProjectionRoot(basePath), "milestones");
+  if (existsSync(oldMilestonesDir)) {
+    const legacyDir = resolveDir(oldMilestonesDir, milestoneId);
+    if (legacyDir) return join(oldMilestonesDir, legacyDir);
+  }
+  return null;
 }
 
 /**
