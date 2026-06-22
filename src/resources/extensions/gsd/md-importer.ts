@@ -364,11 +364,6 @@ function importHierarchyArtifacts(gsdDir: string): number {
   const milestoneIds = findMilestoneIds(gsdDir);
   const phasesDir = milestonesDir(gsdDir);
 
-  // Guard against IDs that share a phase number (e.g. "M001" and "M001-abc123"):
-  // both map to the same NN-slug dir, which would import the same files twice
-  // with different milestone_id values.  Track by resolved dir name, skip duplicates.
-  const importedPhaseDirNames = new Set<string>();
-
   for (const milestoneId of milestoneIds) {
     // Find the phase directory (flat-phase: NN-slug, or legacy M001-slug)
     let phaseDirName: string | null = null;
@@ -385,10 +380,6 @@ function importHierarchyArtifacts(gsdDir: string): number {
         }
       }
     } catch { /* unreadable */ }
-
-    // Skip if this phase dir was already imported for another ID with the same phase number.
-    if (phaseDirName && importedPhaseDirNames.has(phaseDirName)) continue;
-    if (phaseDirName) importedPhaseDirNames.add(phaseDirName);
 
     if (!phaseDirName) {
       const legacyDir = legacyMilestonesDir(gsdDir);
@@ -504,6 +495,17 @@ function importHierarchyArtifacts(gsdDir: string): number {
           }
         }
       }
+    }
+
+    // Partial migration may leave nested milestones/M00N/ content alongside phases/.
+    const legacyDir = legacyMilestonesDir(gsdDir);
+    const milestoneDirName = findDirByPrefix(legacyDir, milestoneId);
+    if (milestoneDirName) {
+      count += importLegacyMilestoneArtifacts(
+        join(legacyDir, milestoneDirName),
+        milestoneDirName,
+        milestoneId,
+      );
     }
   }
 
