@@ -601,12 +601,15 @@ export async function renderSliceSummary(
     return false; // No slice data — skip silently
   }
 
-  const slicePath = resolveSlicePath(basePath, milestoneId, sliceId);
+  // Flat-phase: resolve or create the phase dir, since resolveSlicePath only
+  // finds existing dirs. In flat-phase the slice "path" is the phase dir.
+  let slicePath = resolveSlicePath(basePath, milestoneId, sliceId);
   if (!slicePath) {
-    process.stderr.write(
-      `markdown-renderer: cannot resolve slice path for ${milestoneId}/${sliceId}\n`,
-    );
-    return false;
+    const mDir = milestonesDir(basePath);
+    const phaseNum = milestoneIdToPhaseNum(milestoneId);
+    const dirName = phaseDirName(phaseNum, derivePhaseSlug(slice?.title || milestoneId));
+    slicePath = join(mDir, dirName);
+    mkdirSync(slicePath, { recursive: true });
   }
 
   let wrote = false;
