@@ -24,9 +24,9 @@ import {
   resolveGsdRootFile,
   resolveMilestoneFile,
   resolveSliceFile,
-  resolveSlicePath,
   resolveTasksDir,
   milestonesDir,
+  legacyMilestonesDir,
   gsdRoot,
   resolveTaskFiles,
 } from './paths.js';
@@ -378,7 +378,17 @@ function importHierarchyArtifacts(gsdDir: string): number {
         }
       }
     } catch { /* unreadable */ }
-    if (!phaseDirName) continue;
+    if (!phaseDirName) {
+      const legacyDir = legacyMilestonesDir(gsdDir);
+      const milestoneDirName = findDirByPrefix(legacyDir, milestoneId);
+      if (!milestoneDirName) continue;
+      count += importLegacyMilestoneArtifacts(
+        join(legacyDir, milestoneDirName),
+        milestoneDirName,
+        milestoneId,
+      );
+      continue;
+    }
     const phaseFullPath = join(phasesDir, phaseDirName);
 
     // Phase-level files (flat-phase: NN-SUFFIX.md, legacy: M001-SUFFIX.md)
@@ -480,6 +490,75 @@ function importHierarchyArtifacts(gsdDir: string): number {
             count++;
           }
         }
+      }
+    }
+  }
+
+  return count;
+}
+
+/** Walk a pre-flat-phase milestones/M001/ tree when no phases/NN-slug dir exists. */
+function importLegacyMilestoneArtifacts(
+  milestoneFullPath: string,
+  milestoneDirName: string,
+  milestoneId: string,
+): number {
+  let count = 0;
+
+  count += importFilesAtLevel(
+    milestoneFullPath,
+    milestoneId,
+    MILESTONE_SUFFIXES,
+    `milestones/${milestoneDirName}`,
+    milestoneId,
+    null,
+    null,
+  );
+
+  const slicesDir = join(milestoneFullPath, 'slices');
+  if (!existsSync(slicesDir)) return count;
+
+  const sliceDirs = readdirSync(slicesDir, { withFileTypes: true })
+    .filter(d => d.isDirectory() && /^S\d+/.test(d.name))
+    .map(d => d.name)
+    .sort();
+
+  for (const sliceDirName of sliceDirs) {
+    const sliceId = sliceDirName.match(/^(S\d+)/)?.[1] ?? sliceDirName;
+    const sliceFullPath = join(slicesDir, sliceDirName);
+
+    count += importFilesAtLevel(
+      sliceFullPath,
+      sliceId,
+      SLICE_SUFFIXES,
+      `milestones/${milestoneDirName}/slices/${sliceDirName}`,
+      milestoneId,
+      sliceId,
+      null,
+    );
+
+    const tasksDir = join(sliceFullPath, 'tasks');
+    if (!existsSync(tasksDir)) continue;
+
+    for (const suffix of TASK_SUFFIXES) {
+      const taskFiles = resolveTaskFiles(tasksDir, suffix);
+      for (const taskFileName of taskFiles) {
+        const taskId = taskFileName.match(/^(T\d+)/)?.[1] ?? null;
+        const taskFilePath = join(tasksDir, taskFileName);
+        if (!existsSync(taskFilePath)) continue;
+
+        const content = readFileSync(taskFilePath, 'utf-8');
+        const relPath = `milestones/${milestoneDirName}/slices/${sliceDirName}/tasks/${taskFileName}`;
+
+        insertArtifact({
+          path: relPath,
+          artifact_type: suffix,
+          milestone_id: milestoneId,
+          slice_id: sliceId,
+          task_id: taskId,
+          full_content: content,
+        });
+        count++;
       }
     }
   }
@@ -765,9 +844,9 @@ export function migrateHierarchyToDb(basePath: string): {
         const allTasksDone = plan.tasks.length > 0 && plan.tasks.every(t => {
           if (!t.done) return false;
           const tDir = resolveTasksDir(basePath, milestoneId, sliceEntry.id);
-          const summaryDir = tDir ?? resolveSlicePath(basePath, milestoneId, sliceEntry.id);
-          if (!summaryDir) return true;
-          return existsSync(join(summaryDir, `${t.id}-SUMMARY.md`));
+          // Flat-phase has no per-task summary files — checkbox state is authoritative.
+          if (!tDir) return true;
+          return existsSync(join(tDir, `${t.id}-SUMMARY.md`));
         });
         if (allTasksDone && hasSliceSummary) {
           if (_getAdapter()) {
