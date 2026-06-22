@@ -9,7 +9,6 @@ import { tmpdir } from 'node:os';
 import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, getSlice, getSliceTasks, getTask, getGateResults, updateTaskStatus } from '../gsd-db.ts';
 import { handlePlanSlice } from '../tools/plan-slice.ts';
 import { parsePlan } from '../parsers-legacy.ts';
-import { parseTaskPlanFile } from '../files.ts';
 import { deriveState, invalidateStateCache } from '../state.ts';
 
 function makeTmpBase(): string {
@@ -98,10 +97,7 @@ test('handlePlanSlice writes slice/task planning state and renders plan artifact
     assert.equal(parsedPlan.tasks.length, 2);
     assert.equal(parsedPlan.tasks[0]?.id, 'T01');
 
-    // Flat-phase: no per-task plan files — tasks are checkboxes inside the slice plan
-    // assert.ok(existsSync(taskPlanPath), 'task plan should be rendered to disk');
-    const taskPlan = parseTaskPlanFile(readFileSync(taskPlanPath, 'utf-8'));
-    assert.deepEqual(taskPlan.frontmatter.skills_used, []);
+    // Flat-phase: no per-task plan files — tasks are checkboxes inside the slice plan.
   } finally {
     cleanup(base);
   }
