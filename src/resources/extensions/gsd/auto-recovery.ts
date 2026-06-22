@@ -331,7 +331,8 @@ function hasCheckedTaskCompletionOnDisk(base: string, mid: string, sid: string, 
   if (!planAbs || !existsSync(planAbs)) return false;
 
   const planContent = readFileSync(planAbs, "utf-8");
-  const cbRe = new RegExp(`^\\s*-\\s+\\[[xX]\\]\\s+\\*\\*${escapeRegExp(tid)}:`, "m");
+  // Match legacy (`**T01: Title**`) and flat-phase (`**T01**: Title`) checkbox lines.
+  const cbRe = new RegExp(`^\\s*-\\s+\\[[xX]\\]\\s+\\*\\*${escapeRegExp(tid)}(?:\\*\\*)?:`, "m");
   return cbRe.test(planContent);
 }
 

@@ -5,8 +5,8 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-import { renderAllFromDb } from "./markdown-renderer.js";
-import { getAllMilestones } from "./gsd-db.js";
+import { renderAllFromDb, renderRoadmapFromDb } from "./markdown-renderer.js";
+import { getAllMilestones, getMilestoneSlices } from "./gsd-db.js";
 import { migrateFromMarkdown } from "./md-importer.js";
 import { countDbHierarchy } from "./migration-auto-check.js";
 import { logWarning } from "./workflow-logger.js";
@@ -94,6 +94,12 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
   let renderResult: { rendered: number; skipped: number; errors: string[] };
   try {
     renderResult = await renderAllFromDb(basePath);
+    // Slice-less milestones still need a phase directory for flat-phase layout.
+    for (const milestone of getAllMilestones()) {
+      if (getMilestoneSlices(milestone.id).length > 0) continue;
+      await renderRoadmapFromDb(basePath, milestone.id);
+      renderResult.rendered++;
+    }
   } catch (err) {
     logWarning("migration", `flat-phase render failed: ${(err as Error).message}`);
     rollbackPartialMigration(basePath, backupDir);
