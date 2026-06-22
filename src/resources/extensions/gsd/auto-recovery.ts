@@ -579,11 +579,15 @@ export function verifyExpectedArtifact(
     if (mid && sid) {
       try {
         let taskIds: string[] | null = null;
+        let dbPrimary = false;
         if (isDbAvailable()) {
           const refreshed = refreshWorkflowDatabaseFromDisk();
           if (refreshed) {
             const tasks = getSliceTasks(mid, sid);
-            if (tasks.length > 0) taskIds = tasks.map(t => t.id);
+            if (tasks.length > 0) {
+              taskIds = tasks.map(t => t.id);
+              dbPrimary = true;
+            }
           }
         }
 
@@ -591,7 +595,7 @@ export function verifyExpectedArtifact(
           // LEGACY: DB unavailable or no tasks in DB. Require actual task
           // entries so an empty scaffold cannot advance the pipeline (#699).
           const planContent = readFileSync(absPath, "utf-8");
-          const hasCheckboxTask = /^\s*- \[[xX ]\] \*\*T\d+:/m.test(planContent);
+          const hasCheckboxTask = /^\s*- \[[xX ]\] \*\*T\d+/m.test(planContent);
           const hasHeadingTask = /^\s*#{2,4}\s+T\d+\s*(?:--|—|:)/m.test(planContent);
           if (!hasCheckboxTask && !hasHeadingTask) {
             logWarning("recovery", `verify-fail ${unitType} ${unitId}: plan has no task checkbox/heading (len=${planContent.length}) at ${absPath}`);
@@ -601,7 +605,10 @@ export function verifyExpectedArtifact(
           if (plan.tasks.length > 0) taskIds = plan.tasks.map((t: { id: string }) => t.id);
         }
 
-        if (taskIds && taskIds.length > 0) {
+        // Per-task plan file check only applies in legacy (non-DB-primary) path.
+        // When DB is authoritative, task rows are sufficient proof — the per-task
+        // plan files are projections, not the source of truth (#plan-slice-db-primary).
+        if (!dbPrimary && taskIds && taskIds.length > 0) {
           const tasksDir = join(dirname(absPath), "tasks");
           if (!existsSync(tasksDir)) {
             logWarning("recovery", `verify-fail ${unitType} ${unitId}: tasks dir missing at ${tasksDir}`);
@@ -652,10 +659,12 @@ export function verifyExpectedArtifact(
   if (unitType === "complete-slice") {
     const { milestone: mid, slice: sid } = parseUnitId(unitId);
     if (mid && sid) {
-      // Use resolveSliceFile so both flat-phase (NN-MM-UAT.md) and legacy
-      // (S01-UAT.md inside slices/S01/) naming conventions are handled.
-      const uatPath = resolveSliceFile(base, mid, sid, "UAT");
-      if (uatPath && !existsSync(uatPath)) return false;
+      // resolveSliceFile only finds existing files; UAT may not exist yet.
+      // Fall back to the canonical expected location so a missing UAT always
+      // returns false (not a silent pass when resolveSliceFile returns null).
+      const uatPath = resolveSliceFile(base, mid, sid, "UAT")
+        ?? join(base, relSliceFile(base, mid, sid, "UAT"));
+      if (!existsSync(uatPath)) return false;
 
       const dbSlice = getSlice(mid, sid);
       if (dbSlice) {

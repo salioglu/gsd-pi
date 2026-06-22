@@ -338,8 +338,9 @@ test("full lifecycle: migration through completion through doctor", async (t) =>
     // Verify plan checkboxes toggled
     const planPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
     const planAfterTasks = readFileSync(planPath, "utf-8");
-    assert.match(planAfterTasks, /\[x\]\s+\*\*T01:/, "T01 should be checked in plan");
-    assert.match(planAfterTasks, /\[x\]\s+\*\*T02:/, "T02 should be checked in plan");
+    // flat-phase format: "**T01**: title" — colon follows closing ** so match **T01 broadly.
+    assert.match(planAfterTasks, /\[x\]\s+\*\*T01(\*\*)?:/, "T01 should be checked in plan");
+    assert.match(planAfterTasks, /\[x\]\s+\*\*T02(\*\*)?:/, "T02 should be checked in plan");
 
     // ── (e) Complete slice via handleCompleteSlice (R002) ─────────────
     invalidateAllCaches();
@@ -547,7 +548,7 @@ test("undo/reset: undo task and reset slice revert DB + markdown", async (t) => 
     // Plan checkbox should be unchecked
     const planPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
     const planAfterUndo = readFileSync(planPath, "utf-8");
-    assert.match(planAfterUndo, /\[ \]\s+\*\*T01:/, "T01 should be unchecked in plan after undo");
+    assert.match(planAfterUndo, /\[ \]\s+\*\*T01(\*\*)?:/, "T01 should be unchecked in plan after undo");
 
     // T02 should still be complete
     assert.equal(getTask("M001", "S01", "T02")?.status, "complete", "T02 should still be complete");

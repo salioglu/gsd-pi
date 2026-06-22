@@ -614,25 +614,23 @@ test("verifyExpectedArtifact plan-slice passes for rendered slice/task plan arti
 
     const rendered = await renderPlanFromDb(base, "M001", "S01");
     assert.ok(existsSync(rendered.planPath), "renderPlanFromDb should write the slice plan");
-    assert.equal(rendered.taskPlanPaths.length, 2, "renderPlanFromDb should render one task plan per task");
+    // Flat-phase: tasks are checkboxes inside the slice plan — no per-task plan files.
+    assert.equal(rendered.taskPlanPaths.length, 0, "flat-phase: renderPlanFromDb returns no per-task plan paths");
 
     const planContent = readFileSync(rendered.planPath, "utf-8");
     const parsedPlan = parsePlan(planContent);
     assert.equal(parsedPlan.tasks.length, 2, "rendered slice plan should parse into task entries");
 
-    const taskPlanContent = readFileSync(rendered.taskPlanPaths[0], "utf-8");
-    const taskPlan = parseTaskPlanFile(taskPlanContent);
-    assert.deepEqual(taskPlan.frontmatter.skills_used, [], "rendered task plans should use conservative empty skills_used");
-
+    // DB-primary: task rows prove the slice was planned; no per-task file check.
     const result = verifyExpectedArtifact("plan-slice", "M001/S01", base);
-    assert.equal(result, true, "plan-slice verification should pass when rendered task plan files exist");
+    assert.equal(result, true, "plan-slice verification should pass when DB has task rows");
   } finally {
     closeDatabase();
     cleanup(base);
   }
 });
 
-test("verifyExpectedArtifact plan-slice fails after deleting a rendered task plan file", async () => {
+test("verifyExpectedArtifact plan-slice fails after deleting the slice plan file", async () => {
   const base = makeTmpBase();
   const dbPath = join(base, ".gsd", "gsd.db");
   openDatabase(dbPath);
@@ -686,10 +684,11 @@ test("verifyExpectedArtifact plan-slice fails after deleting a rendered task pla
     });
 
     const rendered = await renderPlanFromDb(base, "M001", "S01");
-    rmSync(rendered.taskPlanPaths[1]);
+    // Flat-phase: per-task plan files do not exist; delete the slice plan itself to fail verification.
+    rmSync(rendered.planPath);
 
     const result = verifyExpectedArtifact("plan-slice", "M001/S01", base);
-    assert.equal(result, false, "plan-slice verification should fail when a rendered task plan file is removed");
+    assert.equal(result, false, "plan-slice verification should fail when the slice plan file is removed");
   } finally {
     closeDatabase();
     cleanup(base);

@@ -590,8 +590,11 @@ function probeGsdRoot(rawBasePath: string): string {
   return local;
 }
 export function milestonesDir(basePath: string): string {
-  // Flat-phase: phases/ (was milestones/)
-  return join(gsdProjectionRoot(basePath), LAYOUT_SEGMENTS.level1);
+  // Layout-aware: return milestones/ when it exists (legacy), otherwise phases/ (flat-phase).
+  const root = gsdProjectionRoot(basePath);
+  const legacy = join(root, "milestones");
+  if (existsSync(legacy)) return legacy;
+  return join(root, LAYOUT_SEGMENTS.level1);
 }
 
 /**

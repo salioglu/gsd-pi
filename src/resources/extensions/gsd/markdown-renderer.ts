@@ -413,14 +413,17 @@ export async function renderPlanFromDb(
     throw new Error(`no tasks found for ${milestoneId}/${sliceId}`);
   }
 
-  // Flat-phase: phases/NN-slug/NN-MM-PLAN.md (was milestones/MID/slices/SID/SID-PLAN.md)
+  // Layout-aware path: prefer an existing plan file's location so re-renders
+  // stay in place (legacy: milestones/MID/slices/SID/SID-PLAN.md;
+  // flat-phase: phases/NN-slug/NN-MM-PLAN.md).
+  const existingPlanPath = resolveSliceFile(basePath, milestoneId, sliceId, "PLAN");
   const phasesDir = milestonesDir(basePath);
   const phaseNum = milestoneIdToPhaseNum(milestoneId);
   const planNum = sliceIdToPlanNum(sliceId);
   const milestone = getMilestone(milestoneId);
   const phaseDir = resolveMilestonePath(basePath, milestoneId) ??
     join(phasesDir, phaseDirName(phaseNum, derivePhaseSlug(milestone?.title || milestoneId)));
-  const defaultPlanPath = join(phaseDir, planFileName(phaseNum, planNum, "PLAN"));
+  const defaultPlanPath = existingPlanPath ?? join(phaseDir, planFileName(phaseNum, planNum, "PLAN"));
   const absPath = outputPath ?? defaultPlanPath;
   mkdirSync(dirname(absPath), { recursive: true });
   const artifactPath = toArtifactPath(absPath, basePath);
