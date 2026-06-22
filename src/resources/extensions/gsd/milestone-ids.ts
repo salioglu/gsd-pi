@@ -139,35 +139,40 @@ export function clearReservedMilestoneIds(): void {
 
 // ─── Discovery ──────────────────────────────────────────────────────────────
 
+function scanMilestoneIdsFromDir(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => {
+      // Flat-phase layout: NN-slug → M00N
+      const flatMatch = d.name.match(/^(\d+)-/);
+      if (flatMatch) {
+        const phaseNum = parseInt(flatMatch[1]!, 10);
+        return `M${String(phaseNum).padStart(3, "0")}`;
+      }
+      // Legacy layout: M001 or M001-abcdef
+      const match = d.name.match(/^(M\d+(?:-[a-z0-9]{6})?)/);
+      return match ? match[1] : null;
+    })
+    .filter((id): id is string => id !== null);
+}
+
 /** Scan the milestones directory and return IDs sorted by queue order (or numeric fallback). */
 export function findMilestoneIds(basePath: string): string[] {
-  const dir = milestonesDir(basePath);
-  // Fall back to legacy milestones/ when phases/ hasn't been created yet
-  // (pre-migration projects or the window before migrateToFlatPhase runs at startup).
-  const scanDir = existsSync(dir) ? dir : legacyMilestonesDir(basePath);
-  try {
-    const ids = readdirSync(scanDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => {
-        // Flat-phase layout: NN-slug → M00N
-        const flatMatch = d.name.match(/^(\d+)-/);
-        if (flatMatch) {
-          const phaseNum = parseInt(flatMatch[1]!, 10);
-          return `M${String(phaseNum).padStart(3, "0")}`;
-        }
-        // Legacy layout: M001 or M001-abcdef
-        const match = d.name.match(/^(M\d+(?:-[a-z0-9]{6})?)/);
-        return match ? match[1] : null;
-      })
-      .filter((id): id is string => id !== null);
+  const dirs = [milestonesDir(basePath)];
+  const legacyDir = legacyMilestonesDir(basePath);
+  if (legacyDir !== dirs[0]) dirs.push(legacyDir);
 
-    // Apply custom queue order if available, else fall back to numeric sort
-    const customOrder = loadQueueOrder(basePath);
-    return sortByQueueOrder(ids, customOrder);
-  } catch (err) {
-    if (existsSync(scanDir)) {
-      logWarning("engine", `findMilestoneIds: ${scanDir} exists but readdirSync failed — ${getErrorMessage(err)}`);
+  const ids = new Set<string>();
+  for (const dir of dirs) {
+    try {
+      for (const id of scanMilestoneIdsFromDir(dir)) ids.add(id);
+    } catch (err) {
+      if (existsSync(dir)) {
+        logWarning("engine", `findMilestoneIds: ${dir} exists but readdirSync failed — ${getErrorMessage(err)}`);
+      }
     }
-    return [];
   }
+
+  const customOrder = loadQueueOrder(basePath);
+  return sortByQueueOrder([...ids], customOrder);
 }

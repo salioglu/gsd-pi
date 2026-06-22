@@ -412,8 +412,8 @@ export async function renderPlanFromDb(
   const phaseNum = milestoneIdToPhaseNum(milestoneId);
   const planNum = sliceIdToPlanNum(sliceId);
   const milestone = getMilestone(milestoneId);
-  const phaseDirNameStr = phaseDirName(phaseNum, derivePhaseSlug(milestone?.title || milestoneId));
-  const phaseDir = join(phasesDir, phaseDirNameStr);
+  const phaseDir = resolveMilestonePath(basePath, milestoneId) ??
+    join(phasesDir, phaseDirName(phaseNum, derivePhaseSlug(milestone?.title || milestoneId)));
   const defaultPlanPath = join(phaseDir, planFileName(phaseNum, planNum, "PLAN"));
   const absPath = outputPath ?? defaultPlanPath;
   mkdirSync(dirname(absPath), { recursive: true });

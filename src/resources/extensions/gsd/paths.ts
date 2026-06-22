@@ -700,16 +700,14 @@ export function resolveMilestoneFile(
 export function resolveSlicePath(
   basePath: string, milestoneId: string, sliceId: string
 ): string | null {
-  // Flat-phase: plans are files inside the phase dir, not subdirs.
-  // The "slice path" is the phase dir itself.
-  const phaseDir = resolveMilestonePath(basePath, milestoneId);
-  if (phaseDir) return phaseDir;
-  // Legacy fallback: try old slices/ subdir
   const mDir = resolveMilestonePath(basePath, milestoneId);
   if (!mDir) return null;
+  // Legacy: slice files live under slices/SID/ when that subdir exists.
   const slicesDir = join(mDir, "slices");
   const dir = resolveDir(slicesDir, sliceId);
-  return dir ? join(slicesDir, dir) : null;
+  if (dir) return join(slicesDir, dir);
+  // Flat-phase: plans are files inside the phase dir, not subdirs.
+  return mDir;
 }
 
 /**

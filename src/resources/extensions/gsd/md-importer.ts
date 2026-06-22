@@ -382,15 +382,28 @@ function importHierarchyArtifacts(gsdDir: string): number {
     const phaseFullPath = join(phasesDir, phaseDirName);
 
     // Phase-level files (flat-phase: NN-SUFFIX.md, legacy: M001-SUFFIX.md)
-    count += importFilesAtLevel(
+    const phasePrefix = `${String(phaseNum).padStart(2, "0")}`;
+    let phaseArtifacts = importFilesAtLevel(
       phaseFullPath,
-      milestoneId,
+      phasePrefix,
       MILESTONE_SUFFIXES,
       `phases/${phaseDirName}`,
       milestoneId,
       null,
       null,
     );
+    if (phaseArtifacts === 0) {
+      phaseArtifacts = importFilesAtLevel(
+        phaseFullPath,
+        milestoneId,
+        MILESTONE_SUFFIXES,
+        `phases/${phaseDirName}`,
+        milestoneId,
+        null,
+        null,
+      );
+    }
+    count += phaseArtifacts;
 
     // Flat-phase: plan files are NN-MM-SUFFIX.md inside the phase dir.
     // Also check legacy slices/ subdir for backward compat.

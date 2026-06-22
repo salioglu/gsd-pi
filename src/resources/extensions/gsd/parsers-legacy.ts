@@ -257,6 +257,7 @@ function _parsePlanImpl(content: string): SlicePlan {
           currentTask = null;
           continue;
         }
+        knownIds.add(taskId);
         if (currentTask) tasks.push(currentTask);
 
         if (cbMatch) {
@@ -322,13 +323,14 @@ function _parsePlanImpl(content: string): SlicePlan {
     if (currentTask) tasks.push(currentTask);
   };
 
+  const knownTaskIds = new Set<string>();
   if (tasksSection) {
-    parseTaskLines(tasksSection.split('\n'), new Set());
+    parseTaskLines(tasksSection.split('\n'), knownTaskIds);
   }
 
   // Flat-phase: parse <tasks> block
   if (tasksBlock) {
-    parseTaskLines(tasksBlock.split('\n'), new Set());
+    parseTaskLines(tasksBlock.split('\n'), knownTaskIds);
   }
 
   // Second pass: scan the full body for task checkboxes outside ## Tasks.
