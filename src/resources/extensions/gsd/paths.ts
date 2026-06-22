@@ -26,6 +26,7 @@ import {
   sliceIdToPlanNum,
   derivePhaseSlug,
 } from "./layout-policy.js";
+import { getMilestone } from "./db/queries.js";
 
 // ─── Directory Listing Cache ──────────────────────────────────────────────────
 
@@ -778,7 +779,8 @@ export function resolveTaskFile(
 
 /**
  * Build relative .gsd/ path to a milestone directory.
- * Uses the actual directory name on disk if it exists, otherwise bare ID.
+ * Uses the actual directory name on disk if it exists, otherwise the canonical
+ * flat-phase dir name the renderer will create (NN-slug).
  */
 export function relMilestonePath(basePath: string, milestoneId: string): string {
   // Flat-phase: .gsd/phases/NN-slug
@@ -790,7 +792,8 @@ export function relMilestonePath(basePath: string, milestoneId: string): string 
   // Legacy fallback
   const dir = resolveDir(milestonesDir(basePath), milestoneId);
   if (dir) return `.gsd/${LAYOUT_SEGMENTS.level1}/${dir}`;
-  return `.gsd/${LAYOUT_SEGMENTS.level1}/${milestoneId}`;
+  const title = getMilestone(milestoneId)?.title;
+  return `.gsd/${LAYOUT_SEGMENTS.level1}/${canonicalPhaseDirName(milestoneId, title)}`;
 }
 
 /**
