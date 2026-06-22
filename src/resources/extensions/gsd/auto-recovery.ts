@@ -652,11 +652,10 @@ export function verifyExpectedArtifact(
   if (unitType === "complete-slice") {
     const { milestone: mid, slice: sid } = parseUnitId(unitId);
     if (mid && sid) {
-      const dir = resolveSlicePath(base, mid, sid);
-      if (dir) {
-        const uatPath = join(dir, buildSliceFileName(sid, "UAT"));
-        if (!existsSync(uatPath)) return false;
-      }
+      // Use resolveSliceFile so both flat-phase (NN-MM-UAT.md) and legacy
+      // (S01-UAT.md inside slices/S01/) naming conventions are handled.
+      const uatPath = resolveSliceFile(base, mid, sid, "UAT");
+      if (uatPath && !existsSync(uatPath)) return false;
 
       const dbSlice = getSlice(mid, sid);
       if (dbSlice) {

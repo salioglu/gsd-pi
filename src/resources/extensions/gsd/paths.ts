@@ -26,8 +26,6 @@ import {
   sliceIdToPlanNum,
   derivePhaseSlug,
 } from "./layout-policy.js";
-import { getMilestone } from "./db/queries.js";
-
 // ─── Directory Listing Cache ──────────────────────────────────────────────────
 
 const dirEntryCache = new Map<string, Dirent[]>();
@@ -783,59 +781,95 @@ export function resolveTaskFile(
  * flat-phase dir name the renderer will create (NN-slug).
  */
 export function relMilestonePath(basePath: string, milestoneId: string): string {
-  // Flat-phase: .gsd/phases/NN-slug
+  // resolvePhaseDir handles both flat-phase (phases/NN-*) and legacy (milestones/M001).
   const phaseDir = resolvePhaseDir(basePath, milestoneId);
   if (phaseDir) {
     const name = phaseDir.split(/[/\\]/).pop()!;
+    // Use the correct segment based on which layout the resolved dir lives under.
+    const legacyBase = legacyMilestonesDir(basePath);
+    if (phaseDir.startsWith(legacyBase + "/") || phaseDir.startsWith(legacyBase + "\\")) {
+      return `.gsd/milestones/${name}`;
+    }
     return `.gsd/${LAYOUT_SEGMENTS.level1}/${name}`;
   }
-  // Legacy fallback
-  const dir = resolveDir(milestonesDir(basePath), milestoneId);
-  if (dir) return `.gsd/${LAYOUT_SEGMENTS.level1}/${dir}`;
-  const title = getMilestone(milestoneId)?.title;
-  return `.gsd/${LAYOUT_SEGMENTS.level1}/${canonicalPhaseDirName(milestoneId, title)}`;
+  // No dir on disk yet — derive canonical flat-phase name without a DB lookup
+  // (avoids importing db/queries which pulls in import.meta via db/engine).
+  return `.gsd/${LAYOUT_SEGMENTS.level1}/${canonicalPhaseDirName(milestoneId)}`;
 }
 
 /**
  * Build relative .gsd/ path to a milestone file.
+ * Layout-aware: uses resolveMilestoneFile to find NN-SUFFIX.md (flat-phase)
+ * or M001-SUFFIX.md (legacy). Falls back to a layout-appropriate canonical
+ * name when the file doesn't exist yet.
  */
 export function relMilestoneFile(
   basePath: string, milestoneId: string, suffix: string
 ): string {
   const mRel = relMilestonePath(basePath, milestoneId);
-  const mDir = resolveMilestonePath(basePath, milestoneId);
-  if (mDir) {
-    const file = resolveFile(mDir, milestoneId, suffix);
-    if (file) return `${mRel}/${file}`;
+  // resolveMilestoneFile checks NN-SUFFIX.md (flat-phase) and MID-SUFFIX.md (legacy).
+  const absFile = resolveMilestoneFile(basePath, milestoneId, suffix);
+  if (absFile) {
+    const fileName = absFile.split(/[/\\]/).pop()!;
+    return `${mRel}/${fileName}`;
   }
-  return `${mRel}/${buildMilestoneFileName(milestoneId, suffix)}`;
+  // File doesn't exist yet — use layout-aware fallback filename.
+  const mDir = resolveMilestonePath(basePath, milestoneId);
+  const legacyBase = legacyMilestonesDir(basePath);
+  const isLegacy = mDir
+    ? mDir.startsWith(legacyBase + "/") || mDir.startsWith(legacyBase + "\\")
+    : false;
+  const fileName = isLegacy
+    ? `${milestoneId}-${suffix}.md`
+    : `${String(milestoneIdToPhaseNum(milestoneId)).padStart(2, "0")}-${suffix}.md`;
+  return `${mRel}/${fileName}`;
 }
 
 /**
  * Build relative .gsd/ path to a slice directory.
+ * Layout-aware: legacy projects include a slices/S01/ subdir;
+ * flat-phase projects use the phase dir directly.
  */
 export function relSlicePath(
   basePath: string, milestoneId: string, sliceId: string
 ): string {
-  // Flat-phase: plans are files inside the phase dir, so the slice "path"
-  // is the phase dir. The relative path is the same as relMilestonePath.
+  const mDir = resolveMilestonePath(basePath, milestoneId);
+  if (mDir) {
+    const legacyBase = legacyMilestonesDir(basePath);
+    if (mDir.startsWith(legacyBase + "/") || mDir.startsWith(legacyBase + "\\")) {
+      // Legacy: slices live under milestones/M001/slices/S01/
+      const mRel = relMilestonePath(basePath, milestoneId);
+      const slicesDir = join(mDir, "slices");
+      const dir = resolveDir(slicesDir, sliceId);
+      return `${mRel}/slices/${dir ?? sliceId}`;
+    }
+  }
+  // Flat-phase: plans are files inside the phase dir, no slices/ subdir.
   return relMilestonePath(basePath, milestoneId);
 }
 
 /**
  * Build relative .gsd/ path to a slice file.
+ * Layout-aware: legacy uses S01-SUFFIX.md; flat-phase uses NN-MM-SUFFIX.md.
  */
 export function relSliceFile(
   basePath: string, milestoneId: string, sliceId: string, suffix: string
 ): string {
-  // Flat-phase: plan file is NN-MM-SUFFIX.md inside the phase dir
   const sRel = relSlicePath(basePath, milestoneId, sliceId);
   const absPath = resolveSliceFile(basePath, milestoneId, sliceId, suffix);
   if (absPath) {
     const fileName = absPath.split(/[/\\]/).pop()!;
     return `${sRel}/${fileName}`;
   }
-  // Fallback to canonical name
+  // Fallback when file doesn't exist yet — use layout-aware filename.
+  const mDir = resolveMilestonePath(basePath, milestoneId);
+  const legacyBase = legacyMilestonesDir(basePath);
+  const isLegacy = mDir
+    ? mDir.startsWith(legacyBase + "/") || mDir.startsWith(legacyBase + "\\")
+    : false;
+  if (isLegacy) {
+    return `${sRel}/${sliceId}-${suffix}.md`;
+  }
   const phaseNum = milestoneIdToPhaseNum(milestoneId);
   const planNum = sliceIdToPlanNum(sliceId);
   return `${sRel}/${planFileName(phaseNum, planNum, suffix)}`;

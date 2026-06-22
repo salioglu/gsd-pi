@@ -11,6 +11,7 @@ import { refreshWorkflowDatabaseFromDisk } from "./db-workspace.js";
 import { parsePlan, parseRoadmap } from "./parsers-legacy.js";
 import {
   milestonesDir,
+  legacyMilestonesDir,
   resolveMilestoneFile,
   resolveSliceFile,
 } from "./paths.js";
@@ -102,7 +103,12 @@ export function recoverWouldDeleteDbRows(basePath: string): boolean {
 }
 
 export function scanMarkdownHierarchy(basePath: string): HierarchyScan {
-  const root = milestonesDir(basePath);
+  // Prefer the flat-phase phases/ dir; fall back to the legacy milestones/ dir
+  // so pre-migration projects are still scanned correctly.
+  let root = milestonesDir(basePath);
+  if (!existsSync(root)) {
+    root = legacyMilestonesDir(basePath);
+  }
   if (!existsSync(root)) return emptyScan();
 
   const scan = emptyScan();

@@ -11,12 +11,14 @@ import {
   gsdProjectionRoot,
   resolveDir,
   resolveFile,
+  resolveMilestonePath,
   relMilestoneFile,
   relSliceFile,
   buildMilestoneFileName,
   buildSliceFileName,
   buildTaskFileName,
 } from "./paths.js";
+import { milestoneIdToPhaseNum } from "./layout-policy.js";
 import { parseUnitId } from "./unit-id.js";
 import { join } from "node:path";
 
@@ -27,8 +29,21 @@ function resolveMilestoneArtifactPath(
 ): string | null {
   const existing = resolveProjectedMilestoneFile(base, mid, suffix) ?? resolveProjectMilestoneFile(base, mid, suffix);
   if (existing) return existing;
-  const dir = resolveProjectedMilestonePath(base, mid) ?? resolveProjectMilestonePath(base, mid);
-  return dir ? join(dir, buildMilestoneFileName(mid, suffix)) : null;
+  // Try legacy projected (worktree) path, then legacy project-root path.
+  const legacyDir = resolveProjectedMilestonePath(base, mid) ?? resolveProjectMilestonePath(base, mid);
+  if (legacyDir) return join(legacyDir, `${mid}-${suffix}.md`);
+  // Flat-phase fallback: use resolveMilestonePath which handles phases/ and milestones/.
+  const dir = resolveMilestonePath(base, mid);
+  if (dir) {
+    const legacyBase = join(gsdProjectionRoot(base), "milestones");
+    const isLegacy = dir.startsWith(legacyBase + "/") || dir.startsWith(legacyBase + "\\");
+    const phaseNum = milestoneIdToPhaseNum(mid);
+    const filename = isLegacy
+      ? `${mid}-${suffix}.md`
+      : `${String(phaseNum).padStart(2, "0")}-${suffix}.md`;
+    return join(dir, filename);
+  }
+  return null;
 }
 
 function resolveSliceArtifactPath(

@@ -359,7 +359,7 @@ function importHierarchyArtifacts(gsdDir: string): number {
     }
   }
 
-  // Walk phases (flat-phase layout: phases/NN-slug/)
+  // Walk phases (flat-phase layout: phases/NN-slug/, legacy: milestones/M001/)
   const milestoneIds = findMilestoneIds(gsdDir);
   const phasesDir = milestonesDir(gsdDir);
 
@@ -371,9 +371,7 @@ function importHierarchyArtifacts(gsdDir: string): number {
     try {
       for (const entry of readdirSync(phasesDir, { withFileTypes: true })) {
         if (entry.isDirectory()) {
-          // Flat-phase: NN-slug
           if (entry.name.startsWith(flatPrefix)) { phaseDirName = entry.name; break; }
-          // Legacy: M001-slug
           if (entry.name.startsWith(milestoneId)) { phaseDirName = entry.name; break; }
         }
       }
@@ -393,11 +391,12 @@ function importHierarchyArtifacts(gsdDir: string): number {
 
     // Phase-level files (flat-phase: NN-SUFFIX.md, legacy: M001-SUFFIX.md)
     const phasePrefix = `${String(phaseNum).padStart(2, "0")}`;
+    const artifactBase = `phases/${phaseDirName}`;
     let phaseArtifacts = importFilesAtLevel(
       phaseFullPath,
       phasePrefix,
       MILESTONE_SUFFIXES,
-      `phases/${phaseDirName}`,
+      artifactBase,
       milestoneId,
       null,
       null,
@@ -407,7 +406,7 @@ function importHierarchyArtifacts(gsdDir: string): number {
         phaseFullPath,
         milestoneId,
         MILESTONE_SUFFIXES,
-        `phases/${phaseDirName}`,
+        artifactBase,
         milestoneId,
         null,
         null,
@@ -433,7 +432,7 @@ function importHierarchyArtifacts(gsdDir: string): number {
 
       const content = readFileSync(filePath, 'utf-8');
       insertArtifact({
-        path: `phases/${phaseDirName}/${planFile}`,
+        path: `${artifactBase}/${planFile}`,
         artifact_type: suffix,
         milestone_id: milestoneId,
         slice_id: sliceId,

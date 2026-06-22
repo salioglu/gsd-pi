@@ -493,9 +493,10 @@ test('── markdown-renderer: renderPlanFromDb creates parse-compatible slice 
   clearAllCaches();
 
   try {
-    scaffoldDirs(tmpDir, 'M001', ['S02']);
-
+    // insertMilestone must come before scaffoldDirs so scaffoldDirs can read
+    // the title from the DB and derive the correct slug ('milestone' → 01-milestone/).
     insertMilestone({ id: 'M001', title: 'Milestone', status: 'active' });
+    scaffoldDirs(tmpDir, 'M001', ['S02']);
     insertSlice({
       id: 'S02',
       milestoneId: 'M001',

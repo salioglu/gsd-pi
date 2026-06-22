@@ -51,6 +51,7 @@ import {
   resolveTasksDir,
   resolveTaskFile,
   milestonesDir,
+  legacyMilestonesDir,
   buildTaskFileName,
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
@@ -2997,8 +2998,14 @@ export function ensurePreconditions(
         return;
       }
     }
-    const newDir = join(milestonesDir(base), mid);
-    mkdirSync(join(newDir, "slices"), { recursive: true });
+    // Layout-aware: if the legacy milestones/ dir exists, place the new milestone dir
+    // there (preserves the existing project layout). Otherwise use flat-phase phases/.
+    const legacyBase = legacyMilestonesDir(base);
+    const targetBase = existsSync(legacyBase) ? legacyBase : milestonesDir(base);
+    const newDir = join(targetBase, mid);
+    // Legacy projects use a slices/ subdir; flat-phase uses top-level plan files (no slices/).
+    const isLegacyLayout = existsSync(legacyBase);
+    mkdirSync(isLegacyLayout ? join(newDir, "slices") : newDir, { recursive: true });
   }
 
   if (sid !== undefined) {
