@@ -40,8 +40,15 @@ import {
 import { saveFile, clearParseCache, registerCacheClearCallback } from "./files.js";
 import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
 import { invalidateStateCache } from "./state.js";
-import { clearPathCache } from "./paths.js";
+import { clearPathCache, milestonesDir, resolveMilestonePath } from "./paths.js";
 import type { RiskLevel } from "./types.js";
+import {
+  phaseDirName,
+  planFileName,
+  milestoneIdToPhaseNum,
+  sliceIdToPlanNum,
+  derivePhaseSlug,
+} from "./layout-policy.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -109,12 +116,14 @@ function sanitizeInlineRoadmapText(value: string | null | undefined): string {
 }
 
 function resolveRoadmapProjectionPath(basePath: string, milestoneId: string): string {
-  const projectionMilestonesDir = join(gsdProjectionRoot(basePath), "milestones");
-  const milestoneDirName = resolveDir(projectionMilestonesDir, milestoneId) ?? milestoneId;
-  const milestoneDir = join(projectionMilestonesDir, milestoneDirName);
-  const roadmapFileName = resolveFile(milestoneDir, milestoneId, "ROADMAP") ??
-    buildMilestoneFileName(milestoneId, "ROADMAP");
-  return join(milestoneDir, roadmapFileName);
+  // Flat-phase: phases/NN-slug/NN-ROADMAP.md (was milestones/MID/MID-ROADMAP.md)
+  const phasesDir = milestonesDir(basePath);
+  const phaseNum = milestoneIdToPhaseNum(milestoneId);
+  // Resolve existing dir by phase-number prefix, or build canonical name
+  const existing = resolveMilestonePath(basePath, milestoneId);
+  const phaseDir = existing ?? join(phasesDir, phaseDirName(phaseNum, derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)));
+  const roadmapFileName = buildMilestoneFileName(milestoneId, "ROADMAP");
+  return join(phaseDir, roadmapFileName);
 }
 
 /**
@@ -345,24 +354,21 @@ function renderSlicePlanMarkdown(slice: SliceRow, tasks: TaskRow[], gates: GateR
   }
   lines.push("");
 
-  lines.push("## Tasks");
-  lines.push("");
+  // Flat-phase: tasks render as a <tasks> XML block (gsd-core native format)
+  // instead of a ## Tasks markdown section. This makes the plan file compatible
+  // with gsd-core's parseOldPlan which extracts <tasks> blocks.
+  lines.push("<tasks>");
   for (const task of tasks) {
     const done = isClosedStatus(task.status) ? "x" : " ";
-    const estimate = task.estimate.trim() ? ` \`est:${task.estimate.trim()}\`` : "";
-    lines.push(`- [${done}] **${task.id}: ${task.title || task.id}**${estimate}`);
+    const estimate = task.estimate.trim() ? ` _(${task.estimate.trim()})_` : "";
+    lines.push(`- [${done}] **${task.id}**: ${task.title || task.id}${estimate}`);
     const summary = taskSummaryForSlicePlan(task.description);
     if (summary) {
       pushIndented(lines, summary);
     }
-    if (task.files.length > 0) {
-      lines.push(`  - Files: ${task.files.map((file) => `\`${file}\``).join(", ")}`);
-    }
-    if (task.verify.trim()) {
-      lines.push(`  - Verify: ${task.verify.trim()}`);
-    }
-    lines.push("");
   }
+  lines.push("</tasks>");
+  lines.push("");
 
   const filesLikelyTouched = Array.from(new Set(tasks.flatMap((task) => task.files)));
   if (filesLikelyTouched.length > 0) {
@@ -393,14 +399,14 @@ export async function renderPlanFromDb(
     throw new Error(`no tasks found for ${milestoneId}/${sliceId}`);
   }
 
-  const defaultPlanPath = join(
-    gsdProjectionRoot(basePath),
-    "milestones",
-    milestoneId,
-    "slices",
-    sliceId,
-    `${sliceId}-PLAN.md`,
-  );
+  // Flat-phase: phases/NN-slug/NN-MM-PLAN.md (was milestones/MID/slices/SID/SID-PLAN.md)
+  const phasesDir = milestonesDir(basePath);
+  const phaseNum = milestoneIdToPhaseNum(milestoneId);
+  const planNum = sliceIdToPlanNum(sliceId);
+  const milestone = getMilestone(milestoneId);
+  const phaseDirNameStr = phaseDirName(phaseNum, derivePhaseSlug(milestone?.title || milestoneId));
+  const phaseDir = join(phasesDir, phaseDirNameStr);
+  const defaultPlanPath = join(phaseDir, planFileName(phaseNum, planNum, "PLAN"));
   const absPath = outputPath ?? defaultPlanPath;
   mkdirSync(dirname(absPath), { recursive: true });
   const artifactPath = toArtifactPath(absPath, basePath);
@@ -413,11 +419,9 @@ export async function renderPlanFromDb(
     slice_id: sliceId,
   });
 
+  // Flat-phase: tasks are checkboxes inside the plan file, not separate files.
+  // No per-task render loop — task state is in the <tasks> block above.
   const taskPlanPaths: string[] = [];
-  for (const task of tasks) {
-    const rendered = await renderTaskPlanFromDb(basePath, milestoneId, sliceId, task.id);
-    taskPlanPaths.push(rendered.taskPlanPath);
-  }
 
   return { planPath: absPath, taskPlanPaths, content };
 }
@@ -433,9 +437,12 @@ export async function renderTaskPlanFromDb(
     throw new Error(`task ${milestoneId}/${sliceId}/${taskId} not found`);
   }
 
-  const tasksDir = join(gsdProjectionRoot(basePath), "milestones", milestoneId, "slices", sliceId, "tasks");
-  mkdirSync(tasksDir, { recursive: true });
-  const absPath = join(tasksDir, buildTaskFileName(taskId, "PLAN"));
+  // Flat-phase: task plans live inside the phase dir, not a tasks/ subdir.
+  // This function is legacy — tasks are now checkboxes inside the plan file.
+  const phaseDir = resolveMilestonePath(basePath, milestoneId) ??
+    join(milestonesDir(basePath), phaseDirName(milestoneIdToPhaseNum(milestoneId), derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)));
+  mkdirSync(phaseDir, { recursive: true });
+  const absPath = join(phaseDir, buildTaskFileName(taskId, "PLAN"));
   const artifactPath = toArtifactPath(absPath, basePath);
   const taskGates = getGateResults(milestoneId, sliceId, "task").filter(g => g.task_id === taskId);
   const content = task.full_plan_md.trim() ? task.full_plan_md : renderTaskPlanMarkdown(task, taskGates);
@@ -559,7 +566,9 @@ export async function renderTaskSummary(
     return false;
   }
 
-  const tasksDir = join(slicePath, "tasks");
+  // Flat-phase: task summaries live in the phase dir alongside plan files.
+  // (Legacy: was tasks/ subdir inside slice dir.)
+  const tasksDir = slicePath;
   const fileName = buildTaskFileName(taskId, "SUMMARY");
   const absPath = join(tasksDir, fileName);
   const artifactPath = toArtifactPath(absPath, basePath);
@@ -854,9 +863,9 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
         if (isClosedStatus(task.status) && task.full_summary_md) {
           const slicePath = resolveSlicePath(basePath, milestone.id, slice.id);
           if (slicePath) {
-            const tasksDir = join(slicePath, "tasks");
+            // Flat-phase: task summaries live in the phase dir (same as slicePath)
             const fileName = buildTaskFileName(task.id, "SUMMARY");
-            const summaryAbsPath = join(tasksDir, fileName);
+            const summaryAbsPath = join(slicePath, fileName);
 
             if (!existsSync(summaryAbsPath)) {
               stale.push({
@@ -948,9 +957,12 @@ export async function renderReplanFromDb(
   sliceId: string,
   replanData: ReplanData,
 ): Promise<{ replanPath: string; content: string }> {
+  // Flat-phase: replan file lives in the phase dir
   const slicePath = resolveSlicePath(basePath, milestoneId, sliceId)
-    ?? join(gsdRoot(basePath), "milestones", milestoneId, "slices", sliceId);
-  const absPath = join(slicePath, `${sliceId}-REPLAN.md`);
+    ?? join(milestonesDir(basePath), phaseDirName(milestoneIdToPhaseNum(milestoneId), derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)));
+  const phaseNum = milestoneIdToPhaseNum(milestoneId);
+  const planNum = sliceIdToPlanNum(sliceId);
+  const absPath = join(slicePath, planFileName(phaseNum, planNum, "REPLAN"));
   const artifactPath = toArtifactPath(absPath, basePath);
 
   const lines: string[] = [];
@@ -987,9 +999,12 @@ export async function renderAssessmentFromDb(
   sliceId: string,
   assessmentData: AssessmentData,
 ): Promise<{ assessmentPath: string; content: string }> {
+  // Flat-phase: assessment file lives in the phase dir
   const slicePath = resolveSlicePath(basePath, milestoneId, sliceId)
-    ?? join(gsdRoot(basePath), "milestones", milestoneId, "slices", sliceId);
-  const absPath = join(slicePath, `${sliceId}-ASSESSMENT.md`);
+    ?? join(milestonesDir(basePath), phaseDirName(milestoneIdToPhaseNum(milestoneId), derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)));
+  const phaseNum = milestoneIdToPhaseNum(milestoneId);
+  const planNum = sliceIdToPlanNum(sliceId);
+  const absPath = join(slicePath, planFileName(phaseNum, planNum, "ASSESSMENT"));
   const artifactPath = toArtifactPath(absPath, basePath);
 
   const lines: string[] = [];
