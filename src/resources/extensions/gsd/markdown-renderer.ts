@@ -33,7 +33,6 @@ import {
   resolveSlicePath,
   gsdProjectionRoot,
   gsdRoot,
-  buildMilestoneFileName,
   buildTaskFileName,
   buildSliceFileName,
 } from "./paths.js";
@@ -124,7 +123,7 @@ function resolveRoadmapProjectionPath(basePath: string, milestoneId: string): st
   // Resolve existing dir by phase-number prefix, or build canonical name
   const existing = resolveMilestonePath(basePath, milestoneId);
   const phaseDir = existing ?? join(phasesDir, phaseDirName(phaseNum, derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)));
-  const roadmapFileName = buildMilestoneFileName(milestoneId, "ROADMAP");
+  const roadmapFileName = `${String(phaseNum).padStart(2, "0")}-ROADMAP.md`;
   return join(phaseDir, roadmapFileName);
 }
 
@@ -615,7 +614,7 @@ export async function renderSliceSummary(
   if (!slicePath) {
     const mDir = milestonesDir(basePath);
     const phaseNum = milestoneIdToPhaseNum(milestoneId);
-    const dirName = phaseDirName(phaseNum, derivePhaseSlug(slice?.title || milestoneId));
+    const dirName = phaseDirName(phaseNum, derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId));
     slicePath = join(mDir, dirName);
     mkdirSync(slicePath, { recursive: true });
   }
