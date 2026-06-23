@@ -10,7 +10,7 @@
  * via prefix matching, so existing projects work without migration.
  */
 
-import { readdirSync, existsSync, realpathSync, Dirent } from "node:fs";
+import { readdirSync, existsSync, realpathSync, statSync, Dirent } from "node:fs";
 import { join, dirname, normalize, resolve } from "node:path";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -611,23 +611,49 @@ export function legacyMilestonesDir(basePath: string): string {
  * Scans phases/ for a dir whose zero-padded number prefix matches the milestone.
  * Returns the full path or null if not found.
  */
+function pickPreferredPhaseDir(phasesDir: string, matches: string[]): string {
+  if (matches.length === 1) return matches[0]!;
+  let best = matches[0]!;
+  let bestMtime = -1;
+  for (const name of matches) {
+    try {
+      const mtime = statSync(join(phasesDir, name)).mtimeMs;
+      if (mtime > bestMtime) {
+        bestMtime = mtime;
+        best = name;
+      }
+    } catch {
+      // unreadable — keep prior best
+    }
+  }
+  return best;
+}
+
 function resolvePhaseDir(basePath: string, milestoneId: string): string | null {
   // Try flat-phase layout first: phases/NN-slug/ (always scan phases/, even when
   // legacy milestones/ coexists during partial migration).
   const phasesDir = join(gsdProjectionRoot(basePath), LAYOUT_SEGMENTS.level1);
   if (existsSync(phasesDir)) {
     const phaseNum = milestoneIdToPhaseNum(milestoneId);
+    const matches: string[] = [];
     try {
       for (const entry of readdirSync(phasesDir, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
         // Numeric prefix match via parseInt so 001-slug resolves to M001.
         const numMatch = entry.name.match(/^(\d+)-/);
         if (numMatch && parseInt(numMatch[1]!, 10) === phaseNum) {
-          return join(phasesDir, entry.name);
+          matches.push(entry.name);
         }
       }
     } catch {
       // unreadable — fall through
+    }
+    if (matches.length > 0) {
+      const canonical = canonicalPhaseDirName(milestoneId);
+      const preferred = matches.includes(canonical)
+        ? canonical
+        : pickPreferredPhaseDir(phasesDir, matches);
+      return join(phasesDir, preferred);
     }
   }
   // Legacy fallback: milestones/M001/ (pre-flat-phase layout)

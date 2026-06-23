@@ -324,8 +324,6 @@ function escapeRegExp(value: string): string {
 function hasCheckedTaskCompletionOnDisk(base: string, mid: string, sid: string, tid: string): boolean {
   const slicePath = resolveSlicePath(base, mid, sid);
   if (!slicePath) return false;
-  const tasksDir = resolveTasksDir(base, mid, sid) ?? slicePath;
-  if (!existsSync(join(tasksDir, `${tid}-SUMMARY.md`))) return false;
 
   const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
   if (!planAbs || !existsSync(planAbs)) return false;
