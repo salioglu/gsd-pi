@@ -932,7 +932,8 @@ export function relSliceFile(
  * Build relative .gsd/ path to a task file.
  *
  * Legacy layout:  slices/SID/tasks/TID-SUFFIX.md (inside a slices/ subdir)
- * Flat-phase:     tasks are checkboxes inside the slice plan — return the plan path.
+ * Flat-phase:     PLAN → slice plan path (tasks as checkboxes); other suffixes
+ *                 (e.g. SUMMARY) → phase dir / TID-SUFFIX.md
  */
 export function relTaskFile(
   basePath: string, milestoneId: string, sliceId: string,
@@ -945,6 +946,10 @@ export function relTaskFile(
     const relS = relSlicePath(basePath, milestoneId, sliceId);
     return `${relS}/tasks/${taskId}-${suffix}.md`;
   }
-  // Flat-phase: tasks are checkboxes inside the slice plan file
-  return relSliceFile(basePath, milestoneId, sliceId, "PLAN");
+  // Flat-phase: task plans are checkboxes inside the slice plan file
+  if (suffix === "PLAN") {
+    return relSliceFile(basePath, milestoneId, sliceId, "PLAN");
+  }
+  const relS = relSlicePath(basePath, milestoneId, sliceId);
+  return `${relS}/${buildTaskFileName(taskId, suffix)}`;
 }
