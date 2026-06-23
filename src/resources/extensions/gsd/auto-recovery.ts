@@ -413,11 +413,13 @@ export function verifyExpectedArtifact(
     if (blockerPath && existsSync(blockerPath)) {
       return true;
     }
+    const slicePath = resolveSlicePath(base, mid, sid);
+    if (!slicePath) return false;
+
     const plusIdx = batchPart.indexOf("+");
     if (plusIdx === -1) {
       // Legacy format "reactive" without batch IDs — fall back to "any summary"
-      const tDir = resolveTasksDir(base, mid, sid);
-      if (!tDir) return false;
+      const tDir = resolveTasksDir(base, mid, sid) ?? slicePath;
       const summaryFiles = resolveTaskFiles(tDir, "SUMMARY");
       return summaryFiles.length > 0;
     }
@@ -425,8 +427,7 @@ export function verifyExpectedArtifact(
     const batchIds = batchPart.slice(plusIdx + 1).split(",").filter(Boolean);
     if (batchIds.length === 0) return false;
 
-    const tDir = resolveTasksDir(base, mid, sid);
-    if (!tDir) return false;
+    const tDir = resolveTasksDir(base, mid, sid) ?? slicePath;
 
     const existingSummaries = new Set(
       resolveTaskFiles(tDir, "SUMMARY").map((f) =>
@@ -754,11 +755,12 @@ export function writeReactiveExecuteBlocker(
   const blockerPath = resolveExpectedArtifactPath("reactive-execute", unitId, base);
   if (!blockerPath) return null;
 
-  const tasksDir = resolveTasksDir(base, mid, sid);
+  const slicePath = resolveSlicePath(base, mid, sid);
+  if (!slicePath) return null;
+
+  const tasksDir = resolveTasksDir(base, mid, sid) ?? slicePath;
   const existingSummaries = new Set(
-    tasksDir
-      ? resolveTaskFiles(tasksDir, "SUMMARY").map((f) => f.replace(/-SUMMARY\.md$/i, "").toUpperCase())
-      : [],
+    resolveTaskFiles(tasksDir, "SUMMARY").map((f) => f.replace(/-SUMMARY\.md$/i, "").toUpperCase()),
   );
 
   const summaryPresent = batchIds.filter((tid) => existingSummaries.has(tid.toUpperCase()));
