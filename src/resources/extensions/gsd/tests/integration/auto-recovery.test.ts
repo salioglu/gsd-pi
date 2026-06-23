@@ -560,7 +560,12 @@ test("verifyExpectedArtifact execute-task rejects heading-style plan without che
 });
 
 test("verifyExpectedArtifact plan-slice passes for rendered slice/task plan artifacts from DB", async () => {
-  const base = makeTmpBase();
+  // Do NOT use makeTmpBase() here — it creates a legacy milestones/ dir which forces
+  // renderPlanFromDb into the legacy path layout and creates a spurious tasks/ dir that
+  // triggers the per-task file check even when dbPrimary=true. Create only .gsd/ so
+  // resolveMilestonePath returns null and the flat-phase path is used instead.
+  const base = join(tmpdir(), `gsd-test-${randomUUID()}`);
+  mkdirSync(join(base, ".gsd"), { recursive: true });
   const dbPath = join(base, ".gsd", "gsd.db");
   openDatabase(dbPath);
   try {
@@ -631,7 +636,11 @@ test("verifyExpectedArtifact plan-slice passes for rendered slice/task plan arti
 });
 
 test("verifyExpectedArtifact plan-slice fails after deleting the slice plan file", async () => {
-  const base = makeTmpBase();
+  // Do NOT use makeTmpBase() here — same reason as the passing test above: the legacy
+  // milestones/ dir forces a legacy path and creates a tasks/ dir that incorrectly
+  // triggers the per-task file check. Create only .gsd/ to stay on the flat-phase path.
+  const base = join(tmpdir(), `gsd-test-${randomUUID()}`);
+  mkdirSync(join(base, ".gsd"), { recursive: true });
   const dbPath = join(base, ".gsd", "gsd.db");
   openDatabase(dbPath);
   try {
