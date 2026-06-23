@@ -414,7 +414,7 @@ test("full lifecycle: migration through completion through doctor", async (t) =>
 // Stale render detection (R013)
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("recovery: DB loss → migrateFromMarkdown restores state, stale render detection", { skip: true }, async (t) => {
+test("recovery: DB loss → migrateFromMarkdown restores state, stale render detection", async (t) => {
   const base = createRealisticFixture();
   const dbPath = join(base, ".gsd", "gsd.db");
 

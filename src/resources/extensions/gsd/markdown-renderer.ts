@@ -871,11 +871,19 @@ function parseProjectionByIdentity(path: string, parse: (content: string) => unk
 }
 
 export function detectStaleRenders(basePath: string): StaleEntry[] {
-  // TODO(flat-phase): stale-render detection is temporarily disabled during the
-  // flat-phase layout transition. The path mismatch between the detector and
-  // renderer inside the headless binary causes a drift loop that crashes e2e.
-  // Re-enable after all path construction is unified through layout-policy.
-  return [];
+  // Stale-render detection is enabled only for legacy (milestones/) layouts.
+  // Flat-phase PLAN files use a <tasks> XML block format that the native Rust
+  // parser does not fully handle, causing false-positive drift entries that loop:
+  // detect → repair (re-renders PLAN) → detect again → ReconciliationFailedError
+  // → EXIT_BLOCKED. Legacy plans use ## Tasks checkbox format which the parser
+  // handles correctly.
+  // TODO(flat-phase): re-enable for flat-phase once the native parser supports
+  // <tasks> blocks, or when detectStaleRendersImpl is updated to skip the
+  // plan-checkbox check for flat-phase plan files.
+  if (!isLegacyMilestonesLayout(basePath)) {
+    return [];
+  }
+  return detectStaleRendersImpl(basePath);
 }
 
 function detectStaleRendersImpl(basePath: string): StaleEntry[] {
