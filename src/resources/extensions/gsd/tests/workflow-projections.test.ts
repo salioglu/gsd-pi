@@ -226,9 +226,9 @@ test('workflow-projections: regenerateIfMissing PLAN restores slice plan and tas
       planning: { description: 'Do the second thing.', estimate: '2h' },
     });
 
-    // Flat-phase: renderer writes milestones/M001/01-01-PLAN.md (milestone dir is
-    // the phase root in legacy layout; planFileName uses phaseNum=1, planNum=1).
-    const slicePlanPath = join(base, '.gsd', 'milestones', 'M001', '01-01-PLAN.md');
+    // Legacy layout: renderer writes milestones/M001/slices/S01/S01-PLAN.md
+    // (relSliceFile detects milestones/ prefix → uses legacy S01-PLAN.md filename).
+    const slicePlanPath = join(base, '.gsd', 'milestones', 'M001', 'slices', 'S01', 'S01-PLAN.md');
 
     assert.ok(!existsSync(slicePlanPath), 'precondition: slice plan absent');
 
