@@ -4,7 +4,7 @@
 
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 
@@ -463,8 +463,21 @@ describe("multi-milestone sequence e2e (fake LLM)", () => {
 			outcome.assertArtifact(`.gsd/milestones/${milestoneId}/slices/S01/S01-SUMMARY.md`, `${milestoneId}/S01 summary artifact is present`);
 			// Flat-phase: skip per-task summary (tasks are checkboxes)
 		}
-		assert.ok(existsSync(join(project.dir, ".gsd", "milestones", "M002", "M002-CONTEXT.md")), "M002 context artifact is queued");
-		assert.equal(existsSync(join(project.dir, ".gsd", "milestones", "M002", "M002-ROADMAP.md")), false, "M002 roadmap is not planned before the next command");
+		// M002 context artifact is queued (flat-phase: assertArtifact handles phases/ fallback)
+		outcome.assertArtifact(".gsd/milestones/M002/M002-CONTEXT.md", "M002 context artifact is queued");
+		// M002 roadmap must NOT exist before the next auto command plans it
+		const m002RoadmapExists =
+			existsSync(join(project.dir, ".gsd", "milestones", "M002", "M002-ROADMAP.md")) ||
+			((): boolean => {
+				const phasesDir = join(project.dir, ".gsd", "phases");
+				if (!existsSync(phasesDir)) return false;
+				try {
+					return readdirSync(phasesDir, { withFileTypes: true })
+						.filter((e) => e.isDirectory() && /^02-/.test(e.name))
+						.some((e) => existsSync(join(phasesDir, e.name, "02-ROADMAP.md")));
+				} catch { return false; }
+			})();
+		assert.equal(m002RoadmapExists, false, "M002 roadmap is not planned before the next command");
 
 		const db = outcome.openDb(t);
 		assert.equal(scalar(db, "SELECT COUNT(*) AS value FROM milestones WHERE status = 'complete'"), "1");

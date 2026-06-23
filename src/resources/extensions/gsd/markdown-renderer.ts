@@ -879,12 +879,15 @@ function parseProjectionByIdentity(path: string, parse: (content: string) => unk
 }
 
 export function detectStaleRenders(basePath: string): StaleEntry[] {
-  // TODO(flat-phase): detection paths (plan checkboxes, roadmap checkboxes,
-  // slice summaries) produce false positives or repair failures in flat-phase
-  // layout because path construction and file naming changed. Gate on legacy
-  // layout; re-enable for flat-phase after path construction is unified.
-  if (!isLegacyMilestonesLayout(basePath)) return [];
-  return detectStaleRendersImpl(basePath);
+  // TODO(flat-phase): stale-render detection is temporarily fully disabled.
+  // The isLegacyMilestonesLayout gate is unreliable: git-service.ts creates
+  // milestones/<mid>/ directories for integration-branch metadata even in
+  // flat-phase projects, making the gate fire true and then producing false
+  // stale-render drift in the second reconcile cycle → ReconciliationFailedError
+  // → auto-mode blocked (exit 10) for multi-slice/remediation e2e scenarios.
+  // Re-enable after path construction is unified and the metadata dir is
+  // decoupled from the layout-detection signal.
+  return [];
 }
 
 function detectStaleRendersImpl(basePath: string): StaleEntry[] {

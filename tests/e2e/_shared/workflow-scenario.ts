@@ -92,6 +92,12 @@ export class WorkflowOutcomeProbe {
 			const phasesDir = join(this.projectDir, ".gsd", "phases");
 			if (existsSync(phasesDir)) {
 				try {
+					// Extract the milestone id from the path (e.g. "M001", "M002") so we
+					// can derive the correct flat-phase numeric prefix (01, 02, …).
+					const milestoneIdMatch = relativePath.match(/milestones\/(M(\d+))\//);
+					const phasePrefix = milestoneIdMatch
+						? String(parseInt(milestoneIdMatch[2]!, 10)).padStart(2, "0")
+						: "01";
 					for (const phaseEntry of readdirSync(phasesDir, { withFileTypes: true })) {
 						if (!phaseEntry.isDirectory()) continue;
 						const phaseDir = join(phasesDir, phaseEntry.name);
@@ -100,14 +106,15 @@ export class WorkflowOutcomeProbe {
 						// Try old filename as-is in the phase dir
 						if (existsSync(join(phaseDir, oldFileName))) return;
 						// Try flat-phase naming: M001-SUFFIX.md → 01-SUFFIX.md
-						const flatFileName = oldFileName.replace(/^M\d+-/, "01-");
+						// Use the milestone's actual phase number (not hardcoded "01").
+						const flatFileName = oldFileName.replace(/^M\d+-/, `${phasePrefix}-`);
 						if (existsSync(join(phaseDir, flatFileName))) return;
-						// Try slice file: S01-SUMMARY.md → 01-01-SUMMARY.md
+						// Try slice file: S01-SUMMARY.md → NN-01-SUMMARY.md
 						const sliceMatch = oldFileName.match(/^S0*(\d+)-(.+\.md)$/);
 						if (sliceMatch) {
 							const planNum = parseInt(sliceMatch[1]!, 10);
 							const suffix = sliceMatch[2];
-							const planFile = `01-${String(planNum).padStart(2, "0")}-${suffix}`;
+							const planFile = `${phasePrefix}-${String(planNum).padStart(2, "0")}-${suffix}`;
 							if (existsSync(join(phaseDir, planFile))) return;
 						}
 						// Try task file: T01-SUMMARY.md as-is (stays in phase dir)
