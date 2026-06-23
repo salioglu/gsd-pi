@@ -8,15 +8,19 @@
 
 import {
   gsdRoot,
-  gsdProjectionRoot,
   resolveDir,
   resolveFile,
+  resolveMilestonePath,
+  resolveMilestoneFile,
+  resolveSliceFile,
+  legacyMilestonesDir,
   relMilestoneFile,
   relSliceFile,
-  buildMilestoneFileName,
-  buildSliceFileName,
   buildTaskFileName,
+  resolveSlicePath,
+  resolveTasksDir,
 } from "./paths.js";
+import { milestoneIdToPhaseNum } from "./layout-policy.js";
 import { parseUnitId } from "./unit-id.js";
 import { join } from "node:path";
 
@@ -27,8 +31,21 @@ function resolveMilestoneArtifactPath(
 ): string | null {
   const existing = resolveProjectedMilestoneFile(base, mid, suffix) ?? resolveProjectMilestoneFile(base, mid, suffix);
   if (existing) return existing;
-  const dir = resolveProjectedMilestonePath(base, mid) ?? resolveProjectMilestonePath(base, mid);
-  return dir ? join(dir, buildMilestoneFileName(mid, suffix)) : null;
+  // Try legacy projected (worktree) path, then legacy project-root path.
+  const legacyDir = resolveProjectedMilestonePath(base, mid) ?? resolveProjectMilestonePath(base, mid);
+  if (legacyDir) return join(legacyDir, `${mid}-${suffix}.md`);
+  // Flat-phase fallback: use resolveMilestonePath which handles phases/ and milestones/.
+  const dir = resolveMilestonePath(base, mid);
+  if (dir) {
+    const legacyBase = legacyMilestonesDir(base);
+    const isLegacy = dir.startsWith(legacyBase + "/") || dir.startsWith(legacyBase + "\\");
+    const phaseNum = milestoneIdToPhaseNum(mid);
+    const filename = isLegacy
+      ? `${mid}-${suffix}.md`
+      : `${String(phaseNum).padStart(2, "0")}-${suffix}.md`;
+    return join(dir, filename);
+  }
+  return null;
 }
 
 function resolveSliceArtifactPath(
@@ -39,8 +56,12 @@ function resolveSliceArtifactPath(
 ): string | null {
   const existing = resolveProjectedSliceFile(base, mid, sid, suffix) ?? resolveProjectSliceFile(base, mid, sid, suffix);
   if (existing) return existing;
-  const dir = resolveProjectedSlicePath(base, mid, sid) ?? resolveProjectSlicePath(base, mid, sid);
-  return dir ? join(dir, buildSliceFileName(sid, suffix)) : null;
+  // Flat-phase: plan files live at phases/NN-slug/NN-MM-SUFFIX.md — resolveSliceFile handles both layouts.
+  const flatPhase = resolveSliceFile(base, mid, sid, suffix);
+  if (flatPhase) return flatPhase;
+  // File doesn't exist yet — use relSliceFile for the layout-aware canonical path.
+  // buildSliceFileName(sid) only has sliceId → MM-SUFFIX.md, wrong for both layouts.
+  return join(base, relSliceFile(base, mid, sid, suffix));
 }
 
 function resolveProjectMilestonePath(base: string, mid: string): string | null {
@@ -72,16 +93,11 @@ function resolveProjectSliceFile(base: string, mid: string, sid: string, suffix:
 }
 
 function resolveProjectedMilestonePath(base: string, mid: string): string | null {
-  const milestonesDir = join(gsdProjectionRoot(base), "milestones");
-  const dir = resolveDir(milestonesDir, mid);
-  return dir ? join(milestonesDir, dir) : null;
+  return resolveMilestonePath(base, mid);
 }
 
 function resolveProjectedMilestoneFile(base: string, mid: string, suffix: string): string | null {
-  const dir = resolveProjectedMilestonePath(base, mid);
-  if (!dir) return null;
-  const file = resolveFile(dir, mid, suffix);
-  return file ? join(dir, file) : null;
+  return resolveMilestoneFile(base, mid, suffix);
 }
 
 function resolveProjectedSlicePath(base: string, mid: string, sid: string): string | null {
@@ -155,10 +171,12 @@ export function resolveExpectedArtifactPath(
       return resolveSliceArtifactPath(base, mid, sid!, "ASSESSMENT");
     }
     case "execute-task": {
-      const dir = resolveProjectedSlicePath(base, mid, sid!) ?? resolveProjectSlicePath(base, mid, sid!);
-      return dir && tid
-        ? join(dir, "tasks", buildTaskFileName(tid, "SUMMARY"))
-        : null;
+      const slicePath = resolveProjectedSlicePath(base, mid, sid!)
+        ?? resolveProjectSlicePath(base, mid, sid!)
+        ?? resolveSlicePath(base, mid, sid!);
+      if (!slicePath || !tid) return null;
+      const tasksDir = resolveTasksDir(base, mid, sid!) ?? slicePath;
+      return join(tasksDir, buildTaskFileName(tid, "SUMMARY"));
     }
     case "complete-slice": {
       return resolveSliceArtifactPath(base, mid, sid!, "SUMMARY");

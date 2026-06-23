@@ -203,7 +203,6 @@ test("register-hooks unlocks milestone depth verification from question id witho
 
 test("register-hooks persists first structured question round for new milestone re-entry", async (t) => {
   const dir = makeTempDir("question-draft");
-  mkdirSync(join(dir, ".gsd", "milestones"), { recursive: true });
   const originalCwd = process.cwd();
   process.chdir(dir);
   resetWriteGateState(dir);
@@ -274,9 +273,10 @@ test("register-hooks persists first structured question round for new milestone 
     }, ctx);
   }
 
-  const milestoneDir = join(dir, ".gsd", "milestones", "M004");
-  const draftPath = join(milestoneDir, "M004-CONTEXT-DRAFT.md");
-  const discussionPath = join(milestoneDir, "M004-DISCUSSION.md");
+  // Flat-phase: ensureMilestoneShell creates phases/04-new-milestone-m004/ for M004
+  const milestoneDir = join(dir, ".gsd", "phases", "04-new-milestone-m004");
+  const draftPath = join(milestoneDir, "04-CONTEXT-DRAFT.md");
+  const discussionPath = join(milestoneDir, "04-DISCUSSION.md");
 
   assert.equal(existsSync(draftPath), true, "first answer round should create a resumable context draft");
   assert.equal(existsSync(discussionPath), true, "first answer round should create a discussion log");

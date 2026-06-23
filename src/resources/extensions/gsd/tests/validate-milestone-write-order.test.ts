@@ -101,6 +101,9 @@ describe("handleValidateMilestone write ordering (#2725)", () => {
     const milestoneDir = join(base, ".gsd", "milestones", "M001");
     rmSync(milestoneDir, { recursive: true, force: true });
     writeFileSync(milestoneDir, "not-a-directory");
+    // Also block the flat-phase fallback path: write a regular file named
+    // "phases" so mkdir("phases/01-m001", {recursive:true}) throws ENOTDIR.
+    writeFileSync(join(base, ".gsd", "phases"), "not-a-directory");
 
     const result = await handleValidateMilestone(VALID_PARAMS, base);
 

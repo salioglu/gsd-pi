@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { existsSync, unlinkSync } from "node:fs";
+import { relSliceFile, relMilestoneFile } from "../paths.js";
 import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString } from "../validation.js";
@@ -119,12 +120,9 @@ export async function handleReassessRoadmap(
   }
 
   // ── Compute assessment artifact path ──────────────────────────────
-  // Assessment lives in the completed slice's directory
-  const assessmentRelPath = join(
-    ".gsd", "milestones", params.milestoneId,
-    "slices", params.completedSliceId,
-    `${params.completedSliceId}-ASSESSMENT.md`,
-  );
+  // Assessment lives in the completed slice's directory.
+  // Use relSliceFile so the path is layout-aware (flat-phase or legacy).
+  const assessmentRelPath = relSliceFile(basePath, params.milestoneId, params.completedSliceId, "ASSESSMENT");
 
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
   // Guards must be inside the transaction so the state they check cannot
@@ -289,10 +287,8 @@ export async function handleReassessRoadmap(
       params.sliceChanges.removed.length > 0;
 
     if (hasStructuralChanges) {
-      const validationFile = join(
-        basePath, ".gsd", "milestones", params.milestoneId,
-        `${params.milestoneId}-VALIDATION.md`,
-      );
+      // Layout-aware: flat-phase → phases/NN-slug/NN-VALIDATION.md; legacy → milestones/MID/MID-VALIDATION.md
+      const validationFile = join(basePath, relMilestoneFile(basePath, params.milestoneId, "VALIDATION"));
       try {
         if (existsSync(validationFile)) unlinkSync(validationFile);
       } catch (e) {

@@ -22,7 +22,7 @@ import {
   getPendingGatesForTurn,
 } from "../gsd-db.js";
 import { getGatesForTurn } from "../gate-registry.js";
-import { gsdProjectionRoot, clearPathCache, resolveMilestoneFile } from "../paths.js";
+import { gsdProjectionRoot, clearPathCache, resolveMilestoneFile, relSliceFile } from "../paths.js";
 import { resolveCanonicalMilestoneRoot } from "../worktree-manager.js";
 import { checkOwnership, sliceUnitKey } from "../unit-ownership.js";
 import { saveFile, clearParseCache } from "../files.js";
@@ -67,14 +67,11 @@ function sliceGateFieldForId(
 }
 
 function sliceSummaryPath(basePath: string, milestoneId: string, sliceId: string): string {
-  return join(
-    gsdProjectionRoot(basePath),
-    "milestones",
-    milestoneId,
-    "slices",
-    sliceId,
-    `${sliceId}-SUMMARY.md`,
-  );
+  // Layout-aware: flat-phase projects use NN-MM-SUMMARY.md inside the phase dir;
+  // legacy projects use milestones/MID/slices/SID/SID-SUMMARY.md.
+  // relSliceFile returns a path relative to basePath (e.g. ".gsd/phases/01-test/01-01-SUMMARY.md"),
+  // so join with basePath (not gsdProjectionRoot which would double the ".gsd/" segment).
+  return join(basePath, relSliceFile(basePath, milestoneId, sliceId, "SUMMARY"));
 }
 
 function hasCompleteSliceArtifactContract(basePath: string, milestoneId: string, sliceId: string): boolean {

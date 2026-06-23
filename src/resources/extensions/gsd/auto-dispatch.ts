@@ -44,15 +44,15 @@ import {
   resolveTaskFile,
   relTaskFile,
   relSliceFile,
+  relMilestoneFile,
   buildMilestoneFileName,
-  buildSliceFileName,
   buildTaskFileName,
   gsdProjectionRoot,
 } from "./paths.js";
 import { validateArtifact } from "./schemas/validate.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { logWarning, logError } from "./workflow-logger.js";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
 import {
   buildDiscussMilestonePrompt,
@@ -522,9 +522,8 @@ function backfillMissingAssessmentsFromSummaries(basePath: string, mid: string):
     const summaryPath = resolveSliceFile(basePath, mid, sliceId, "SUMMARY");
     if (!summaryPath || !existsSync(summaryPath)) continue;
 
-    const slicePath = resolveSlicePath(basePath, mid, sliceId);
     const assessmentPath = resolveSliceFile(basePath, mid, sliceId, "ASSESSMENT")
-      ?? (slicePath ? join(slicePath, buildSliceFileName(sliceId, "ASSESSMENT")) : null);
+      ?? join(basePath, relSliceFile(basePath, mid, sliceId, "ASSESSMENT"));
     if (!assessmentPath) continue;
 
     const assessmentRelPath = relSliceFile(basePath, mid, sliceId, "ASSESSMENT");
@@ -1532,8 +1531,25 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // missing, the planner created S##-PLAN.md with task entries but never
       // wrote the tasks/ directory files. Dispatch plan-slice to regenerate
       // them rather than hard-stopping — fixes the infinite-loop described in
-      // issue #909.
+      // issue #909. Flat-phase layout embeds tasks in the slice plan file, so
+      // skip recovery when tasks are embedded (<tasks> block or task checkboxes in phases/ plan).
       const taskPlanPath = resolveTaskFile(artifactBasePath, mid, sid, tid, "PLAN");
+      const slicePlanPath = resolveSliceFile(artifactBasePath, mid, sid, "PLAN");
+      const phasesRoot = join(gsdProjectionRoot(artifactBasePath), "phases");
+      const slicePlanContent = slicePlanPath && existsSync(slicePlanPath)
+        ? readFileSync(slicePlanPath, "utf-8")
+        : "";
+      const isPhasesSlicePlan =
+        slicePlanPath !== null &&
+        (slicePlanPath === phasesRoot || slicePlanPath.startsWith(`${phasesRoot}${sep}`));
+      const hasTaskCheckboxes = /^-\s+\[[ xX]\]\s+\*\*[\w.]+/m.test(slicePlanContent);
+      const tasksEmbeddedInSlicePlan = Boolean(
+        slicePlanPath &&
+        existsSync(slicePlanPath) &&
+        (slicePlanContent.includes("<tasks>") || (isPhasesSlicePlan && hasTaskCheckboxes)),
+      );
+      // tasksEmbeddedInSlicePlan is true when tasks live inside the slice plan
+      // (flat-phase phases/ layout with task checkboxes or renderPlanFromDb <tasks> block).
       const projectionTaskPlanPath = join(
         gsdProjectionRoot(artifactBasePath),
         "milestones",
@@ -1543,7 +1559,11 @@ export const DISPATCH_RULES: DispatchRule[] = [
         "tasks",
         buildTaskFileName(tid, "PLAN"),
       );
-      if ((!taskPlanPath || !existsSync(taskPlanPath)) && !existsSync(projectionTaskPlanPath)) {
+      if (
+        (!taskPlanPath || !existsSync(taskPlanPath)) &&
+        !existsSync(projectionTaskPlanPath) &&
+        !tasksEmbeddedInSlicePlan
+      ) {
         if (isDebugEnabled()) {
           const expectedTaskPlanPath = join(artifactBasePath, relTaskFile(artifactBasePath, mid, sid, tid, "PLAN"));
           const originalProjectRoot = session?.originalBasePath || basePath;
@@ -1675,10 +1695,13 @@ export const DISPATCH_RULES: DispatchRule[] = [
           };
         }
         if (!existsSync(mDir)) mkdirSync(mDir, { recursive: true });
-        const validationPath = join(
-          mDir,
-          buildMilestoneFileName(mid, "VALIDATION"),
-        );
+        // Use relMilestoneFile for the layout-aware filename:
+        //   legacy   → milestones/M001/M001-VALIDATION.md
+        //   flat-phase → phases/01-slug/01-VALIDATION.md
+        // When the milestone dir is only in the project root (worktree has none),
+        // write to the project root so the artifact lands in the canonical location.
+        const writeBase = resolveMilestonePath(artifactBasePath, mid) != null ? artifactBasePath : projectRoot;
+        const validationPath = join(writeBase, relMilestoneFile(writeBase, mid, "VALIDATION"));
         const skipSource = trivialVariant
           ? "trivial-scope pipeline variant"
           : "`skip_milestone_validation` preference";

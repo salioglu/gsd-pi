@@ -41,6 +41,7 @@ import {
 import { extractSection, getManifestStatus, splitFrontmatter, parseFrontmatterMap } from "./files.js";
 export { inlinePriorMilestoneSummary } from "./files.js";
 import { collectSecretsFromManifest } from "../get-secrets-from-user.js";
+
 import {
   gsdRoot,
   resolveMilestoneFile,
@@ -51,7 +52,10 @@ import {
   resolveTasksDir,
   resolveTaskFile,
   milestonesDir,
+  legacyMilestonesDir,
+  isLegacyMilestonesLayout,
   buildTaskFileName,
+  canonicalPhaseDirName,
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
 import { clearActivityLogState } from "./activity-log.js";
@@ -2997,11 +3001,26 @@ export function ensurePreconditions(
         return;
       }
     }
-    const newDir = join(milestonesDir(base), mid);
-    mkdirSync(join(newDir, "slices"), { recursive: true });
+    // Layout-aware: if the legacy milestones/ dir exists, place the new milestone dir
+    // there (preserves the existing project layout). Otherwise use flat-phase phases/.
+    const legacyBase = legacyMilestonesDir(base);
+    const isLegacyLayout = isLegacyMilestonesLayout(base);
+    const targetBase = isLegacyLayout ? legacyBase : milestonesDir(base);
+    // Flat-phase: look up the milestone title to build the canonical NN-slug dir name
+    // (e.g. "01-foundation") that resolveMilestonePath will later find by prefix.
+    // Legacy layout keeps the raw milestone id (e.g. "M001").
+    const dirName = isLegacyLayout
+      ? mid
+      : canonicalPhaseDirName(mid, getMilestone(mid)?.title);
+    const newDir = join(targetBase, dirName);
+    // Legacy projects use a slices/ subdir; flat-phase uses top-level plan files (no slices/).
+    mkdirSync(isLegacyLayout ? join(newDir, "slices") : newDir, { recursive: true });
   }
 
   if (sid !== undefined) {
+    const isLegacyLayout = isLegacyMilestonesLayout(base);
+    // Flat-phase: tasks are checkboxes in NN-MM-PLAN.md — no slices/ subdir needed.
+    if (!isLegacyLayout) return;
 
     const mDirResolved = resolveMilestonePath(base, mid);
     if (mDirResolved) {

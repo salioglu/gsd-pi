@@ -19,7 +19,7 @@ import {
 } from "../gsd-db.js";
 import { GATE_REGISTRY } from "../gate-registry.js";
 import { generateRequirementsMd, saveArtifactToDb } from "../db-writer.js";
-import { clearPathCache, normalizeRealPath, relSliceFile, resolveGsdPathContract, resolveMilestoneFile, resolveSliceFile } from "../paths.js";
+import { clearPathCache, normalizeRealPath, relMilestoneFile, relSliceFile, relSlicePath, resolveGsdPathContract, resolveMilestoneFile, resolveSliceFile } from "../paths.js";
 import { saveFile, clearParseCache } from "../files.js";
 import { unlinkSync } from "node:fs";
 import { hostname } from "node:os";
@@ -353,11 +353,21 @@ export async function executeSummarySave(
     } else if (params.artifact_type === "REQUIREMENTS-DRAFT") {
       relativePath = "REQUIREMENTS-DRAFT.md";
     } else if (params.task_id && params.slice_id) {
-      relativePath = `milestones/${params.milestone_id}/slices/${params.slice_id}/tasks/${params.task_id}-${params.artifact_type}.md`;
+      // Layout-aware path for task-scoped artifacts.
+      // Flat-phase: <phaseDir>/TID-TYPE.md  Legacy: milestones/MID/slices/SID/tasks/TID-TYPE.md
+      // relSlicePath returns ".gsd/phases/NN-slug" (flat) or ".gsd/milestones/MID/slices/SID" (legacy).
+      const sRel = relSlicePath(basePath, params.milestone_id!, params.slice_id).replace(/^\.gsd\//, "");
+      relativePath = sRel.startsWith("milestones/")
+        ? `${sRel}/tasks/${params.task_id}-${params.artifact_type}.md`
+        : `${sRel}/${params.task_id}-${params.artifact_type}.md`;
     } else if (params.slice_id) {
-      relativePath = `milestones/${params.milestone_id}/slices/${params.slice_id}/${params.slice_id}-${params.artifact_type}.md`;
+      // Layout-aware path for slice-scoped artifacts.
+      // relSliceFile returns ".gsd/..." prefix — strip it to get the DB-relative path.
+      relativePath = relSliceFile(basePath, params.milestone_id!, params.slice_id, params.artifact_type).replace(/^\.gsd\//, "");
     } else {
-      relativePath = `milestones/${params.milestone_id}/${params.milestone_id}-${params.artifact_type}.md`;
+      // Layout-aware path for milestone-scoped artifacts.
+      // relMilestoneFile returns ".gsd/..." prefix — strip it to get the DB-relative path.
+      relativePath = relMilestoneFile(basePath, params.milestone_id!, params.artifact_type).replace(/^\.gsd\//, "");
     }
 
     const activeRequirements = params.artifact_type === "REQUIREMENTS"

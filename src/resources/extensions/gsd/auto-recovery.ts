@@ -57,6 +57,7 @@ import {
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 
+import { LAYOUT_SEGMENTS } from "./layout-policy.js";
 import { dirname, join } from "node:path";
 import {
   resolveExpectedArtifactPath,
@@ -321,15 +322,15 @@ function escapeRegExp(value: string): string {
 }
 
 function hasCheckedTaskCompletionOnDisk(base: string, mid: string, sid: string, tid: string): boolean {
-  const tasksDir = resolveTasksDir(base, mid, sid);
-  if (!tasksDir) return false;
-  if (!existsSync(join(tasksDir, `${tid}-SUMMARY.md`))) return false;
+  const slicePath = resolveSlicePath(base, mid, sid);
+  if (!slicePath) return false;
 
   const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
   if (!planAbs || !existsSync(planAbs)) return false;
 
   const planContent = readFileSync(planAbs, "utf-8");
-  const cbRe = new RegExp(`^\\s*-\\s+\\[[xX]\\]\\s+\\*\\*${escapeRegExp(tid)}:`, "m");
+  // Match legacy (`**T01: Title**`) and flat-phase (`**T01**: Title`) checkbox lines.
+  const cbRe = new RegExp(`^\\s*-\\s+\\[[xX]\\]\\s+\\*\\*${escapeRegExp(tid)}(?:\\*\\*)?:`, "m");
   return cbRe.test(planContent);
 }
 
@@ -412,11 +413,13 @@ export function verifyExpectedArtifact(
     if (blockerPath && existsSync(blockerPath)) {
       return true;
     }
+    const slicePath = resolveSlicePath(base, mid, sid);
+    if (!slicePath) return false;
+
     const plusIdx = batchPart.indexOf("+");
     if (plusIdx === -1) {
       // Legacy format "reactive" without batch IDs — fall back to "any summary"
-      const tDir = resolveTasksDir(base, mid, sid);
-      if (!tDir) return false;
+      const tDir = resolveTasksDir(base, mid, sid) ?? slicePath;
       const summaryFiles = resolveTaskFiles(tDir, "SUMMARY");
       return summaryFiles.length > 0;
     }
@@ -424,8 +427,7 @@ export function verifyExpectedArtifact(
     const batchIds = batchPart.slice(plusIdx + 1).split(",").filter(Boolean);
     if (batchIds.length === 0) return false;
 
-    const tDir = resolveTasksDir(base, mid, sid);
-    if (!tDir) return false;
+    const tDir = resolveTasksDir(base, mid, sid) ?? slicePath;
 
     const existingSummaries = new Set(
       resolveTaskFiles(tDir, "SUMMARY").map((f) =>
@@ -579,11 +581,15 @@ export function verifyExpectedArtifact(
     if (mid && sid) {
       try {
         let taskIds: string[] | null = null;
+        let dbPrimary = false;
         if (isDbAvailable()) {
           const refreshed = refreshWorkflowDatabaseFromDisk();
           if (refreshed) {
             const tasks = getSliceTasks(mid, sid);
-            if (tasks.length > 0) taskIds = tasks.map(t => t.id);
+            if (tasks.length > 0) {
+              taskIds = tasks.map(t => t.id);
+              dbPrimary = true;
+            }
           }
         }
 
@@ -591,7 +597,7 @@ export function verifyExpectedArtifact(
           // LEGACY: DB unavailable or no tasks in DB. Require actual task
           // entries so an empty scaffold cannot advance the pipeline (#699).
           const planContent = readFileSync(absPath, "utf-8");
-          const hasCheckboxTask = /^\s*- \[[xX ]\] \*\*T\d+:/m.test(planContent);
+          const hasCheckboxTask = /^\s*- \[[xX ]\] \*\*T\d+/m.test(planContent);
           const hasHeadingTask = /^\s*#{2,4}\s+T\d+\s*(?:--|—|:)/m.test(planContent);
           if (!hasCheckboxTask && !hasHeadingTask) {
             logWarning("recovery", `verify-fail ${unitType} ${unitId}: plan has no task checkbox/heading (len=${planContent.length}) at ${absPath}`);
@@ -601,18 +607,25 @@ export function verifyExpectedArtifact(
           if (plan.tasks.length > 0) taskIds = plan.tasks.map((t: { id: string }) => t.id);
         }
 
+        // Per-task plan file check: applies when a tasks/ directory is present on
+        // disk (legacy layout), regardless of whether DB is primary. Flat-phase
+        // projects have no tasks/ dir, so the check is naturally skipped there.
+        // When DB is NOT primary and there is no tasks/ dir either, the missing
+        // dir itself is evidence of an incomplete plan (non-flat-phase projects must
+        // have a tasks/ dir).
         if (taskIds && taskIds.length > 0) {
           const tasksDir = join(dirname(absPath), "tasks");
-          if (!existsSync(tasksDir)) {
+          if (existsSync(tasksDir)) {
+            for (const tid of taskIds) {
+              const taskPlanFile = join(tasksDir, `${tid}-PLAN.md`);
+              if (!existsSync(taskPlanFile)) {
+                logWarning("recovery", `verify-fail ${unitType} ${unitId}: task plan missing ${taskPlanFile}`);
+                return false;
+              }
+            }
+          } else if (!dbPrimary && !absPath.replace(/\\/g, "/").includes(`.gsd/${LAYOUT_SEGMENTS.level1}`)) {
             logWarning("recovery", `verify-fail ${unitType} ${unitId}: tasks dir missing at ${tasksDir}`);
             return false;
-          }
-          for (const tid of taskIds) {
-            const taskPlanFile = join(tasksDir, `${tid}-PLAN.md`);
-            if (!existsSync(taskPlanFile)) {
-              logWarning("recovery", `verify-fail ${unitType} ${unitId}: task plan missing ${taskPlanFile}`);
-              return false;
-            }
           }
         }
       } catch (err) {
@@ -652,11 +665,12 @@ export function verifyExpectedArtifact(
   if (unitType === "complete-slice") {
     const { milestone: mid, slice: sid } = parseUnitId(unitId);
     if (mid && sid) {
-      const dir = resolveSlicePath(base, mid, sid);
-      if (dir) {
-        const uatPath = join(dir, buildSliceFileName(sid, "UAT"));
-        if (!existsSync(uatPath)) return false;
-      }
+      // resolveSliceFile only finds existing files; UAT may not exist yet.
+      // Fall back to the canonical expected location so a missing UAT always
+      // returns false (not a silent pass when resolveSliceFile returns null).
+      const uatPath = resolveSliceFile(base, mid, sid, "UAT")
+        ?? join(base, relSliceFile(base, mid, sid, "UAT"));
+      if (!existsSync(uatPath)) return false;
 
       const dbSlice = getSlice(mid, sid);
       if (dbSlice) {
@@ -741,11 +755,12 @@ export function writeReactiveExecuteBlocker(
   const blockerPath = resolveExpectedArtifactPath("reactive-execute", unitId, base);
   if (!blockerPath) return null;
 
-  const tasksDir = resolveTasksDir(base, mid, sid);
+  const slicePath = resolveSlicePath(base, mid, sid);
+  if (!slicePath) return null;
+
+  const tasksDir = resolveTasksDir(base, mid, sid) ?? slicePath;
   const existingSummaries = new Set(
-    tasksDir
-      ? resolveTaskFiles(tasksDir, "SUMMARY").map((f) => f.replace(/-SUMMARY\.md$/i, "").toUpperCase())
-      : [],
+    resolveTaskFiles(tasksDir, "SUMMARY").map((f) => f.replace(/-SUMMARY\.md$/i, "").toUpperCase()),
   );
 
   const summaryPresent = batchIds.filter((tid) => existingSummaries.has(tid.toUpperCase()));
