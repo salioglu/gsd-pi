@@ -1532,21 +1532,23 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // wrote the tasks/ directory files. Dispatch plan-slice to regenerate
       // them rather than hard-stopping — fixes the infinite-loop described in
       // issue #909. Flat-phase layout embeds tasks in the slice plan file, so
-      // skip recovery when tasks are embedded (phases/ path or <tasks> block).
+      // skip recovery when tasks are embedded (<tasks> block or task checkboxes in phases/ plan).
       const taskPlanPath = resolveTaskFile(artifactBasePath, mid, sid, tid, "PLAN");
       const slicePlanPath = resolveSliceFile(artifactBasePath, mid, sid, "PLAN");
       const phasesRoot = join(gsdProjectionRoot(artifactBasePath), "phases");
       const slicePlanContent = slicePlanPath && existsSync(slicePlanPath)
         ? readFileSync(slicePlanPath, "utf-8")
         : "";
+      const isPhasesSlicePlan =
+        slicePlanPath === phasesRoot || slicePlanPath.startsWith(`${phasesRoot}${sep}`);
+      const hasTaskCheckboxes = /^-\s+\[[ xX]\]\s+\*\*[\w.]+/m.test(slicePlanContent);
       const tasksEmbeddedInSlicePlan = Boolean(
         slicePlanPath &&
         existsSync(slicePlanPath) &&
-        ((slicePlanPath === phasesRoot || slicePlanPath.startsWith(`${phasesRoot}${sep}`)) ||
-          slicePlanContent.includes("<tasks>")),
+        (slicePlanContent.includes("<tasks>") || (isPhasesSlicePlan && hasTaskCheckboxes)),
       );
       // tasksEmbeddedInSlicePlan is true when tasks live inside the slice plan
-      // (flat-phase phases/ layout or renderPlanFromDb <tasks> block).
+      // (flat-phase phases/ layout with task checkboxes or renderPlanFromDb <tasks> block).
       const projectionTaskPlanPath = join(
         gsdProjectionRoot(artifactBasePath),
         "milestones",
