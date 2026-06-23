@@ -20,14 +20,16 @@ import { loadFile, parseSummary, resolveAllOverrides } from "./files.js";
 import { loadPrompt } from "./prompt-loader.js";
 import { isAwaitingUserInput } from "./consent-question.js";
 import {
-  resolveMilestonePath,
   resolveSliceFile,
   resolveSlicePath,
   relSlicePath,
   resolveTaskFile,
   resolveMilestoneFile,
   resolveTasksDir,
-  buildTaskFileName,
+  resolveFile,
+  relMilestoneFile,
+  relSliceFile,
+  relTaskFile,
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
 import { rebuildState } from "./doctor.js";
@@ -442,6 +444,22 @@ function getPlannedKeyFiles(tasks: Array<
 export const _parseReactiveBatchTaskIdsForTest = parseReactiveBatchTaskIds;
 export const _getPlannedKeyFilesForTest = getPlannedKeyFiles;
 
+function resolveTaskArtifactPath(
+  basePath: string,
+  mid: string,
+  sid: string,
+  tid: string,
+  suffix: string,
+): string | null {
+  const legacy = resolveTaskFile(basePath, mid, sid, tid, suffix);
+  if (legacy) return legacy;
+  const slicePath = resolveSlicePath(basePath, mid, sid);
+  if (!slicePath) return null;
+  const taskDir = resolveTasksDir(basePath, mid, sid) ?? slicePath;
+  const file = resolveFile(taskDir, tid, suffix);
+  return file ? join(taskDir, file) : null;
+}
+
 function resolveVerificationFailureMarkerPath(
   unitType: string,
   unitId: string,
@@ -452,20 +470,17 @@ function resolveVerificationFailureMarkerPath(
     case "complete-milestone": {
       const existing = resolveMilestoneFile(basePath, mid, "VERIFICATION-FAILED");
       if (existing) return existing;
-      const milestoneDir = resolveMilestonePath(basePath, mid);
-      return milestoneDir ? join(milestoneDir, `${mid}-VERIFICATION-FAILED.md`) : null;
+      return join(basePath, relMilestoneFile(basePath, mid, "VERIFICATION-FAILED"));
     }
     case "complete-slice": {
       const existing = resolveSliceFile(basePath, mid, sid!, "VERIFICATION-FAILED");
       if (existing) return existing;
-      const sliceDir = resolveSlicePath(basePath, mid, sid!);
-      return sliceDir ? join(sliceDir, `${sid}-VERIFICATION-FAILED.md`) : null;
+      return join(basePath, relSliceFile(basePath, mid, sid!, "VERIFICATION-FAILED"));
     }
     case "execute-task": {
-      const existing = resolveTaskFile(basePath, mid, sid!, tid!, "VERIFICATION-FAILED");
+      const existing = resolveTaskArtifactPath(basePath, mid, sid!, tid!, "VERIFICATION-FAILED");
       if (existing) return existing;
-      const tasksDir = resolveTasksDir(basePath, mid, sid!);
-      return tasksDir ? join(tasksDir, buildTaskFileName(tid!, "VERIFICATION-FAILED")) : null;
+      return join(basePath, relTaskFile(basePath, mid, sid!, tid!, "VERIFICATION-FAILED"));
     }
     default:
       return null;
@@ -484,7 +499,7 @@ async function buildTaskCommitContextForUnit(
   const task = isDbAvailable() ? getTask(mid, sid, tid) : null;
   let summary: ReturnType<typeof parseSummary> | null = null;
 
-  const summaryPath = resolveTaskFile(basePath, mid, sid, tid, "SUMMARY");
+  const summaryPath = resolveTaskArtifactPath(basePath, mid, sid, tid, "SUMMARY");
   if (summaryPath) {
     try {
       const summaryContent = await loadFile(summaryPath);
@@ -697,7 +712,7 @@ export function detectRogueFileWrites(
   if (unitType === "execute-task") {
     if (!mid || !sid || !tid) return [];
 
-    const summaryPath = resolveTaskFile(basePath, mid, sid, tid, "SUMMARY");
+    const summaryPath = resolveTaskArtifactPath(basePath, mid, sid, tid, "SUMMARY");
     if (!summaryPath || !existsSync(summaryPath)) return [];
 
     const dbRow = getTask(mid, sid, tid);
@@ -763,7 +778,7 @@ export function detectRogueFileWrites(
   } else if (unitType === "plan-task") {
     if (!mid || !sid || !tid) return [];
 
-    const taskPlanPath = resolveTaskFile(basePath, mid, sid, tid, "PLAN");
+    const taskPlanPath = resolveTaskArtifactPath(basePath, mid, sid, tid, "PLAN");
     if (!taskPlanPath || !existsSync(taskPlanPath)) return [];
 
     const dbRow = getTask(mid, sid, tid);
@@ -2352,12 +2367,9 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
           // 2. Delete SUMMARY.md for the task
           if (mid && sid && tid) {
             // Phase C: read+delete via canonical project root.
-            const tasksDir = resolveTasksDir(s.canonicalProjectRoot, mid, sid);
-            if (tasksDir) {
-              const summaryFile = join(tasksDir, buildTaskFileName(tid, "SUMMARY"));
-              if (existsSync(summaryFile)) {
-                unlinkSync(summaryFile);
-              }
+            const summaryPath = resolveTaskArtifactPath(s.canonicalProjectRoot, mid, sid, tid, "SUMMARY");
+            if (summaryPath && existsSync(summaryPath)) {
+              unlinkSync(summaryPath);
             }
           }
 
