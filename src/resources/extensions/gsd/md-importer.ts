@@ -25,13 +25,13 @@ import {
   resolveMilestoneFile,
   resolveSliceFile,
   resolveTasksDir,
-  milestonesDir,
   legacyMilestonesDir,
   gsdRoot,
+  gsdProjectionRoot,
   resolveTaskFiles,
 } from './paths.js';
 import { findMilestoneIds } from './guided-flow.js';
-import { milestoneIdToPhaseNum } from './layout-policy.js';
+import { milestoneIdToPhaseNum, LAYOUT_SEGMENTS } from './layout-policy.js';
 import { parseRoadmap, parsePlan } from './parsers-legacy.js';
 import { parseContextDependsOn } from './files.js';
 import { logWarning } from './workflow-logger.js';
@@ -362,25 +362,38 @@ function importHierarchyArtifacts(gsdDir: string): number {
 
   // Walk phases (flat-phase layout: phases/NN-slug/, legacy: milestones/M001/)
   const milestoneIds = findMilestoneIds(gsdDir);
-  const phasesDir = milestonesDir(gsdDir);
+  const flatPhasesDir = join(gsdProjectionRoot(gsdDir), LAYOUT_SEGMENTS.level1);
+  const legacyDir = legacyMilestonesDir(gsdDir);
 
   for (const milestoneId of milestoneIds) {
-    const legacyDir = legacyMilestonesDir(gsdDir);
     // Find the phase directory (flat-phase: NN-slug, or legacy M001-slug)
     let phaseDirName: string | null = null;
+    let phaseParentDir: string | null = null;
     const phaseNum = milestoneIdToPhaseNum(milestoneId);
-    const paddedPhase = String(phaseNum).padStart(2, '0');
-    try {
-      for (const entry of readdirSync(phasesDir, { withFileTypes: true })) {
-        if (entry.isDirectory()) {
-          // Exact numeric prefix match: extract the leading digits before the first '-'
-          // and compare to the padded phase number.  Avoids '01-' matching '010-foo'.
+
+    for (const dir of [flatPhasesDir, legacyDir]) {
+      if (!existsSync(dir)) continue;
+      try {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue;
+          // Numeric prefix match via parseInt so 001-slug resolves to M001.
           const numMatch = entry.name.match(/^(\d+)-/);
-          if (numMatch && numMatch[1] === paddedPhase) { phaseDirName = entry.name; break; }
-          if (entry.name.startsWith(milestoneId + '-')) { phaseDirName = entry.name; break; }
+          if (numMatch && parseInt(numMatch[1]!, 10) === phaseNum) {
+            phaseDirName = entry.name;
+            phaseParentDir = dir;
+            break;
+          }
+          if (entry.name.startsWith(milestoneId + '-')) {
+            phaseDirName = entry.name;
+            phaseParentDir = dir;
+            break;
+          }
         }
+      } catch {
+        logWarning("migration", `phases dir unreadable for ${milestoneId} — skipping phase scan`);
       }
-    } catch { logWarning("migration", `phases dir unreadable for ${milestoneId} — skipping phase scan`); }
+      if (phaseDirName) break;
+    }
 
     if (!phaseDirName) {
       const milestoneDirName = findDirByPrefix(legacyDir, milestoneId);
@@ -392,7 +405,7 @@ function importHierarchyArtifacts(gsdDir: string): number {
       );
       continue;
     }
-    if (phasesDir === legacyDir) {
+    if (phaseParentDir === legacyDir) {
       count += importLegacyMilestoneArtifacts(
         join(legacyDir, phaseDirName),
         phaseDirName,
@@ -400,7 +413,7 @@ function importHierarchyArtifacts(gsdDir: string): number {
       );
       continue;
     }
-    const phaseFullPath = join(phasesDir, phaseDirName);
+    const phaseFullPath = join(phaseParentDir!, phaseDirName);
 
     // Phase-level files (flat-phase: NN-SUFFIX.md, legacy: M001-SUFFIX.md)
     const phasePrefix = `${String(phaseNum).padStart(2, "0")}`;

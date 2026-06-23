@@ -617,15 +617,12 @@ function resolvePhaseDir(basePath: string, milestoneId: string): string | null {
   const phasesDir = join(gsdProjectionRoot(basePath), LAYOUT_SEGMENTS.level1);
   if (existsSync(phasesDir)) {
     const phaseNum = milestoneIdToPhaseNum(milestoneId);
-    const padded = String(phaseNum).padStart(2, "0");
     try {
       for (const entry of readdirSync(phasesDir, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
-        // Exact numeric prefix match: extract the digits before the first '-' and
-        // compare directly.  startsWith("01-") is technically safe but a regex
-        // makes the intent unambiguous and prevents any edge-case ambiguity.
+        // Numeric prefix match via parseInt so 001-slug resolves to M001.
         const numMatch = entry.name.match(/^(\d+)-/);
-        if (numMatch && numMatch[1] === padded) {
+        if (numMatch && parseInt(numMatch[1]!, 10) === phaseNum) {
           return join(phasesDir, entry.name);
         }
       }
