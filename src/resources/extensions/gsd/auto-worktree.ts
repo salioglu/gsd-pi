@@ -695,8 +695,8 @@ export function syncGsdStateToWorktree(
   }
 
   // Sync milestones: copy entire milestone directories that are missing
-  const mainMilestonesDir = join(mainGsd, "milestones");
-  const wtMilestonesDir = join(wtGsd, "milestones");
+  const mainMilestonesDir = join(mainGsd, "phases");
+  const wtMilestonesDir = join(wtGsd, "phases");
   if (existsSync(mainMilestonesDir)) {
     try {
       mkdirSync(wtMilestonesDir, { recursive: true });

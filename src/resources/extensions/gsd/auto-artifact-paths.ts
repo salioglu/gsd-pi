@@ -36,7 +36,7 @@ function resolveMilestoneArtifactPath(
   // Flat-phase fallback: use resolveMilestonePath which handles phases/ and milestones/.
   const dir = resolveMilestonePath(base, mid);
   if (dir) {
-    const legacyBase = join(gsdProjectionRoot(base), "milestones");
+    const legacyBase = join(gsdProjectionRoot(base), "phases");
     const isLegacy = dir.startsWith(legacyBase + "/") || dir.startsWith(legacyBase + "\\");
     const phaseNum = milestoneIdToPhaseNum(mid);
     const filename = isLegacy
@@ -92,7 +92,7 @@ function resolveProjectSliceFile(base: string, mid: string, sid: string, suffix:
 }
 
 function resolveProjectedMilestonePath(base: string, mid: string): string | null {
-  const milestonesDir = join(gsdProjectionRoot(base), "milestones");
+  const milestonesDir = join(gsdProjectionRoot(base), "phases");
   const dir = resolveDir(milestonesDir, mid);
   return dir ? join(milestonesDir, dir) : null;
 }
