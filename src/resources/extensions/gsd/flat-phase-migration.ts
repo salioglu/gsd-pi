@@ -2,7 +2,7 @@
 // File Purpose: One-time migration from legacy nested .gsd/milestones/ to
 // flat-phase .gsd/phases/. Runs on startup when the legacy structure is detected.
 
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { renderAllFromDb, renderRoadmapFromDb } from "./markdown-renderer.js";
@@ -12,20 +12,45 @@ import { countDbHierarchy } from "./migration-auto-check.js";
 import { logWarning } from "./workflow-logger.js";
 import { LAYOUT_SEGMENTS } from "./layout-policy.js";
 
-function rollbackPartialMigration(basePath: string, backupDir: string): void {
+const LEGACY_MIGRATING_SEGMENT = "milestones.migrating";
+
+function legacyMigratingPath(basePath: string): string {
+  return join(basePath, ".gsd", LEGACY_MIGRATING_SEGMENT);
+}
+
+function hasLegacyMilestoneSubdirs(dirPath: string): boolean {
+  if (!existsSync(dirPath)) return false;
+  try {
+    return readdirSync(dirPath).some(e => statSync(join(dirPath, e)).isDirectory());
+  } catch {
+    return false;
+  }
+}
+
+function rollbackPartialMigration(
+  basePath: string,
+  backupDir: string,
+  migratingPath?: string,
+): void {
   // Remove the partially-written phases/ dir.
   rmSync(join(basePath, ".gsd", LAYOUT_SEGMENTS.level1), { recursive: true, force: true });
-  // Restore milestones/ from backup — it was removed before render, so
-  // a failed migration would otherwise leave the project with no hierarchy.
+  // Restore milestones/ — prefer renaming the preserved migrating copy back.
   const milestonesPath = join(basePath, ".gsd", "milestones");
   try {
+    if (migratingPath && existsSync(migratingPath) && !existsSync(milestonesPath)) {
+      renameSync(migratingPath, milestonesPath);
+      return;
+    }
     if (existsSync(backupDir)) {
       cpSync(backupDir, milestonesPath, { recursive: true });
+    }
+    if (migratingPath && existsSync(migratingPath)) {
+      rmSync(migratingPath, { recursive: true, force: true });
     }
   } catch (restoreErr) {
     logWarning(
       "migration",
-      `rollback: could not restore milestones/ from backup ${backupDir}: ${(restoreErr as Error).message}`,
+      `rollback: could not restore milestones/: ${(restoreErr as Error).message}`,
     );
     // Non-fatal: backup still exists at backupDir for manual recovery.
   }
@@ -39,15 +64,9 @@ function rollbackPartialMigration(basePath: string, backupDir: string): void {
  * a migration that would thrash the reconciler.
  */
 export function needsFlatPhaseMigration(basePath: string): boolean {
-  const milestonesPath = join(basePath, ".gsd", "milestones");
-  if (!existsSync(milestonesPath)) return false;
-  try {
-    return readdirSync(milestonesPath).some(e =>
-      statSync(join(milestonesPath, e)).isDirectory()
-    );
-  } catch {
-    return false;
-  }
+  if (hasLegacyMilestoneSubdirs(join(basePath, ".gsd", "milestones"))) return true;
+  // Resume an interrupted migration where the legacy tree was renamed aside.
+  return hasLegacyMilestoneSubdirs(legacyMigratingPath(basePath));
 }
 
 /**
@@ -55,9 +74,10 @@ export function needsFlatPhaseMigration(basePath: string): boolean {
  *
  * Steps:
  * 1. Backup .gsd/milestones/ to .gsd-backups/migrate-<ts>/
- * 2. Render flat-phase from the DB (which already has the data)
- * 3. Verify counts match
- * 4. Remove .gsd/milestones/
+ * 2. Rename .gsd/milestones/ aside so path resolvers target phases/
+ * 3. Render flat-phase from the DB (which already has the data)
+ * 4. Verify counts match
+ * 5. Remove the renamed legacy tree
  *
  * Idempotent: if .gsd/milestones/ doesn't exist, returns immediately.
  */
@@ -65,7 +85,10 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
   if (!needsFlatPhaseMigration(basePath)) return;
 
   const milestonesPath = join(basePath, ".gsd", "milestones");
+  const migratingPath = legacyMigratingPath(basePath);
   const phasesPath = join(basePath, ".gsd", LAYOUT_SEGMENTS.level1);
+  const resumingInterrupted =
+    !hasLegacyMilestoneSubdirs(milestonesPath) && hasLegacyMilestoneSubdirs(migratingPath);
 
   // 1. Reconcile DB from legacy markdown before backup/removal so on-disk-only
   // content is imported even when milestone rows already exist in SQLite.
@@ -81,24 +104,31 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
     return;
   }
 
-  // 2. Backup (only reached when the DB has rows and migration will proceed)
-  const ts = Date.now();
-  const backupDir = join(basePath, ".gsd-backups", `migrate-${ts}`);
-  try {
-    mkdirSync(join(basePath, ".gsd-backups"), { recursive: true });
-    cpSync(milestonesPath, backupDir, { recursive: true });
-  } catch (err) {
-    logWarning("migration", `flat-phase migration backup failed: ${(err as Error).message}`);
-    throw err;
-  }
+  let backupDir = migratingPath;
+  if (!resumingInterrupted) {
+    // 2. Backup (only reached when the DB has rows and migration will proceed)
+    const ts = Date.now();
+    backupDir = join(basePath, ".gsd-backups", `migrate-${ts}`);
+    try {
+      mkdirSync(join(basePath, ".gsd-backups"), { recursive: true });
+      cpSync(milestonesPath, backupDir, { recursive: true });
+    } catch (err) {
+      logWarning("migration", `flat-phase migration backup failed: ${(err as Error).message}`);
+      throw err;
+    }
 
-  // 3. Remove legacy tree before rendering so path resolvers target phases/
-  // instead of writing back into the nested milestones/ layout.
-  try {
-    rmSync(milestonesPath, { recursive: true, force: true });
-  } catch (err) {
-    logWarning("migration", `failed to remove legacy milestones/ before render: ${(err as Error).message}`);
-    throw err;
+    // 3. Rename legacy tree aside before rendering so path resolvers target
+    // phases/ instead of writing back into the nested milestones/ layout.
+    // Keep the full tree on disk until render+verify succeed (unlike rmSync).
+    try {
+      renameSync(milestonesPath, migratingPath);
+    } catch (err) {
+      logWarning("migration", `failed to rename legacy milestones/ before render: ${(err as Error).message}`);
+      throw err;
+    }
+  } else {
+    // Interrupted run: clear any partial phases/ projection before retrying.
+    rmSync(phasesPath, { recursive: true, force: true });
   }
 
   // 4. Render flat-phase from DB
@@ -113,7 +143,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
     }
   } catch (err) {
     logWarning("migration", `flat-phase render failed: ${(err as Error).message}`);
-    rollbackPartialMigration(basePath, backupDir);
+    rollbackPartialMigration(basePath, backupDir, migratingPath);
     throw err;
   }
 
@@ -123,7 +153,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
       "migration",
       `flat-phase render had ${renderResult.errors.length} error(s): ${renderResult.errors.join("; ")}`,
     );
-    rollbackPartialMigration(basePath, backupDir);
+    rollbackPartialMigration(basePath, backupDir, migratingPath);
     throw new Error(
       `flat-phase migration render failed: ${renderResult.errors.slice(0, 3).join("; ")}`,
     );
@@ -144,7 +174,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
       "migration",
       `phases/ dir count mismatch: expected ${db.milestones}, found ${renderedDirCount}`,
     );
-    rollbackPartialMigration(basePath, backupDir);
+    rollbackPartialMigration(basePath, backupDir, migratingPath);
     throw new Error("flat-phase migration verification failed: phases dir milestone count mismatch");
   }
   if (db.slices > 0 && renderResult.rendered === 0) {
@@ -152,9 +182,17 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
       "migration",
       "flat-phase migration verification failed: render produced no artifacts for populated DB",
     );
-    rollbackPartialMigration(basePath, backupDir);
+    rollbackPartialMigration(basePath, backupDir, migratingPath);
     throw new Error("flat-phase migration verification failed: no artifacts rendered");
   }
 
-  // Legacy milestones/ was removed before render; nothing further to clean up.
+  // 6. Verified — remove the renamed legacy tree (backup already on disk).
+  try {
+    rmSync(migratingPath, { recursive: true, force: true });
+  } catch (err) {
+    logWarning(
+      "migration",
+      `flat-phase migration succeeded but could not remove ${LEGACY_MIGRATING_SEGMENT}: ${(err as Error).message}`,
+    );
+  }
 }

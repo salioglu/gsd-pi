@@ -908,6 +908,11 @@ export function registerHooks(
           if (opened) {
             const { migrateToFlatPhase } = await import("../flat-phase-migration.js");
             await migrateToFlatPhase(basePath);
+          } else {
+            safetyLogWarning(
+              "bootstrap",
+              "flat-phase migration deferred: legacy .gsd/milestones/ layout detected but the workflow database could not be opened — will retry on next session",
+            );
           }
         }
       }
