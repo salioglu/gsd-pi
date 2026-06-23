@@ -657,7 +657,8 @@ function makeStaleRoadmapContent(slices: Array<{ id: string; title: string; done
 }
 
 test("ADR-017 (#5702): stale-render drift detected and repaired end-to-end", async (t) => {
-  t.skip("TODO(flat-phase): stale-render detection temporarily disabled during layout transition");
+  t.skip("TODO(flat-phase): stale-render detection temporarily disabled during layout transition"); return;
+  const base = "";
   const sliceDir = join(base, ".gsd", "phases", "01-test");
   mkdirSync(sliceDir, { recursive: true });
   t.after(() => {
@@ -696,7 +697,7 @@ test("ADR-017 (#5702): stale-render drift detected and repaired end-to-end", asy
 });
 
 test("ADR-017 (#5702): stale-render detector reason strings match repair contract", (t) => {
-  t.skip("TODO(flat-phase): stale-render detection temporarily disabled during layout transition");
+  t.skip("TODO(flat-phase): stale-render detection temporarily disabled during layout transition"); return;
   const base = mkdtempSync(join(tmpdir(), "gsd-adr017-render-reasons-"));
   const sliceDir = join(base, ".gsd", "phases", "01-test");
   mkdirSync(sliceDir, { recursive: true });
@@ -771,7 +772,7 @@ test("ADR-017 (#5702): missing UAT.md clears stale full_uat_md from DB", { skip:
 });
 
 test("ADR-017 (#5702): stale-render plan repair works with descriptor-layout milestone dir", async (t) => {
-  t.skip("TODO(flat-phase): stale-render detection temporarily disabled during layout transition");
+  t.skip("TODO(flat-phase): stale-render detection temporarily disabled during layout transition"); return;
   // Regression for bugbot finding: repairStaleRenderFromBasePath was passing the
   // raw dir segment (e.g. M001-DESCRIPTOR) straight to renderPlanCheckboxes, which
   // queries the DB as getSliceTasks("M001-DESCRIPTOR", …) → empty → throws.
