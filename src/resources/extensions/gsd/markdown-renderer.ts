@@ -871,22 +871,22 @@ function parseProjectionByIdentity(path: string, parse: (content: string) => unk
 }
 
 export function detectStaleRenders(basePath: string): StaleEntry[] {
-  // Stale-render detection is enabled only for legacy (milestones/) layouts.
   // Flat-phase PLAN files use a <tasks> XML block format that the native Rust
-  // parser does not fully handle, causing false-positive drift entries that loop:
-  // detect → repair (re-renders PLAN) → detect again → ReconciliationFailedError
-  // → EXIT_BLOCKED. Legacy plans use ## Tasks checkbox format which the parser
-  // handles correctly.
-  // TODO(flat-phase): re-enable for flat-phase once the native parser supports
-  // <tasks> blocks, or when detectStaleRendersImpl is updated to skip the
-  // plan-checkbox check for flat-phase plan files.
-  if (!isLegacyMilestonesLayout(basePath)) {
-    return [];
-  }
-  return detectStaleRendersImpl(basePath);
+  // parser does not fully handle, causing false-positive plan-checkbox drift
+  // entries that loop: detect → repair (re-renders PLAN) → detect again →
+  // ReconciliationFailedError → EXIT_BLOCKED. Roadmap and summary checks are
+  // still valid for flat-phase and must run.
+  // TODO(flat-phase): re-enable plan-checkbox checks once the native parser
+  // supports <tasks> blocks.
+  return detectStaleRendersImpl(basePath, {
+    skipPlanCheckboxCheck: !isLegacyMilestonesLayout(basePath),
+  });
 }
 
-function detectStaleRendersImpl(basePath: string): StaleEntry[] {
+function detectStaleRendersImpl(
+  basePath: string,
+  options: { skipPlanCheckboxCheck?: boolean } = {},
+): StaleEntry[] {
   // per-call createRequire("./parsers-legacy") that used to live here ran on
   // every dispatch. The static `./parsers-legacy.js` specifier resolves in
   // both packaged (.js) and source (.ts via the strip-types loader) contexts —
@@ -929,40 +929,42 @@ function detectStaleRendersImpl(basePath: string): StaleEntry[] {
     for (const slice of slices) {
       const tasks = getSliceTasks(milestone.id, slice.id);
 
-      // Check plan checkboxes
-      const planPath = resolveSliceFile(basePath, milestone.id, slice.id, "PLAN");
-      if (planPath && existsSync(planPath!)) {
-        try {
-          const parsed = parseProjectionByIdentity(planPath!, parsePlan) as ReturnType<typeof parsePlan>;
+      if (!options.skipPlanCheckboxCheck) {
+        // Check plan checkboxes
+        const planPath = resolveSliceFile(basePath, milestone.id, slice.id, "PLAN");
+        if (planPath && existsSync(planPath!)) {
+          try {
+            const parsed = parseProjectionByIdentity(planPath!, parsePlan) as ReturnType<typeof parsePlan>;
 
-          for (const task of tasks) {
-            const isDoneInDb = isClosedStatus(task.status);
-            const planTask = parsed.tasks.find((t: { id: string }) => t.id === task.id);
-            if (!planTask) {
-              // DB has a task the plan markdown lacks: the projection is
-              // lossy (e.g. tasks added after the PLAN artifact was first
-              // written). Flag it so the plan is re-rendered from DB rows.
-              stale.push({
-                path: planPath!,
-                reason: `${task.id} exists in DB but is missing in plan`,
-              });
-              continue;
-            }
+            for (const task of tasks) {
+              const isDoneInDb = isClosedStatus(task.status);
+              const planTask = parsed.tasks.find((t: { id: string }) => t.id === task.id);
+              if (!planTask) {
+                // DB has a task the plan markdown lacks: the projection is
+                // lossy (e.g. tasks added after the PLAN artifact was first
+                // written). Flag it so the plan is re-rendered from DB rows.
+                stale.push({
+                  path: planPath!,
+                  reason: `${task.id} exists in DB but is missing in plan`,
+                });
+                continue;
+              }
 
-            if (isDoneInDb && !planTask!.done) {
-              stale.push({
-                path: planPath!,
-                reason: `${task.id} is done in DB but unchecked in plan`,
-              });
-            } else if (!isDoneInDb && planTask!.done) {
-              stale.push({
-                path: planPath!,
-                reason: `${task.id} is not done in DB but checked in plan`,
-              });
+              if (isDoneInDb && !planTask!.done) {
+                stale.push({
+                  path: planPath!,
+                  reason: `${task.id} is done in DB but unchecked in plan`,
+                });
+              } else if (!isDoneInDb && planTask!.done) {
+                stale.push({
+                  path: planPath!,
+                  reason: `${task.id} is not done in DB but checked in plan`,
+                });
+              }
             }
+          } catch (e) {
+            logWarning("renderer", `plan parse failed: ${(e as Error).message}`);
           }
-        } catch (e) {
-          logWarning("renderer", `plan parse failed: ${(e as Error).message}`);
         }
       }
 
