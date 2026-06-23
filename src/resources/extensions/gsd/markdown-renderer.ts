@@ -43,7 +43,7 @@ import {
 import { saveFile, clearParseCache, registerCacheClearCallback } from "./files.js";
 import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
 import { invalidateStateCache } from "./state.js";
-import { clearPathCache, milestonesDir, legacyMilestonesDir, isLegacyMilestonesLayout, resolveMilestonePath, relSliceFile } from "./paths.js";
+import { clearPathCache, milestonesDir, legacyMilestonesDir, isLegacyMilestonesLayout, resolveMilestonePath, relSliceFile, canonicalPhaseDirName } from "./paths.js";
 import type { RiskLevel } from "./types.js";
 import {
   phaseDirName,
@@ -129,7 +129,7 @@ function resolveRoadmapProjectionPath(basePath: string, milestoneId: string): st
     : isLegacyMilestonesLayout(basePath);
   const phaseDir = existing ?? join(
     isLegacyLayout ? legacyBase : milestonesDir(basePath),
-    isLegacyLayout ? milestoneId : phaseDirName(phaseNum, derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)),
+    isLegacyLayout ? milestoneId : canonicalPhaseDirName(milestoneId, getMilestone(milestoneId)?.title),
   );
   const roadmapFileName = isLegacyLayout
     ? `${milestoneId}-ROADMAP.md`
@@ -474,7 +474,7 @@ export async function renderTaskPlanFromDb(
         : isLegacyMilestonesLayout(basePath);
       const phaseDir = existing ?? join(
         isLegacyLayout ? legacyBase : milestonesDir(basePath),
-        isLegacyLayout ? milestoneId : phaseDirName(milestoneIdToPhaseNum(milestoneId), derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)),
+        isLegacyLayout ? milestoneId : canonicalPhaseDirName(milestoneId, getMilestone(milestoneId)?.title),
       );
       mkdirSync(phaseDir, { recursive: true });
       const tasksDir = isLegacyLayout
@@ -557,11 +557,10 @@ export async function renderMilestoneArtifactsFromDb(
   const artifacts = getMilestoneScopedArtifacts(milestoneId);
   if (artifacts.length === 0) return false;
 
-  const phaseNum = milestoneIdToPhaseNum(milestoneId);
   const phaseDir = resolveMilestonePath(basePath, milestoneId) ??
     join(
       milestonesDir(basePath),
-      phaseDirName(phaseNum, derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)),
+      canonicalPhaseDirName(milestoneId, getMilestone(milestoneId)?.title),
     );
   mkdirSync(phaseDir, { recursive: true });
 
@@ -690,8 +689,7 @@ export async function renderSliceSummary(
   let slicePath = resolveSlicePath(basePath, milestoneId, sliceId);
   if (!slicePath) {
     const mDir = milestonesDir(basePath);
-    const phaseNum = milestoneIdToPhaseNum(milestoneId);
-    const dirName = phaseDirName(phaseNum, derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId));
+    const dirName = canonicalPhaseDirName(milestoneId, getMilestone(milestoneId)?.title);
     slicePath = join(mDir, dirName);
     mkdirSync(slicePath, { recursive: true });
   }
@@ -1066,7 +1064,7 @@ export async function renderReplanFromDb(
 ): Promise<{ replanPath: string; content: string }> {
   // Flat-phase: replan file lives in the phase dir
   const slicePath = resolveSlicePath(basePath, milestoneId, sliceId)
-    ?? join(milestonesDir(basePath), phaseDirName(milestoneIdToPhaseNum(milestoneId), derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)));
+    ?? join(milestonesDir(basePath), canonicalPhaseDirName(milestoneId, getMilestone(milestoneId)?.title));
   const phaseNum = milestoneIdToPhaseNum(milestoneId);
   const planNum = sliceIdToPlanNum(sliceId);
   const absPath = join(slicePath, planFileName(phaseNum, planNum, "REPLAN"));
@@ -1108,7 +1106,7 @@ export async function renderAssessmentFromDb(
 ): Promise<{ assessmentPath: string; content: string }> {
   // Flat-phase: assessment file lives in the phase dir
   const slicePath = resolveSlicePath(basePath, milestoneId, sliceId)
-    ?? join(milestonesDir(basePath), phaseDirName(milestoneIdToPhaseNum(milestoneId), derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)));
+    ?? join(milestonesDir(basePath), canonicalPhaseDirName(milestoneId, getMilestone(milestoneId)?.title));
   const phaseNum = milestoneIdToPhaseNum(milestoneId);
   const planNum = sliceIdToPlanNum(sliceId);
   const absPath = join(slicePath, planFileName(phaseNum, planNum, "ASSESSMENT"));

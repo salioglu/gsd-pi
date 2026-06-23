@@ -5,7 +5,7 @@
 // Exports: parseDecisionsTable, parseRequirementsSections, migrateFromMarkdown
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, basename } from 'node:path';
 import type { Decision, Requirement } from './types.js';
 import {
   upsertDecision,
@@ -27,11 +27,11 @@ import {
   resolveTasksDir,
   legacyMilestonesDir,
   gsdRoot,
-  gsdProjectionRoot,
   resolveTaskFiles,
+  resolveMilestonePath,
 } from './paths.js';
 import { findMilestoneIds } from './guided-flow.js';
-import { milestoneIdToPhaseNum, LAYOUT_SEGMENTS } from './layout-policy.js';
+import { milestoneIdToPhaseNum } from './layout-policy.js';
 import { parseRoadmap, parsePlan } from './parsers-legacy.js';
 import { parseContextDependsOn } from './files.js';
 import { logWarning } from './workflow-logger.js';
@@ -362,40 +362,16 @@ function importHierarchyArtifacts(gsdDir: string): number {
 
   // Walk phases (flat-phase layout: phases/NN-slug/, legacy: milestones/M001/)
   const milestoneIds = findMilestoneIds(gsdDir);
-  const flatPhasesDir = join(gsdProjectionRoot(gsdDir), LAYOUT_SEGMENTS.level1);
   const legacyDir = legacyMilestonesDir(gsdDir);
 
   for (const milestoneId of milestoneIds) {
-    // Find the phase directory (flat-phase: NN-slug, or legacy M001-slug)
-    let phaseDirName: string | null = null;
-    let phaseParentDir: string | null = null;
-    const phaseNum = milestoneIdToPhaseNum(milestoneId);
+    // Use resolveMilestonePath so canonical-name / newest-dir selection matches
+    // the same logic used by the renderer and reconciler, preventing import and
+    // render from landing on different phase trees for the same milestone.
+    const resolvedPhaseFullPath = resolveMilestonePath(gsdDir, milestoneId);
 
-    for (const dir of [flatPhasesDir, legacyDir]) {
-      if (!existsSync(dir)) continue;
-      try {
-        for (const entry of readdirSync(dir, { withFileTypes: true })) {
-          if (!entry.isDirectory()) continue;
-          // Numeric prefix match via parseInt so 001-slug resolves to M001.
-          const numMatch = entry.name.match(/^(\d+)-/);
-          if (numMatch && parseInt(numMatch[1]!, 10) === phaseNum) {
-            phaseDirName = entry.name;
-            phaseParentDir = dir;
-            break;
-          }
-          if (entry.name.startsWith(milestoneId + '-')) {
-            phaseDirName = entry.name;
-            phaseParentDir = dir;
-            break;
-          }
-        }
-      } catch {
-        logWarning("migration", `phases dir unreadable for ${milestoneId} — skipping phase scan`);
-      }
-      if (phaseDirName) break;
-    }
-
-    if (!phaseDirName) {
+    if (!resolvedPhaseFullPath) {
+      // Last resort: findDirByPrefix for legacy dirs
       const milestoneDirName = findDirByPrefix(legacyDir, milestoneId);
       if (!milestoneDirName) continue;
       count += importLegacyMilestoneArtifacts(
@@ -405,15 +381,19 @@ function importHierarchyArtifacts(gsdDir: string): number {
       );
       continue;
     }
-    if (phaseParentDir === legacyDir) {
-      count += importLegacyMilestoneArtifacts(
-        join(legacyDir, phaseDirName),
-        phaseDirName,
-        milestoneId,
-      );
+
+    // Determine if this is a legacy (milestones/) or flat-phase (phases/) dir.
+    const legacyDirNorm = legacyDir.replace(/\\/g, "/");
+    const resolvedNorm = resolvedPhaseFullPath.replace(/\\/g, "/");
+    const isLegacyResolved = resolvedNorm.startsWith(legacyDirNorm + "/") || resolvedNorm === legacyDirNorm;
+
+    const phaseDirName = basename(resolvedPhaseFullPath);
+    if (isLegacyResolved) {
+      count += importLegacyMilestoneArtifacts(resolvedPhaseFullPath, phaseDirName, milestoneId);
       continue;
     }
-    const phaseFullPath = join(phaseParentDir!, phaseDirName);
+    const phaseFullPath = resolvedPhaseFullPath;
+    const phaseNum = milestoneIdToPhaseNum(milestoneId);
 
     // Phase-level files (flat-phase: NN-SUFFIX.md, legacy: M001-SUFFIX.md)
     const phasePrefix = `${String(phaseNum).padStart(2, "0")}`;
