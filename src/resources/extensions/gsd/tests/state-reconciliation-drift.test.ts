@@ -1697,7 +1697,7 @@ test("ADR-017 (#5707): reconcileBeforeSpawn reports repaired drift in ok=true re
 });
 
 test("ADR-017 (#6238): reconcileBeforeSpawn does not pass reconcile-only deps object", async () => {
-  let receivedDeps: ReconciliationDeps | undefined;
+  let receivedDeps: Partial<ReconciliationDeps> | undefined;
   const result = await reconcileBeforeSpawn("/project", {
     reconcile: async (_basePath, deps) => {
       receivedDeps = deps;

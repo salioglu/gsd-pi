@@ -44,6 +44,7 @@ import { saveFile, clearParseCache, registerCacheClearCallback } from "./files.j
 import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
 import { invalidateStateCache } from "./state.js";
 import { clearPathCache, milestonesDir, legacyMilestonesDir, isLegacyMilestonesLayout, resolveMilestonePath, relSliceFile, canonicalPhaseDirName } from "./paths.js";
+import { readCompatMarker, writeCompatMarker, computeProjectionSha } from "./compat/compat-marker.js";
 import type { RiskLevel } from "./types.js";
 import {
   phaseDirName,
@@ -52,6 +53,50 @@ import {
   sliceIdToPlanNum,
   derivePhaseSlug,
 } from "./layout-policy.js";
+
+// ─── Compat marker invalidation ───────────────────────────────────────────
+// Every successful projection write pushes its (basePath, projectionPath,
+// entities) here; invalidateCaches() drains it and refreshes .gsd/.compat.json
+// so the next reconcile pass sees gsd-pi's own writes as expected. This is the
+// feedback-loop-prevention mechanism for cross-tool compatibility.
+const _pendingProjectionWrites: Array<{ basePath: string; projectionPath: string; entities: string[] }> = [];
+
+function recordProjectionWrite(basePath: string, projectionPath: string, entities: string[]): void {
+  _pendingProjectionWrites.push({ basePath, projectionPath, entities });
+}
+
+function flushProjectionWritesToMarker(): void {
+  if (_pendingProjectionWrites.length === 0) return;
+  // Group by basePath (defensive — multiple projects are unusual but possible).
+  const byBase = new Map<string, Map<string, string[]>>();
+  for (const w of _pendingProjectionWrites) {
+    let bucket = byBase.get(w.basePath);
+    if (!bucket) { bucket = new Map(); byBase.set(w.basePath, bucket); }
+    bucket.set(w.projectionPath, w.entities);
+  }
+  _pendingProjectionWrites.length = 0;
+
+  for (const [basePath, writes] of byBase) {
+    try {
+      const marker = readCompatMarker(basePath);
+      for (const [projectionPath, entities] of writes) {
+        const abs = join(basePath, ".gsd", projectionPath);
+        if (existsSync(abs)) {
+          marker.projections[projectionPath] = {
+            sha: computeProjectionSha(readFileSync(abs, "utf-8")),
+            entities,
+          };
+        }
+      }
+      marker.lastWriter = "gsd-pi";
+      marker.lastProjectedAt = new Date().toISOString();
+      writeCompatMarker(basePath, marker);
+    } catch (e) {
+      // Marker I/O must never break projection. Reconcile will heal on next run.
+      logWarning("renderer", `compat marker flush failed: ${(e as Error).message}`);
+    }
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -74,6 +119,7 @@ function toArtifactPath(absPath: string, basePath: string): string {
  * Invalidate all caches after a disk write.
  */
 function invalidateCaches(): void {
+  flushProjectionWritesToMarker();
   invalidateStateCache();
   clearPathCache();
   clearParseCache();
@@ -158,6 +204,7 @@ async function writeAndStore(
     slice_id?: string;
     task_id?: string;
   },
+  basePath?: string,
 ): Promise<void> {
   await saveFile(absPath, content);
 
@@ -173,6 +220,17 @@ async function writeAndStore(
   } catch {
     // Non-fatal: file is on disk, DB is best-effort
     logWarning("renderer", `failed to update artifact in DB: ${artifactPath}`);
+  }
+
+  // Record the projection write so invalidateCaches() can refresh the compat
+  // marker. basePath is optional only to avoid forcing every caller; when
+  // present, the marker gets updated. artifactPath is already .gsd/-relative.
+  if (basePath) {
+    const entities: string[] = [];
+    if (opts.milestone_id) entities.push(opts.milestone_id);
+    if (opts.milestone_id && opts.slice_id) entities.push(`${opts.milestone_id}/${opts.slice_id}`);
+    if (opts.milestone_id && opts.slice_id && opts.task_id) entities.push(`${opts.milestone_id}/${opts.slice_id}/${opts.task_id}`);
+    recordProjectionWrite(basePath, artifactPath, entities);
   }
 
   invalidateCaches();
@@ -442,7 +500,7 @@ export async function renderPlanFromDb(
     artifact_type: "PLAN",
     milestone_id: milestoneId,
     slice_id: sliceId,
-  });
+  }, basePath);
 
   // Flat-phase: tasks are checkboxes inside the plan file, not separate files.
   // No per-task render loop — task state is in the <tasks> block above.
@@ -501,7 +559,7 @@ export async function renderTaskPlanFromDb(
     milestone_id: milestoneId,
     slice_id: sliceId,
     task_id: taskId,
-  });
+  }, basePath);
 
   return { taskPlanPath: absPath, content };
 }
@@ -523,7 +581,7 @@ export async function renderRoadmapFromDb(
   await writeAndStore(absPath, artifactPath, content, {
     artifact_type: "ROADMAP",
     milestone_id: milestoneId,
-  });
+  }, basePath);
 
   return { roadmapPath: absPath, content };
 }
@@ -669,7 +727,7 @@ export async function renderTaskSummary(
     milestone_id: milestoneId,
     slice_id: sliceId,
     task_id: taskId,
-  });
+  }, basePath);
 
   return true;
 }
@@ -714,7 +772,7 @@ export async function renderSliceSummary(
       artifact_type: "SUMMARY",
       milestone_id: milestoneId,
       slice_id: sliceId,
-    });
+    }, basePath);
     wrote = true;
   }
 
@@ -728,7 +786,7 @@ export async function renderSliceSummary(
       artifact_type: "UAT",
       milestone_id: milestoneId,
       slice_id: sliceId,
-    });
+    }, basePath);
     wrote = true;
   }
 
@@ -825,6 +883,25 @@ export async function renderAllFromDb(basePath: string): Promise<RenderAllResult
     result.rendered++;
   } catch (err) {
     result.errors.push(`decisions: ${(err as Error).message}`);
+  }
+
+  // Project to .planning/ if the compat marker says it's active. Dynamic
+  // import for writePlanningDirectory avoids a static-import cycle. Gated on
+  // planning.active so the double-write cost only hits projects that use
+  // .planning/. writePlanningDirectory records per-file SHAs via
+  // applyPlanningProjectionWrites so the reconcile detector has a baseline.
+  // capturePlanningCompatIfNeeded seeds the layout and SHAs on first encounter.
+  try {
+    const { capturePlanningCompatIfNeeded } = await import("./compat/planning-compat.js");
+    await capturePlanningCompatIfNeeded(basePath);
+    const marker = readCompatMarker(basePath);
+    if (marker.planning?.active && marker.planning.layout) {
+      const { writePlanningDirectory } = await import("./migrate/planning-writer.js");
+      await writePlanningDirectory(basePath, marker.planning.layout);
+      result.rendered++;
+    }
+  } catch (err) {
+    result.errors.push(`planning projection: ${(err as Error).message}`);
   }
 
   return result;
@@ -1114,7 +1191,7 @@ export async function renderReplanFromDb(
     artifact_type: "REPLAN",
     milestone_id: milestoneId,
     slice_id: sliceId,
-  });
+  }, basePath);
 
   return { replanPath: absPath, content };
 }
@@ -1155,7 +1232,7 @@ export async function renderAssessmentFromDb(
     artifact_type: "ASSESSMENT",
     milestone_id: milestoneId,
     slice_id: sliceId,
-  });
+  }, basePath);
 
   return { assessmentPath: absPath, content };
 }
