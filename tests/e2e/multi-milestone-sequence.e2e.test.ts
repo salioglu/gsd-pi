@@ -460,7 +460,7 @@ describe("multi-milestone sequence e2e (fake LLM)", () => {
 			outcome.assertArtifact(`.gsd/milestones/${milestoneId}/${milestoneId}-VALIDATION.md`, `${milestoneId} validation artifact is present`);
 			outcome.assertArtifact(`.gsd/milestones/${milestoneId}/${milestoneId}-SUMMARY.md`, `${milestoneId} summary artifact is present`);
 			outcome.assertArtifact(`.gsd/milestones/${milestoneId}/slices/S01/S01-SUMMARY.md`, `${milestoneId}/S01 summary artifact is present`);
-			outcome.assertArtifact(`.gsd/milestones/${milestoneId}/slices/S01/tasks/T01-SUMMARY.md`, `${milestoneId}/S01/T01 summary artifact is present`);
+			// Flat-phase: skip per-task summary (tasks are checkboxes)
 		}
 		assert.ok(existsSync(join(project.dir, ".gsd", "milestones", "M002", "M002-CONTEXT.md")), "M002 context artifact is queued");
 		assert.equal(existsSync(join(project.dir, ".gsd", "milestones", "M002", "M002-ROADMAP.md")), false, "M002 roadmap is not planned before the next command");

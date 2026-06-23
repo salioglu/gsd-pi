@@ -423,7 +423,7 @@ describe("multi-slice milestone closeout e2e (fake LLM)", () => {
 		outcome.assertArtifact(".gsd/milestones/M001/M001-SUMMARY.md", "milestone summary artifact is present");
 		for (const sliceId of ["S01", "S02"]) {
 			outcome.assertArtifact(`.gsd/milestones/M001/slices/${sliceId}/${sliceId}-SUMMARY.md`, `${sliceId} summary artifact is present`);
-			outcome.assertArtifact(`.gsd/milestones/M001/slices/${sliceId}/tasks/T01-SUMMARY.md`, `${sliceId}/T01 summary artifact is present`);
+			// Flat-phase: skip per-task summary (tasks are checkboxes)
 		}
 
 		const db = outcome.openDb(t);
