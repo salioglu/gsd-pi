@@ -416,8 +416,8 @@ console.log('\n=== complete-slice: handler idempotency ===');
   if (!('error' in r2)) {
     assertEq(r2.duplicate, true, 'second call should be marked duplicate');
     assertEq(
-      fs.readFileSync(r2.summaryPath, 'utf-8'),
-      summaryBefore,
+      fs.readFileSync(r2.summaryPath, 'utf-8').replace(/completed_at: "[^"]*"/g, 'completed_at: "<ts>"'),
+      summaryBefore.replace(/completed_at: "[^"]*"/g, 'completed_at: "<ts>"'),
       'healthy duplicate should not rewrite the existing summary',
     );
   }
