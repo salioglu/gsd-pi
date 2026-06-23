@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { existsSync, unlinkSync } from "node:fs";
-import { relSliceFile } from "../paths.js";
+import { relSliceFile, relMilestoneFile } from "../paths.js";
 import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString } from "../validation.js";
@@ -287,10 +287,8 @@ export async function handleReassessRoadmap(
       params.sliceChanges.removed.length > 0;
 
     if (hasStructuralChanges) {
-      const validationFile = join(
-        basePath, ".gsd", "milestones", params.milestoneId,
-        `${params.milestoneId}-VALIDATION.md`,
-      );
+      // Layout-aware: flat-phase → phases/NN-slug/NN-VALIDATION.md; legacy → milestones/MID/MID-VALIDATION.md
+      const validationFile = join(basePath, relMilestoneFile(basePath, params.milestoneId, "VALIDATION"));
       try {
         if (existsSync(validationFile)) unlinkSync(validationFile);
       } catch (e) {
