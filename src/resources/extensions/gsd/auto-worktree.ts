@@ -694,9 +694,11 @@ export function syncGsdStateToWorktree(
     }
   }
 
-  // Sync milestones: copy entire milestone directories that are missing
-  const mainMilestonesDir = join(mainGsd, "phases");
-  const wtMilestonesDir = join(wtGsd, "phases");
+  // Sync milestone/phase trees: copy entire directories that are missing.
+  // Support both flat-phase (phases/) and legacy (milestones/) layouts.
+  for (const layoutSegment of ["phases", "milestones"] as const) {
+  const mainMilestonesDir = join(mainGsd, layoutSegment);
+  const wtMilestonesDir = join(wtGsd, layoutSegment);
   if (existsSync(mainMilestonesDir)) {
     try {
       mkdirSync(wtMilestonesDir, { recursive: true });
@@ -785,6 +787,7 @@ export function syncGsdStateToWorktree(
       /* non-fatal */
       logWarning("worktree", `milestone directory sync failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
   }
 
   return { synced };

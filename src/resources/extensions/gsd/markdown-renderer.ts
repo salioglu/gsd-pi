@@ -32,6 +32,7 @@ import {
   resolveFile,
   resolveSliceFile,
   resolveSlicePath,
+  resolveTaskFile,
   resolveTasksDir,
   gsdProjectionRoot,
   gsdRoot,
@@ -452,10 +453,34 @@ export async function renderTaskPlanFromDb(
 
   // Flat-phase: task plans live inside the phase dir, not a tasks/ subdir.
   // This function is legacy — tasks are now checkboxes inside the plan file.
-  const phaseDir = resolveMilestonePath(basePath, milestoneId) ??
-    join(milestonesDir(basePath), phaseDirName(milestoneIdToPhaseNum(milestoneId), derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)));
-  mkdirSync(phaseDir, { recursive: true });
-  const absPath = join(phaseDir, buildTaskFileName(taskId, "PLAN"));
+  const existingPlanPath = resolveTaskFile(basePath, milestoneId, sliceId, taskId, "PLAN");
+  let absPath: string;
+  if (existingPlanPath) {
+    absPath = existingPlanPath;
+  } else {
+    const slicePath = resolveSlicePath(basePath, milestoneId, sliceId);
+    if (slicePath) {
+      const tasksDir = resolveTasksDir(basePath, milestoneId, sliceId) ?? slicePath;
+      mkdirSync(tasksDir, { recursive: true });
+      absPath = join(tasksDir, buildTaskFileName(taskId, "PLAN"));
+    } else {
+      const existing = resolveMilestonePath(basePath, milestoneId);
+      const legacyBase = legacyMilestonesDir(basePath);
+      const isLegacyLayout = existing
+        ? existing.startsWith(legacyBase + "/") || existing.startsWith(legacyBase + "\\")
+        : existsSync(legacyBase);
+      const phaseDir = existing ?? join(
+        isLegacyLayout ? legacyBase : milestonesDir(basePath),
+        isLegacyLayout ? milestoneId : phaseDirName(milestoneIdToPhaseNum(milestoneId), derivePhaseSlug(getMilestone(milestoneId)?.title || milestoneId)),
+      );
+      mkdirSync(phaseDir, { recursive: true });
+      const tasksDir = isLegacyLayout
+        ? join(phaseDir, "slices", sliceId, "tasks")
+        : phaseDir;
+      mkdirSync(tasksDir, { recursive: true });
+      absPath = join(tasksDir, buildTaskFileName(taskId, "PLAN"));
+    }
+  }
   const artifactPath = toArtifactPath(absPath, basePath);
   const taskGates = getGateResults(milestoneId, sliceId, "task").filter(g => g.task_id === taskId);
   const content = task.full_plan_md.trim() ? task.full_plan_md : renderTaskPlanMarkdown(task, taskGates);
