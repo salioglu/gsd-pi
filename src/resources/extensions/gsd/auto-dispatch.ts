@@ -1540,7 +1540,8 @@ export const DISPATCH_RULES: DispatchRule[] = [
         ? readFileSync(slicePlanPath, "utf-8")
         : "";
       const isPhasesSlicePlan =
-        slicePlanPath === phasesRoot || slicePlanPath.startsWith(`${phasesRoot}${sep}`);
+        slicePlanPath !== null &&
+        (slicePlanPath === phasesRoot || slicePlanPath.startsWith(`${phasesRoot}${sep}`));
       const hasTaskCheckboxes = /^-\s+\[[ xX]\]\s+\*\*[\w.]+/m.test(slicePlanContent);
       const tasksEmbeddedInSlicePlan = Boolean(
         slicePlanPath &&
