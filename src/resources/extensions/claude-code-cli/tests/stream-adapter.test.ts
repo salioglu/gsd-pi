@@ -1,6 +1,7 @@
 // gsd-pi - Claude Code stream adapter regression tests
 import { describe, test } from "node:test";
 import { clearGuidedUnitContext, setGuidedUnitContext } from "../../gsd/guided-unit-context.ts";
+import { _setAutoActiveForTest } from "../../gsd/auto.ts";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -1543,16 +1544,41 @@ describe("stream-adapter — session persistence (#2859)", () => {
 		assert.equal(inferGsdPhaseFromContext(context), "plan-milestone");
 	});
 
-	test("inferGsdPhaseFromContext recognizes discuss-slice and refine-slice prompts", () => {
-		const discussSlice = {
-			messages: [{ role: "user", content: "Discuss slice S001 in milestone M001." }],
-		} as Context;
+	test("inferGsdPhaseFromContext recognizes the refine-slice UNIT header", () => {
 		const refineSlice = {
 			messages: [{ role: "user", content: "## UNIT: Refine Slice S001 (\"Auth\") - Milestone M001" }],
 		} as Context;
 
-		assert.equal(inferGsdPhaseFromContext(discussSlice), "discuss-slice");
 		assert.equal(inferGsdPhaseFromContext(refineSlice), "refine-slice");
+	});
+
+	test("inferGsdPhaseFromContext ignores bare phase slugs and prose (only the UNIT header counts)", () => {
+		// Prose mentioning a phase must NOT classify the turn — this was the leak
+		// that stripped tools the moment a user said "slice" or "UAT".
+		const prose = {
+			messages: [{ role: "user", content: "Can you discuss the slice S001 and then run UAT for me?" }],
+		} as Context;
+		const bareSlug = {
+			messages: [{ role: "user", content: "I edited e2e/m039-s05-comparison-legibility.spec.ts (plan-slice, run-uat)" }],
+		} as Context;
+
+		assert.equal(inferGsdPhaseFromContext(prose), undefined);
+		assert.equal(inferGsdPhaseFromContext(bareSlug), undefined);
+	});
+
+	test("inferGsdPhaseFromContext does not match a UNIT header buried in scrollback", () => {
+		// A UNIT header from a prior turn (e.g. a SUMMARY the agent read) must not
+		// re-classify later ad-hoc turns. Only the system prompt + latest user
+		// message are scanned.
+		const context = {
+			messages: [
+				{ role: "user", content: "## UNIT: Run UAT — M001/S001" },
+				{ role: "assistant", content: "Done." },
+				{ role: "user", content: "Thanks, now what files changed?" },
+			],
+		} as Context;
+
+		assert.equal(inferGsdPhaseFromContext(context), undefined);
 	});
 
 	test("resolveGsdPhaseForSdk prefers guided unit context over prompt inference", () => {
@@ -1582,12 +1608,36 @@ describe("stream-adapter — session persistence (#2859)", () => {
 		}
 	});
 
-	test("resolveGsdPhaseForSdk falls back to prompt inference when guided context is absent", () => {
+	test("resolveGsdPhaseForSdk returns undefined for ad-hoc turns (no guided context, auto inactive)", () => {
+		// The core bug: an ad-hoc turn must keep the full tool surface even when
+		// its text contains a UNIT header (e.g. pasted from a prior unit). No
+		// guided context + auto inactive => no phase, no preflight, no stripping.
 		clearGuidedUnitContext();
-		const context = {
-			messages: [{ role: "user", content: "## UNIT: Run UAT — M001/S001" }],
-		} as Context;
-		assert.equal(resolveGsdPhaseForSdk(context, "/tmp/unrelated-project"), "run-uat");
+		_setAutoActiveForTest(false);
+		try {
+			const context = {
+				messages: [{ role: "user", content: "## UNIT: Run UAT — M001/S001 (pasted from earlier)" }],
+			} as Context;
+			assert.equal(resolveGsdPhaseForSdk(context, "/tmp/unrelated-project"), undefined);
+		} finally {
+			_setAutoActiveForTest(false);
+		}
+	});
+
+	test("resolveGsdPhaseForSdk infers from the UNIT header only while auto-mode is active", () => {
+		// Defence-in-depth fallback: a genuinely dispatched unit whose guided
+		// context was not recorded for this root can still be classified from its
+		// UNIT header — but only while auto is running.
+		clearGuidedUnitContext();
+		_setAutoActiveForTest(true);
+		try {
+			const context = {
+				messages: [{ role: "user", content: "## UNIT: Run UAT — M001/S001" }],
+			} as Context;
+			assert.equal(resolveGsdPhaseForSdk(context, "/tmp/unrelated-project"), "run-uat");
+		} finally {
+			_setAutoActiveForTest(false);
+		}
 	});
 
 	test("buildSdkOptions presents ask_user_questions for discuss phases", () => {
