@@ -245,10 +245,10 @@ export function checkAutoStartAfterDiscuss(lookupBasePath?: string): boolean {
   if (!entry) return false;
 
   const { ctx, pi, basePath, milestoneId, step } = entry;
-  const contextFilePath = entry.scope.contextFile();
-  const roadmapFilePath = entry.scope.roadmapFile();
-  const contextFile = existsSync(contextFilePath) ? contextFilePath : null;
-  const roadmapFile = existsSync(roadmapFilePath) ? roadmapFilePath : null;
+  // Use layout-aware resolution so flat-phase projects (phases/NN-slug/)
+  // are found as well as legacy projects (milestones/MID/).
+  const contextFile = resolveMilestoneFile(basePath, milestoneId, "CONTEXT");
+  const roadmapFile = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
   if (!contextFile && !roadmapFile) return false;
 
   if (hasBlockingDepthGate(entry)) return false;
