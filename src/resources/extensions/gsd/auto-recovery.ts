@@ -623,7 +623,7 @@ export function verifyExpectedArtifact(
                 return false;
               }
             }
-          } else if (!dbPrimary && !absPath.includes(join(".gsd", LAYOUT_SEGMENTS.level1))) {
+          } else if (!dbPrimary && !absPath.replace(/\\/g, "/").includes(`.gsd/${LAYOUT_SEGMENTS.level1}`)) {
             logWarning("recovery", `verify-fail ${unitType} ${unitId}: tasks dir missing at ${tasksDir}`);
             return false;
           }
