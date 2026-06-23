@@ -406,6 +406,10 @@ describe("stream-adapter — image prompt forwarding (#4183)", () => {
 			systemPrompt: "UNIT: Run UAT",
 			messages: [{ role: "user", content: "Run UAT." } as Message],
 		};
+		// The test requires a resolved GSD phase so the readiness gate fires.
+		// Auto-mode with a currentUnit provides the authoritative phase signal.
+		_setAutoActiveForTest(true);
+		autoSession.currentUnit = { type: "run-uat", id: "M001/S001", startedAt: 0, workspaceRoot: cwd } as never;
 		try {
 			const stream = streamViaClaudeCode(
 				{ id: "claude-sonnet-4-6" } as any,
@@ -474,6 +478,8 @@ describe("stream-adapter — image prompt forwarding (#4183)", () => {
 			assert.equal(queryCalls, 2);
 			assert.deepEqual(message.content, [{ type: "text", text: "fresh retry result" }]);
 		} finally {
+			autoSession.currentUnit = null;
+			_setAutoActiveForTest(false);
 			rmSync(cwd, { recursive: true, force: true });
 		}
 	});
