@@ -2,7 +2,7 @@
 // File Purpose: One-time migration from legacy nested .gsd/milestones/ to
 // flat-phase .gsd/phases/. Runs on startup when the legacy structure is detected.
 
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { renderAllFromDb, renderRoadmapFromDb } from "./markdown-renderer.js";
@@ -33,10 +33,21 @@ function rollbackPartialMigration(basePath: string, backupDir: string): void {
 
 /**
  * Detect whether the project uses the legacy nested layout.
- * True when .gsd/milestones/ exists.
+ * True when .gsd/milestones/ exists AND contains at least one milestone
+ * subdirectory. An empty milestones/ dir (created by old bootstrap code
+ * before it was fixed) is not a real legacy layout and must not trigger
+ * a migration that would thrash the reconciler.
  */
 export function needsFlatPhaseMigration(basePath: string): boolean {
-  return existsSync(join(basePath, ".gsd", "milestones"));
+  const milestonesPath = join(basePath, ".gsd", "milestones");
+  if (!existsSync(milestonesPath)) return false;
+  try {
+    return readdirSync(milestonesPath).some(e =>
+      statSync(join(milestonesPath, e)).isDirectory()
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**

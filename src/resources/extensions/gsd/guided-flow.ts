@@ -1044,7 +1044,6 @@ function bootstrapGsdProject(basePath: string): void {
   }
 
   const root = gsdRoot(basePath);
-  mkdirSync(join(root, "milestones"), { recursive: true });
   mkdirSync(join(root, "runtime"), { recursive: true });
 
   const gitPrefs = loadEffectiveGSDPreferences(basePath)?.preferences?.git;

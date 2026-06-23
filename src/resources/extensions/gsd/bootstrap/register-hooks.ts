@@ -1,7 +1,7 @@
 // Project/App: gsd-pi
 // File Purpose: Registers GSD extension runtime hooks and token-saving tool policies.
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -734,10 +734,15 @@ function formatQuestionExchange(
 }
 
 async function ensureMilestoneShell(basePath: string, milestoneId: string): Promise<string> {
-  // When no milestone dir exists yet, prefer the legacy container when it is
-  // already present on disk; otherwise fall back to the flat-phase container.
+  // When no milestone dir exists yet, prefer the legacy container when it has
+  // at least one milestone subdirectory; an empty milestones/ dir (e.g. one
+  // created by an old bootstrapGsdProject) is not a real legacy layout.
   const legacy = legacyMilestonesDir(basePath);
-  const isLegacyLayout = existsSync(legacy);
+  const isLegacyLayout = existsSync(legacy) && (() => {
+    try {
+      return readdirSync(legacy).some(e => statSync(join(legacy, e)).isDirectory());
+    } catch { return false; }
+  })();
   const container = isLegacyLayout ? legacy : milestonesDir(basePath);
   const fallbackDirName = isLegacyLayout
     ? milestoneId
