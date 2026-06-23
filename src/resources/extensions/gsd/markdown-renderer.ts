@@ -835,7 +835,7 @@ export interface StaleEntry {
  * Checks:
  * 1. Roadmap checkbox states vs DB slice statuses
  * 2. Plan checkbox states vs DB task statuses
- * 3. Missing SUMMARY.md files for complete tasks with full_summary_md
+ * 3. Missing SUMMARY.md files for complete tasks with full_summary_md (legacy only)
  * 4. Missing SUMMARY.md/UAT.md files for complete slices with content
  *
  * Returns a list of stale entries with file path and reason.
@@ -874,18 +874,22 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
   // Flat-phase PLAN files use a <tasks> XML block format that the native Rust
   // parser does not fully handle, causing false-positive plan-checkbox drift
   // entries that loop: detect → repair (re-renders PLAN) → detect again →
-  // ReconciliationFailedError → EXIT_BLOCKED. Roadmap and summary checks are
-  // still valid for flat-phase and must run.
+  // ReconciliationFailedError → EXIT_BLOCKED. Flat-phase also keeps task state
+  // in <tasks> blocks and does not project per-task SUMMARY files, so the
+  // missing-task-summary check is skipped too. Roadmap and slice-level summary
+  // checks are still valid for flat-phase and must run.
   // TODO(flat-phase): re-enable plan-checkbox checks once the native parser
   // supports <tasks> blocks.
+  const isFlatPhase = !isLegacyMilestonesLayout(basePath);
   return detectStaleRendersImpl(basePath, {
-    skipPlanCheckboxCheck: !isLegacyMilestonesLayout(basePath),
+    skipPlanCheckboxCheck: isFlatPhase,
+    skipTaskSummaryCheck: isFlatPhase,
   });
 }
 
 function detectStaleRendersImpl(
   basePath: string,
-  options: { skipPlanCheckboxCheck?: boolean } = {},
+  options: { skipPlanCheckboxCheck?: boolean; skipTaskSummaryCheck?: boolean } = {},
 ): StaleEntry[] {
   // per-call createRequire("./parsers-legacy") that used to live here ran on
   // every dispatch. The static `./parsers-legacy.js` specifier resolves in
@@ -968,20 +972,22 @@ function detectStaleRendersImpl(
         }
       }
 
-      // Check missing task summary files
-      for (const task of tasks) {
-        if (isClosedStatus(task.status) && task.full_summary_md) {
-          const slicePath = resolveSlicePath(basePath, milestone.id, slice.id);
-          if (slicePath) {
-            // Flat-phase: task summaries live in the phase dir (same as slicePath)
-            const fileName = buildTaskFileName(task.id, "SUMMARY");
-            const summaryAbsPath = join(slicePath, fileName);
+      // Check missing task summary files (legacy layout only — flat-phase keeps
+      // task state in plan <tasks> blocks and does not project Txx-SUMMARY.md)
+      if (!options.skipTaskSummaryCheck) {
+        for (const task of tasks) {
+          if (isClosedStatus(task.status) && task.full_summary_md) {
+            const slicePath = resolveSlicePath(basePath, milestone.id, slice.id);
+            if (slicePath) {
+              const fileName = buildTaskFileName(task.id, "SUMMARY");
+              const summaryAbsPath = join(slicePath, fileName);
 
-            if (!existsSync(summaryAbsPath)) {
-              stale.push({
-                path: summaryAbsPath,
-                reason: `${task.id} is complete with summary in DB but SUMMARY.md missing on disk`,
-              });
+              if (!existsSync(summaryAbsPath)) {
+                stale.push({
+                  path: summaryAbsPath,
+                  reason: `${task.id} is complete with summary in DB but SUMMARY.md missing on disk`,
+                });
+              }
             }
           }
         }
