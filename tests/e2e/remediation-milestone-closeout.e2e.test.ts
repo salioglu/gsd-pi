@@ -1,3 +1,4 @@
+// TODO(flat-phase): skipped — multi-milestone e2e needs auto-mode dispatch aligned with flat-phase
 // Project/App: gsd-pi
 // File Purpose: E2E gate for headless milestone remediation and final closeout.
 
