@@ -153,9 +153,9 @@ test("executeSummarySave persists artifact and returns computed path", async () 
     }, base));
 
     assert.equal(result.details.operation, "save_summary");
-    assert.equal(result.details.path, "milestones/M001/slices/S01/S01-SUMMARY.md");
+    assert.equal(result.details.path, "phases/01-m001/01-01-SUMMARY.md");
 
-    const filePath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-SUMMARY.md");
+    const filePath = join(base, ".gsd", "phases", "01-m001", "01-01-SUMMARY.md");
     assert.ok(existsSync(filePath), "summary artifact should be written to disk");
     assert.match(readFileSync(filePath, "utf-8"), /# Summary/);
   } finally {
@@ -180,7 +180,7 @@ test("executeSummarySave mirrors milestone artifacts into the active worktree pr
     }, worktree));
 
     assert.equal(result.details.operation, "save_summary");
-    const relPath = "milestones/M001/slices/S02/S02-RESEARCH.md";
+    const relPath = "phases/01-m001/01-02-RESEARCH.md";
     const projectPath = join(base, ".gsd", relPath);
     const worktreePath = join(worktree, ".gsd", relPath);
     assert.equal(existsSync(projectPath), true, "canonical artifact should be written");
@@ -889,7 +889,7 @@ test("executeUatResultSave accepts gsd_uat_exec evidence written in a milestone 
     assert.equal(attempt.browserToolsPresented, false);
     assert.deepEqual(attempt.modePolicy?.requiredAnyModes, ["runtime"]);
     const assessment = readFileSync(
-      join(base, ".gsd", "milestones", "M001", "slices", "S02", "S02-ASSESSMENT.md"),
+      join(base, ".gsd", "phases", "01-m001", "01-02-ASSESSMENT.md"),
       "utf-8",
     );
     assert.match(assessment, /runId: uat:M001:S02:attempt-1/);
@@ -897,7 +897,7 @@ test("executeUatResultSave accepts gsd_uat_exec evidence written in a milestone 
     assert.match(assessment, /Runtime path C:\\\\tmp\\\|uat evidence/);
     assert.match(assessment, /backslash \\\\ and pipe \\\|/);
 
-    const artifactPath = "milestones/M001/slices/S02/S02-ASSESSMENT.md";
+    const artifactPath = "phases/01-m001/01-02-ASSESSMENT.md";
     const assessmentPath = `.gsd/${artifactPath}`;
     assert.equal(getArtifact(artifactPath)?.artifact_type, "ASSESSMENT");
     assert.equal(getAssessment(assessmentPath)?.scope, "run-uat");
@@ -1158,7 +1158,7 @@ test("executeUatResultSave surfaces the worktree validation path for NEEDS-HUMAN
     assert.ok(returnedText.includes(worktree), "tool return should include the worktree path");
 
     const assessment = readFileSync(
-      join(base, ".gsd", "milestones", "M001", "slices", "S07", "S07-ASSESSMENT.md"),
+      join(base, ".gsd", "phases", "01-m001", "01-07-ASSESSMENT.md"),
       "utf-8",
     );
     assert.match(assessment, /## Manual Validation/);
@@ -1217,7 +1217,7 @@ test("executeUatResultSave omits manual-validation guidance when no human checks
     assert.equal(returnedText.includes("Manual validation needed"), false);
 
     const assessment = readFileSync(
-      join(base, ".gsd", "milestones", "M001", "slices", "S08", "S08-ASSESSMENT.md"),
+      join(base, ".gsd", "phases", "01-m001", "01-08-ASSESSMENT.md"),
       "utf-8",
     );
     assert.equal(assessment.includes("## Manual Validation"), false);

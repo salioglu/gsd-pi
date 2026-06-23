@@ -191,7 +191,7 @@ test("repairMissingMilestoneSummaryProjection succeeds when milestone dir does n
   const repair = await repairMissingMilestoneSummaryProjection(base, "M042");
   assert.equal(repair.ok, true, "repair should report success when handler creates the SUMMARY");
   assert.ok(
-    existsSync(join(base, ".gsd", "milestones", "M042", "M042-SUMMARY.md")),
+    existsSync(join(base, ".gsd", "phases", "42-m042", "42-SUMMARY.md")),
     "repair should write the SUMMARY artifact to the canonical projection path",
   );
 });
