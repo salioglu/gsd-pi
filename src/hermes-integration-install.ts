@@ -161,9 +161,13 @@ export function installHermesPlugin(options: HermesInstallOptions): HermesInstal
   return { pluginTarget, configPath, actions, warnings }
 }
 
+function quoteYamlScalar(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
 function renderGsdYaml(project: string | undefined): string {
   const defaultProject = project ?? '~/code/myapp'
-  return `# open-gsd-hermes configuration. Edit paths for your machine.\ngsd:\n  cli_path: gsd\n  mcp_server_path: gsd-mcp-server\n  credential_source: gsd\n  default_project: ${defaultProject}\n  poll_interval_seconds: 12\n  cache_ttl_seconds: 45\n  notification_level: normal\n  bindings: {}\n`
+  return `# open-gsd-hermes configuration. Edit paths for your machine.\ngsd:\n  cli_path: gsd\n  mcp_server_path: gsd-mcp-server\n  credential_source: gsd\n  default_project: ${quoteYamlScalar(defaultProject)}\n  poll_interval_seconds: 12\n  cache_ttl_seconds: 45\n  notification_level: normal\n  bindings: {}\n`
 }
 
 function findHermesPython(hermesHome: string): string {
