@@ -433,7 +433,7 @@ function formatStrandedWorkBlockerMessage(
 
 export function auditOrphanedMilestoneBranches(
   basePath: string,
-  _isolationMode: "worktree" | "branch" | "none",
+  isolationMode: "worktree" | "branch" | "none",
   gitDeps: {
     branchList?: typeof nativeBranchList;
     branchExists?: typeof nativeBranchExists;
@@ -516,9 +516,19 @@ export function auditOrphanedMilestoneBranches(
       }
       if ((isMerged || commitsAhead === 0) && !worktreeEvidence.dirty) continue;
 
-      const recoveryMode: StrandedWorkRecoveryMode = worktreeEvidence.path
-        ? "worktree"
-        : "branch";
+      // #812 — the worktree directory being absent on disk does NOT mean the
+      // project is branch-mode. getAutoWorktreePath() returns null whenever the
+      // directory is merely missing (transient/permanent loss after an
+      // interrupted session), which previously collapsed to recoveryMode:
+      // "branch" — silently checking out milestone/<id> in the project root with
+      // no worktree. When the project is *configured* for worktree isolation,
+      // recover as "worktree" so adoptStrandedMilestone re-materializes the
+      // worktree from the existing branch (createAutoWorktree with
+      // reuseExistingBranch) instead of degrading to branch-mode-in-root.
+      const recoveryMode: StrandedWorkRecoveryMode =
+        worktreeEvidence.path || isolationMode === "worktree"
+          ? "worktree"
+          : "branch";
       const message = strandedWorkMessage({
         milestoneId,
         branch,

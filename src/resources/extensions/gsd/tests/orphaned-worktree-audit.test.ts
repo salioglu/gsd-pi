@@ -160,12 +160,33 @@ describe("auditOrphanedMilestoneBranches", () => {
       `warning should mention stranded milestone/M001 and in-progress state; got: ${JSON.stringify(result.warnings)}`,
     );
     assert.equal(result.blockingStrandedWork?.milestoneId, "M001");
-    assert.equal(result.blockingStrandedWork?.recoveryMode, "branch");
+    // #812 — worktree-configured isolation must recover as "worktree" even when
+    // the worktree directory is absent on disk, so recovery re-materializes the
+    // worktree from the branch instead of checking it out in the project root.
+    assert.equal(result.blockingStrandedWork?.recoveryMode, "worktree");
     assert.equal(result.blockingStrandedWork?.commitsAhead, 1);
 
     // Branch must still exist
     const branches = run("git branch --list milestone/M001", dir);
     assert.ok(branches.includes("milestone/M001"), "in-progress branch must be preserved");
+  });
+
+  test("#812 — in-progress orphan under branch isolation recovers as branch", () => {
+    // Same stranded scenario but the project is configured for branch-mode
+    // isolation, where there is never a worktree to re-materialize. Recovery
+    // must stay "branch".
+    run("git checkout -b milestone/M001", dir);
+    writeFileSync(join(dir, "feature.txt"), "in-progress work\n");
+    run("git add feature.txt", dir);
+    run("git commit -m \"in-progress work on M001\"", dir);
+    run("git checkout main", dir);
+
+    insertMilestone({ id: "M001", title: "Test", status: "active" });
+
+    const result = auditOrphanedMilestoneBranches(dir, "branch");
+
+    assert.equal(result.blockingStrandedWork?.milestoneId, "M001");
+    assert.equal(result.blockingStrandedWork?.recoveryMode, "branch");
   });
 
   test("#4762 — also surfaces worktree directory for in-progress orphan when present", () => {
