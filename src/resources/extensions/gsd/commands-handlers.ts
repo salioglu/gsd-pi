@@ -499,6 +499,8 @@ export async function handleKnowledge(args: string, ctx: ExtensionCommandContext
 
   const type = typeArg as "rule" | "pattern" | "lesson";
   const basePath = currentDirectoryRoot();
+  const { ensureDbOpen } = await import("./bootstrap/dynamic-tools.js");
+  await ensureDbOpen(basePath);
   const state = await deriveState(basePath);
   const scope = state.activeMilestone?.id
     ? `${state.activeMilestone.id}${state.activeSlice ? `/${state.activeSlice.id}` : ""}`

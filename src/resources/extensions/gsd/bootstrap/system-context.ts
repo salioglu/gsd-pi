@@ -134,6 +134,16 @@ export async function buildBeforeAgentStartResult(
     }
   }
 
+  // DB-backed memory backfills and projections run below. On a cold session
+  // the database file may exist without an active in-process adapter, so open
+  // the canonical project DB before those best-effort operations inspect it.
+  try {
+    const { ensureDbOpen } = await import("./dynamic-tools.js");
+    await ensureDbOpen(basePath);
+  } catch (e) {
+    logWarning("bootstrap", `project DB open failed before memory projection: ${(e as Error).message}`);
+  }
+
   // ADR-013 step 5: opportunistic decisions->memories backfill. Idempotent
   // and best-effort — first run absorbs the existing decisions table into
   // the memory store; subsequent runs are a single sentinel SELECT.
