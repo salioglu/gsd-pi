@@ -33,6 +33,7 @@ import { shouldIgnoreAgentEndForActiveUnit } from "../auto/unit-runner-events.js
 import { resolveModelId } from "../auto-model-selection.js";
 import { resolveProjectRoot } from "../worktree.js";
 import { clearDiscussionFlowState } from "./write-gate.js";
+import { scheduleFallbackContinuation } from "./fallback-continuation.js";
 import { clearGuidedUnitContext } from "../guided-unit-context.js";
 import { resumeAutoAfterProviderDelay } from "./provider-error-resume.js";
 import {
@@ -154,10 +155,7 @@ async function tryProviderModelFallback(params: ProviderModelFallbackParams): Pr
           setCurrentUnitModelForRecovery(candidate);
           setCurrentDispatchedModelId({ provider: candidate.provider, id: candidate.id });
           switchedNotify(`${candidate.provider}/${candidate.id}`);
-          pi.sendMessage(
-            { customType: "gsd-auto-timeout-recovery", content: "Continue execution.", display: false },
-            { triggerTurn: true, deliverAs: "steer" },
-          );
+          scheduleFallbackContinuation(pi);
           return true;
         }
       }
@@ -181,10 +179,7 @@ async function tryProviderModelFallback(params: ProviderModelFallbackParams): Pr
         setCurrentUnitModelForRecovery(startModel);
         setCurrentDispatchedModelId({ provider: startModel.provider, id: startModel.id });
         switchedNotify(`${startModel.provider}/${startModel.id}`);
-        pi.sendMessage(
-          { customType: "gsd-auto-timeout-recovery", content: "Continue execution.", display: false },
-          { triggerTurn: true, deliverAs: "steer" },
-        );
+        scheduleFallbackContinuation(pi);
         return true;
       }
     }
