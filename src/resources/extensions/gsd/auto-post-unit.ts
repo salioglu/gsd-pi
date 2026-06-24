@@ -2057,7 +2057,10 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
             return "dispatched";
           }
           s.toolUnavailableRetries++;
-          const delayMs = s.toolUnavailableRetries * 1000;
+          // Exponential backoff starting at 10s (10s, 20s, 40s capped at 45s). MCP server
+          // startup can take tens of seconds; a 1s/2s/3s linear delay re-dispatches before
+          // the server finishes connecting, causing a stuck loop. See #817.
+          const delayMs = Math.min(10_000 * Math.pow(2, s.toolUnavailableRetries - 1), 45_000);
           debugLog("postUnit", { phase: "tool-unavailable-retry", unitType: s.currentUnit.type, unitId: s.currentUnit.id, error: s.lastToolInvocationError, attempt: s.toolUnavailableRetries, delayMs });
           ctx.ui.notify(
             `Tool unavailable for ${s.currentUnit.type}: ${s.lastToolInvocationError}. Waiting ${delayMs}ms for MCP server — retry ${s.toolUnavailableRetries}/${MAX_TOOL_UNAVAIL_RETRIES}.`,
