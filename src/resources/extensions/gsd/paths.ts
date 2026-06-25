@@ -615,9 +615,10 @@ function legacyMilestonesHasSubdirs(basePath: string): boolean {
  */
 function dirIsContentBearingLegacyMilestone(dir: string): boolean {
   try {
-    const entries = readdirSync(dir);
+    const entries = readdirSync(dir, { withFileTypes: true });
     // Any non-meta file means this is a real legacy milestone dir with content.
-    return entries.some(name => !name.endsWith("-META.json"));
+    // Subdirs (e.g. empty slices/ scaffolding) must not count — only files do.
+    return entries.some(e => e.isFile() && !e.name.endsWith("-META.json"));
   } catch {
     return false;
   }
