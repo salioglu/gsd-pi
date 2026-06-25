@@ -302,6 +302,16 @@ function isCompleteAndBreakReason(
   );
 }
 
+/** Strip per-attempt counter suffixes so detect-stuck Rule 1 can match repeats. */
+const FAILURE_DETAIL_ATTEMPT_SUFFIX_RE = /\s*\(attempt\s+\d+(?:\/\d+)?\)\.?$/i;
+
+function failureDetailForLedger(detail: string | undefined): string | undefined {
+  const trimmed = detail?.trim();
+  if (!trimmed) return undefined;
+  const normalized = trimmed.replace(FAILURE_DETAIL_ATTEMPT_SUFFIX_RE, "").trim();
+  return normalized || undefined;
+}
+
 export function decideFinalizeResult(input: FinalizeInput): FinalizeDecision {
   if (input.action === "break") {
     const reason = input.reason ?? "unknown";
@@ -321,7 +331,7 @@ export function decideFinalizeResult(input: FinalizeInput): FinalizeDecision {
     // "15-SUMMARY.md was not found on disk") into the ledger summary so the
     // stuck-loop kill message is actionable. The `finalize-retry` prefix is
     // preserved so legacy ledger filters and dashboards still match (#852).
-    const detail = input.failureDetail?.trim();
+    const detail = failureDetailForLedger(input.failureDetail);
     return {
       action: "retry",
       ledgerErrorSummary: detail ? `finalize-retry: ${detail}` : "finalize-retry",

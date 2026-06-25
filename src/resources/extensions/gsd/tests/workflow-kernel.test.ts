@@ -235,6 +235,23 @@ test("decideFinalizeResult collapses whitespace-only / empty failureDetail to th
   );
 });
 
+test("decideFinalizeResult strips per-attempt suffixes for stable repeat-error detection (#852)", () => {
+  const base = "Artifact verification failed: roadmap has zero slices";
+  const attempt1 = decideFinalizeResult({
+    action: "continue",
+    failureDetail: `${base} (attempt 1/3).`,
+  });
+  const attempt2 = decideFinalizeResult({
+    action: "continue",
+    failureDetail: `${base} (attempt 2/3).`,
+  });
+  assert.deepEqual(attempt1, attempt2);
+  assert.deepEqual(attempt1, {
+    action: "retry",
+    ledgerErrorSummary: `finalize-retry: ${base}`,
+  });
+});
+
 test("decideEngineReconcile maps terminal outcomes", () => {
   assert.deepEqual(
     decideEngineReconcile({ outcome: "milestone-complete" }),
