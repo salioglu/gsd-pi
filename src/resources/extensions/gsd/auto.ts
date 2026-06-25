@@ -2358,6 +2358,7 @@ function buildLoopDeps(pi: ExtensionAPI, ctx: ExtensionContext): LoopDeps {
         ctx.modelRegistry,
         s.basePath || undefined,
         resolveProfileAnchorProvider(ctx.model?.provider, s.autoModeStartModel?.provider),
+        s.autoModeStartModel ? `${s.autoModeStartModel.provider}/${s.autoModeStartModel.id}` : undefined,
       ),
 
     // Pre-dispatch health gate

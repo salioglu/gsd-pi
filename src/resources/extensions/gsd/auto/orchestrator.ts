@@ -211,6 +211,9 @@ export async function decideOrchestratorDispatch(
     ctx.modelRegistry,
     activeDispatchBasePath,
     resolveProfileAnchorProvider(ctx.model?.provider, session?.autoModeStartModel?.provider),
+    activeSession?.autoModeStartModel
+      ? `${activeSession.autoModeStartModel.provider}/${activeSession.autoModeStartModel.id}`
+      : undefined,
   )?.preferences;
   if (!active) {
     if (state.phase !== "pre-planning") return null;
@@ -528,6 +531,9 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       this.ctx.modelRegistry,
       activeBasePath,
       resolveProfileAnchorProvider(this.ctx.model?.provider, this.s.autoModeStartModel?.provider),
+      this.s.autoModeStartModel
+        ? `${this.s.autoModeStartModel.provider}/${this.s.autoModeStartModel.id}`
+        : undefined,
     )?.preferences;
     const uokFlags = resolveUokFlags(prefs);
     if (!uokFlags.gates) return;

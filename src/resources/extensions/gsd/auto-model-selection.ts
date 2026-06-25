@@ -407,8 +407,9 @@ export function resolvePreferredModelConfig(
   isAutoMode = true,
   basePath?: string,
   availableModelIds?: string[],
+  preferredModelId?: string,
 ): PreferredModelConfig | undefined {
-  const explicitConfig = resolveModelWithFallbacksForUnit(unitType, basePath, availableModelIds);
+  const explicitConfig = resolveModelWithFallbacksForUnit(unitType, basePath, availableModelIds, preferredModelId);
   if (explicitConfig) {
     return {
       ...explicitConfig,
@@ -527,6 +528,9 @@ export async function selectAndApplyModel(
       flatRateCtx: buildFlatRateContext(autoModeStartModel.provider, ctx, prefs),
     };
   }
+  const preferredModelId = autoModeStartModel
+    ? `${autoModeStartModel.provider}/${autoModeStartModel.id}`
+    : ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
   const modelConfig = effectiveSessionModelOverride
     ? undefined
     : resolvePreferredModelConfig(
@@ -535,6 +539,7 @@ export async function selectAndApplyModel(
       isAutoMode,
       basePath,
       profileResolutionIds,
+      preferredModelId,
     );
   let routing: { tier: string; modelDowngraded: boolean } | null = null;
   let appliedModel: Model<Api> | null = null;
@@ -737,6 +742,7 @@ export async function selectAndApplyModel(
             classification.tier,
             availableModelIds,
             routingConfig,
+            preferredModelId,
           );
           const hookResult = await pi.emitBeforeModelSelect({
             unitType,
@@ -781,6 +787,7 @@ export async function selectAndApplyModel(
             unitType,
             classification.taskMetadata,
             capabilityOverrides,
+            preferredModelId,
           );
         }
 

@@ -297,6 +297,41 @@ test("cross-provider: configured primary available by bare ID wins over equivale
   assert.equal(result.wasDowngraded, false);
 });
 
+test("resolveModelForComplexity: preferred GLM session model wins over cheaper standard-tier GLM models", () => {
+  const config: DynamicRoutingConfig = { ...defaultRoutingConfig(), enabled: true, capability_routing: false };
+  const result = resolveModelForComplexity(
+    makeClassification("standard"),
+    { primary: "claude-opus-4-6", fallbacks: [] },
+    config,
+    ["zai/glm-4.5-air", "zai/glm-5.1", "zai/glm-5.2"],
+    "execute-task",
+    undefined,
+    undefined,
+    "zai/glm-5.2",
+  );
+  assert.equal(result.modelId, "zai/glm-5.2");
+  assert.equal(result.selectionMethod, "tier-only");
+});
+
+test("resolveModelForComplexity: wasDowngraded is false when preferred session model matches configuredPrimary with different ID format", () => {
+  // configuredPrimary is bare ("claude-opus-4-6"), preferred comes back as provider-prefixed
+  // ("anthropic/claude-opus-4-6") from availableModelIds. They refer to the same model —
+  // wasDowngraded must NOT be true, which would otherwise trigger a spurious UI notification.
+  const config: DynamicRoutingConfig = { ...defaultRoutingConfig(), enabled: true, capability_routing: false };
+  const result = resolveModelForComplexity(
+    makeClassification("standard"),
+    { primary: "claude-opus-4-6", fallbacks: [] },
+    config,
+    ["anthropic/claude-opus-4-6"],
+    "execute-task",
+    undefined,
+    undefined,
+    "anthropic/claude-opus-4-6",
+  );
+  assert.equal(result.modelId, "anthropic/claude-opus-4-6");
+  assert.equal(result.wasDowngraded, false);
+});
+
 // ─── resolveModelForTier (provider-agnostic tier resolution) ────────────────
 
 test("resolveModelForTier: returns canonical Anthropic model when no available models", () => {
@@ -355,15 +390,68 @@ test("resolveModelForTier: picks light-tier cross-provider model", () => {
   assert.equal(result, "gpt-4o-mini");
 });
 
-test("resolveModelForTier: falls back to canonical when no tier match available", () => {
+test("resolveModelForTier: preserves selected standard-tier model over cheaper same-tier provider models", () => {
+  const result = resolveModelForTier(
+    "standard",
+    ["zai/glm-4.5-air", "zai/glm-5.1", "zai/glm-5.2"],
+    defaultRoutingConfig(),
+    true,
+    "zai/glm-5.2",
+  );
+  assert.equal(result, "zai/glm-5.2");
+});
+
+test("resolveModelForTier: light tier with no light provider model stays on selected provider model", () => {
   try {
     resetLegacyTelemetry();
-    // Only unknown models available — getModelTier classifies unknowns as
-    // "standard", so a request for "heavy" finds no match and the canonical
-    // Anthropic ID is returned as a documented fallback.
-    const result = resolveModelForTier("heavy", ["some-custom-model"]);
-    assert.equal(result, "claude-opus-4-6");
-    assert.equal(getLegacyTelemetry()["legacy.providerDefaultUsed"], 1);
+    const result = resolveModelForTier(
+      "light",
+      ["zai/glm-4.5-air", "zai/glm-5.1", "zai/glm-5.2"],
+      defaultRoutingConfig(),
+      true,
+      "zai/glm-5.2",
+    );
+    assert.equal(result, "zai/glm-5.2");
+    assert.equal(getLegacyTelemetry()["legacy.providerDefaultUsed"], 0);
+  } finally {
+    resetLegacyTelemetry();
+  }
+});
+
+test("resolveModelForTier: cross_provider:false ignores non-Anthropic preferred model and returns Claude", () => {
+  // When dynamic_routing.cross_provider is false, the sameProvider (Claude-only) filter must
+  // win over a non-Anthropic session model — the preferred model must not bypass the restriction.
+  const config: DynamicRoutingConfig = { ...defaultRoutingConfig(), cross_provider: false };
+  const result = resolveModelForTier(
+    "standard",
+    ["zai/glm-5.2", "claude-sonnet-4-6"],
+    config,
+    false, // crossProvider=false
+    "zai/glm-5.2",
+  );
+  assert.equal(result, "claude-sonnet-4-6");
+});
+
+test("resolveModelForTier: cross_provider:false honors preferred model when it is a Claude model", () => {
+  // When the session model itself is a Claude model, it should still win within the
+  // same-provider restriction.
+  const config: DynamicRoutingConfig = { ...defaultRoutingConfig(), cross_provider: false };
+  const result = resolveModelForTier(
+    "standard",
+    ["anthropic/claude-sonnet-4-6", "anthropic/claude-haiku-4-5"],
+    config,
+    false,
+    "anthropic/claude-sonnet-4-6",
+  );
+  assert.equal(result, "claude-sonnet-4-6");
+});
+
+test("resolveModelForTier: non-empty provider list without a tier match does not fall back to canonical", () => {
+  try {
+    resetLegacyTelemetry();
+    const result = resolveModelForTier("heavy", ["zai/glm-5.2"]);
+    assert.equal(result, "zai/glm-5.2");
+    assert.equal(getLegacyTelemetry()["legacy.providerDefaultUsed"], 0);
   } finally {
     resetLegacyTelemetry();
   }
@@ -429,6 +517,34 @@ test("resolveProfileDefaults: empty availableModelIds falls back to canonical An
   assert.ok(typeof planningModel === "string" && planningModel.startsWith("claude-"));
 });
 
+test("resolveProfileDefaults: empty availableModelIds preserves selected model when provided", async () => {
+  const { resolveProfileDefaults } = await import("../preferences-models.js");
+  const defaults = resolveProfileDefaults(
+    "balanced",
+    [],
+    defaultRoutingConfig(),
+    "zai/glm-5.2",
+  );
+  assert.equal(defaults.models?.planning, "zai/glm-5.2");
+  assert.equal(defaults.models?.execution, "zai/glm-5.2");
+  assert.equal(defaults.models?.completion, "zai/glm-5.2");
+  assert.equal(defaults.models?.subagent, "zai/glm-5.2");
+});
+
+test("resolveProfileDefaults: selected GLM model wins for standard and light profile slots", async () => {
+  const { resolveProfileDefaults } = await import("../preferences-models.js");
+  const defaults = resolveProfileDefaults(
+    "balanced",
+    ["zai/glm-4.5-air", "zai/glm-5.1", "zai/glm-5.2"],
+    defaultRoutingConfig(),
+    "zai/glm-5.2",
+  );
+  assert.equal(defaults.models?.planning, "zai/glm-5.2");
+  assert.equal(defaults.models?.execution, "zai/glm-5.2");
+  assert.equal(defaults.models?.completion, "zai/glm-5.2");
+  assert.equal(defaults.models?.subagent, "zai/glm-5.2");
+});
+
 test("loadEffectiveGSDPreferences: balanced profile resolves OpenAI tiers from registry", async () => {
   const oldHome = process.env.GSD_HOME;
   const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
@@ -489,6 +605,87 @@ test("loadEffectiveGSDPreferences: implicit balanced (D046) resolves tiers from 
       undefined,
       "implicit balanced model defaults must not silently skip slice research",
     );
+  } finally {
+    if (oldHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = oldHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("loadEffectiveGSDPreferences: implicit balanced preserves selected GLM model", async () => {
+  const oldHome = process.env.GSD_HOME;
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const home = mkdtempSync(join(tmpdir(), "gsd-profile-selected-glm-"));
+  try {
+    process.env.GSD_HOME = home;
+    writeFileSync(join(home, "PREFERENCES.md"), "---\nmode: solo\n---\n");
+    const { loadEffectiveGSDPreferencesWithRegistry } = await import("../preferences.ts");
+    const registry = {
+      getAvailable: () => [
+        { provider: "zai", id: "glm-4.5-air" },
+        { provider: "zai", id: "glm-5.1" },
+        { provider: "zai", id: "glm-5.2" },
+      ],
+    };
+    const loaded = loadEffectiveGSDPreferencesWithRegistry(registry, undefined, "zai", "zai/glm-5.2");
+    const models = loaded?.preferences.models as Record<string, string> | undefined;
+    assert.equal(models?.planning, "zai/glm-5.2");
+    assert.equal(models?.execution, "zai/glm-5.2");
+    assert.equal(models?.completion, "zai/glm-5.2");
+  } finally {
+    if (oldHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = oldHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("loadEffectiveGSDPreferences: implicit balanced preserves selected model when scoped registry is empty", async () => {
+  const oldHome = process.env.GSD_HOME;
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const home = mkdtempSync(join(tmpdir(), "gsd-profile-empty-scope-selected-"));
+  try {
+    process.env.GSD_HOME = home;
+    writeFileSync(join(home, "PREFERENCES.md"), "---\nmode: solo\n---\n");
+    const { loadEffectiveGSDPreferencesWithRegistry } = await import("../preferences.ts");
+    const registry = {
+      getAvailable: () => [
+        { provider: "google", id: "gemini-2.0-flash" },
+        { provider: "openai-codex", id: "gpt-4o" },
+      ],
+    };
+    const loaded = loadEffectiveGSDPreferencesWithRegistry(registry, undefined, "zai", "zai/glm-5.2");
+    const models = loaded?.preferences.models as Record<string, string> | undefined;
+    assert.equal(models?.planning, "zai/glm-5.2");
+    assert.equal(models?.execution, "zai/glm-5.2");
+    assert.equal(models?.completion, "zai/glm-5.2");
+    assert.equal(models?.subagent, "zai/glm-5.2");
+  } finally {
+    if (oldHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = oldHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("loadEffectiveGSDPreferences: implicit balanced preserves selected model when registry is missing", async () => {
+  const oldHome = process.env.GSD_HOME;
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const home = mkdtempSync(join(tmpdir(), "gsd-profile-missing-registry-selected-"));
+  try {
+    process.env.GSD_HOME = home;
+    writeFileSync(join(home, "PREFERENCES.md"), "---\nmode: solo\n---\n");
+    const { loadEffectiveGSDPreferencesWithRegistry } = await import("../preferences.ts");
+    const loaded = loadEffectiveGSDPreferencesWithRegistry(undefined, undefined, undefined, "zai/glm-5.2");
+    const models = loaded?.preferences.models as Record<string, string> | undefined;
+    assert.equal(models?.planning, "zai/glm-5.2");
+    assert.equal(models?.execution, "zai/glm-5.2");
+    assert.equal(models?.completion, "zai/glm-5.2");
+    assert.equal(models?.subagent, "zai/glm-5.2");
   } finally {
     if (oldHome === undefined) delete process.env.GSD_HOME;
     else process.env.GSD_HOME = oldHome;

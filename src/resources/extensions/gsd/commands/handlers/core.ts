@@ -579,6 +579,7 @@ export async function handleCoreCommand(
     const configOptions = {
       basePath,
       ...(availableModelIds && availableModelIds.length > 0 ? { availableModelIds } : {}),
+      ...(ctx.model ? { preferredModelId: `${ctx.model.provider}/${ctx.model.id}` } : {}),
     };
     const result = await ctx.ui.custom<boolean>(
       (tui, theme, _kb, done) => new GSDConfigOverlay(tui, theme, () => done(true), configOptions),
