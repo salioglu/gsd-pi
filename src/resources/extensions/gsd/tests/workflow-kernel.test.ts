@@ -203,6 +203,38 @@ test("decideFinalizeResult maps continue and next results", () => {
   assert.deepEqual(decideFinalizeResult({ action: "next" }), { action: "complete" });
 });
 
+// ── #852 follow-up: carry the specific verification failure into the ledger ──
+//
+// A bare "finalize-retry" ledger summary makes the stuck-loop kill message
+// ("Same error repeated: finalize-retry") opaque — it took a full forensics
+// dive to learn the real reason was "roadmap has zero slices". The retry
+// decision now appends the failureDetail so the summary is actionable while
+// preserving the stable "finalize-retry" prefix for legacy filters.
+
+test("decideFinalizeResult appends failureDetail to the retry ledger summary (#852)", () => {
+  assert.deepEqual(
+    decideFinalizeResult({ action: "continue", failureDetail: "roadmap has zero slices" }),
+    { action: "retry", ledgerErrorSummary: "finalize-retry: roadmap has zero slices" },
+  );
+  // The prefix is preserved so dashboards/filters matching "finalize-retry" still hit.
+  assert.match(
+    decideFinalizeResult({ action: "continue", failureDetail: "15-SUMMARY.md was not found on disk" })
+      .ledgerErrorSummary,
+    /^finalize-retry:/,
+  );
+});
+
+test("decideFinalizeResult collapses whitespace-only / empty failureDetail to the bare token (#852)", () => {
+  assert.deepEqual(
+    decideFinalizeResult({ action: "continue", failureDetail: "   " }),
+    { action: "retry", ledgerErrorSummary: "finalize-retry" },
+  );
+  assert.deepEqual(
+    decideFinalizeResult({ action: "continue", failureDetail: "" }),
+    { action: "retry", ledgerErrorSummary: "finalize-retry" },
+  );
+});
+
 test("decideEngineReconcile maps terminal outcomes", () => {
   assert.deepEqual(
     decideEngineReconcile({ outcome: "milestone-complete" }),

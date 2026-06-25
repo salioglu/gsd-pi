@@ -34,7 +34,7 @@ export type EngineDispatchDecision =
 
 export type FinalizeInput =
   | { action: "break"; reason?: string }
-  | { action: "continue" }
+  | { action: "continue"; failureDetail?: string }
   | { action: "next" };
 
 export type FinalizeDecision =
@@ -46,7 +46,14 @@ export type FinalizeDecision =
     }
   | {
       action: "retry";
-      ledgerErrorSummary: "finalize-retry";
+      /**
+       * Stable `"finalize-retry"` prefix plus, when available, the specific
+       * verification failure (e.g. `finalize-retry: roadmap has zero slices`).
+       * The prefix keeps legacy ledger filters matching; the suffix makes a
+       * stuck-loop kill message actionable instead of the opaque bare token
+       * that forced a full forensics dive to diagnose (#852 follow-up).
+       */
+      ledgerErrorSummary: string;
     }
   | { action: "complete" }
   | { action: "complete-and-break" };
@@ -310,9 +317,14 @@ export function decideFinalizeResult(input: FinalizeInput): FinalizeDecision {
   }
 
   if (input.action === "continue") {
+    // Carry the specific verification failure (e.g. "roadmap has zero slices",
+    // "15-SUMMARY.md was not found on disk") into the ledger summary so the
+    // stuck-loop kill message is actionable. The `finalize-retry` prefix is
+    // preserved so legacy ledger filters and dashboards still match (#852).
+    const detail = input.failureDetail?.trim();
     return {
       action: "retry",
-      ledgerErrorSummary: "finalize-retry",
+      ledgerErrorSummary: detail ? `finalize-retry: ${detail}` : "finalize-retry",
     };
   }
 

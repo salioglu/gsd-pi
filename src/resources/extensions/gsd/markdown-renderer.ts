@@ -567,13 +567,32 @@ export async function renderTaskPlanFromDb(
 export async function renderRoadmapFromDb(
   basePath: string,
   milestoneId: string,
-): Promise<{ roadmapPath: string; content: string }> {
+): Promise<{ roadmapPath: string; content: string } | { skipped: "unplanned-milestone" }> {
   const milestone = getMilestone(milestoneId);
   if (!milestone) {
     throw new Error(`milestone ${milestoneId} not found`);
   }
 
   const slices = getMilestoneSlices(milestoneId);
+
+  // Refuse to render a stub ROADMAP for an unplanned milestone (#852).
+  // A milestone row created by gsd_milestone_generate_id / ensureMilestoneDbRow
+  // starts with title="" / vision="" and zero slices. Rendering that produces a
+  // 38-byte stub (`# M015: M015\n\n**Vision:** \n\n## Slices`) which passes
+  // existsSync but fails the plan-milestone "zero slices" content check —
+  // trapping auto-mode in a finalize-retry loop. A real plan (written by
+  // gsd_plan_milestone via writePlanRows) always sets a non-empty vision AND at
+  // least one slice, so zero-slice + empty-vision is a reliable "never planned"
+  // signal. Skip the write so verification sees a genuinely missing file (a
+  // clear "write the ROADMAP" failure) instead of a misleading stub.
+  if (slices.length === 0 && !milestone.vision.trim()) {
+    logWarning(
+      "projection",
+      `renderRoadmapFromDb skipped unplanned milestone ${milestoneId} (zero slices, empty vision) — refusing to write a stub ROADMAP`,
+    );
+    return { skipped: "unplanned-milestone" };
+  }
+
   const absPath = resolveRoadmapProjectionPath(basePath, milestoneId);
   const artifactPath = toArtifactPath(absPath, basePath);
   const content = renderRoadmapMarkdown(milestone, slices);
