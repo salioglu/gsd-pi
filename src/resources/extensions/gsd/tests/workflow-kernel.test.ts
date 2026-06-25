@@ -217,9 +217,11 @@ test("decideFinalizeResult appends failureDetail to the retry ledger summary (#8
     { action: "retry", ledgerErrorSummary: "finalize-retry: roadmap has zero slices" },
   );
   // The prefix is preserved so dashboards/filters matching "finalize-retry" still hit.
+  // Narrow to the retry arm before accessing ledgerErrorSummary (FinalizeDecision is a union).
+  const suffixed = decideFinalizeResult({ action: "continue", failureDetail: "15-SUMMARY.md was not found on disk" });
+  assert.strictEqual(suffixed.action, "retry");
   assert.match(
-    decideFinalizeResult({ action: "continue", failureDetail: "15-SUMMARY.md was not found on disk" })
-      .ledgerErrorSummary,
+    (suffixed as { action: "retry"; ledgerErrorSummary: string }).ledgerErrorSummary,
     /^finalize-retry:/,
   );
 });
