@@ -925,7 +925,12 @@ test("ADR-017 (#5704): unregistered-milestone drift fails closed without importi
       assert.equal(err.failures[0]?.drift.kind, "unregistered-milestone");
       assert.match(String(err.failures[0]?.cause), /M042/);
       assert.match(String(err.failures[0]?.cause), /markdown projection/);
+      // Hint leads with targeted, non-destructive actions (rename/discard)...
+      assert.match(String(err.failures[0]?.cause), /Rename/);
+      assert.match(String(err.failures[0]?.cause), /Discard/);
+      // ...and reframes recover as a destructive last resort, not the fix (#826).
       assert.match(String(err.failures[0]?.cause), /\/gsd recover/);
+      assert.match(String(err.failures[0]?.cause), /last resort/i);
       return true;
     },
   );
