@@ -1555,6 +1555,41 @@ test('── markdown-renderer: renderRoadmapFromDb skips unplanned milestone (z
   }
 });
 
+test('── markdown-renderer: renderRoadmapFromDb removes a pre-existing stub ROADMAP for unplanned milestone ──', async () => {
+  // Brownfield scenario: a previous run (before the unplanned-milestone guard
+  // existed) already wrote a stub ROADMAP to disk. renderRoadmapFromDb must
+  // delete it so plan-milestone verification sees a genuinely missing file
+  // rather than failing on "zero slices" again (#852 follow-up).
+  const tmpDir = makeTmpDir();
+  const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+  clearAllCaches();
+
+  try {
+    insertMilestone({ id: 'M015', title: '', status: 'queued' });
+    scaffoldDirs(tmpDir, 'M015', []);
+
+    // Simulate a stub ROADMAP written by an older run.
+    const phaseDir = path.join(tmpDir, '.gsd', 'phases', '15-m015');
+    fs.mkdirSync(phaseDir, { recursive: true });
+    const stubRoadmapPath = path.join(phaseDir, '15-ROADMAP.md');
+    fs.writeFileSync(stubRoadmapPath, '# M015: M015\n\n**Vision:** \n\n## Slices\n');
+    assert.equal(fs.existsSync(stubRoadmapPath), true, 'stub exists before guard runs');
+
+    const result = await renderRoadmapFromDb(tmpDir, 'M015');
+
+    assert.deepEqual(result, { skipped: 'unplanned-milestone' });
+    assert.equal(
+      fs.existsSync(stubRoadmapPath),
+      false,
+      'renderRoadmapFromDb must delete the pre-existing stub ROADMAP',
+    );
+  } finally {
+    closeDatabase();
+    cleanupDir(tmpDir);
+  }
+});
+
 test('── markdown-renderer: renderRoadmapFromDb renders a planned milestone (≥1 slice) ──', async () => {
   const tmpDir = makeTmpDir();
   const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
