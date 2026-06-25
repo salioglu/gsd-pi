@@ -35,6 +35,7 @@ interface ConfigSection {
 export interface CollectConfigOptions {
   basePath?: string;
   availableModelIds?: string[];
+  preferredModelId?: string;
 }
 
 function collectConfigSections(options?: CollectConfigOptions): ConfigSection[] {
@@ -43,7 +44,7 @@ function collectConfigSections(options?: CollectConfigOptions): ConfigSection[] 
   const globalPrefs = loadGlobalGSDPreferences();
   const projectPrefs = loadProjectGSDPreferences(options?.basePath);
   const loadOpts = options?.availableModelIds
-    ? { availableModelIds: options.availableModelIds }
+    ? { availableModelIds: options.availableModelIds, preferredModelId: options.preferredModelId }
     : undefined;
   const effective = loadEffectiveGSDPreferences(options?.basePath, loadOpts);
   const prefs = effective?.preferences;
@@ -81,6 +82,7 @@ function collectConfigSections(options?: CollectConfigOptions): ConfigSection[] 
       unitType,
       options?.basePath,
       options?.availableModelIds,
+      options?.preferredModelId,
     );
     if (resolved) {
       let val = resolved.primary;

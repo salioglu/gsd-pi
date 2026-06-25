@@ -1055,7 +1055,7 @@ export async function bootstrapAutoSession(
   );
   const preferredModel = sessionProviderIsCustom
     ? null
-    : resolveDefaultSessionModel(ctx.model?.provider, base, profileModelIds);
+    : resolveDefaultSessionModel(ctx.model?.provider, base, profileModelIds, ctx.model?.id);
   // Validate the preferred model against the live registry + provider auth so
   // an unconfigured PREFERENCES.md entry (no API key / OAuth) can't become the
   // start-model snapshot. Without this, every subsequent unit would try to
@@ -1501,6 +1501,7 @@ export async function bootstrapAutoSession(
       ctx.modelRegistry,
       base,
       resolveProfileAnchorProvider(ctx.model?.provider, startModelSnapshot?.provider),
+      startModelSnapshot ? `${startModelSnapshot.provider}/${startModelSnapshot.id}` : undefined,
     )?.preferences;
     const { shouldRunDeepProjectSetup } = await import("./auto-dispatch.js");
     const deepProjectStagePending = shouldRunDeepProjectSetup(
@@ -1857,6 +1858,7 @@ export async function bootstrapAutoSession(
       ctx.modelRegistry,
       base,
       resolveProfileAnchorProvider(ctx.model?.provider, s.autoModeStartModel?.provider),
+      s.autoModeStartModel ? `${s.autoModeStartModel.provider}/${s.autoModeStartModel.id}` : undefined,
     )?.preferences;
     const effectiveProvider = s.autoModeStartModel?.provider ?? ctx.model?.provider;
     const effectivelyEnabled = routingConfig.enabled
