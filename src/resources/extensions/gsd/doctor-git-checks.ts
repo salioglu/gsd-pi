@@ -15,7 +15,7 @@ import { RUNTIME_EXCLUSION_PATHS, resolveMilestoneIntegrationBranch, writeIntegr
 import { nativeIsRepo, nativeWorktreeList, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached, nativeHasChanges, nativeLastCommitEpoch, nativeGetCurrentBranch, nativeAddTracked, nativeCommit } from "./native-git-bridge.js";
 import { getAllWorktreeHealth } from "./worktree-health.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
-import { listUnmergedGitPaths } from "./git-conflict-state.js";
+import { listUnmergedGitPaths, probeGitConflictState, reconcileGitConflictsOnSignal } from "./git-conflict-state.js";
 import { resolveWorktreeProjectRoot } from "./worktree-root.js";
 
 /**
@@ -159,7 +159,7 @@ export async function checkGitHealth(
   }
 
   const gitDir = resolveGitDir(basePath);
-  const unmergedPaths = listUnmergedGitPaths(basePath);
+  let unmergedPaths = listUnmergedGitPaths(basePath);
   if (unmergedPaths === null) {
     issues.push({
       severity: "error",
@@ -170,6 +170,27 @@ export async function checkGitHealth(
       fixable: false,
     });
     return;
+  }
+
+  // ── Auto-resolve safe conflicts before reporting ──────────────────────
+  // A failed worktree merge (e.g. during complete-slice) can leave conflict
+  // markers for paths that are always safe to accept from the milestone side
+  // (.gsd/ state and build artifacts). Run the same reconciliation the
+  // preflight/auto-worktree paths use before the doctor hard-blocks auto-mode,
+  // so only genuinely-manual conflicts remain. This also clears stale
+  // merge-state markers (e.g. MERGE_HEAD) in the same pass when auto-resolve
+  // empties the unmerged set (#849).
+  if (unmergedPaths.length > 0) {
+    try {
+      const reconcileFixes = reconcileGitConflictsOnSignal(basePath, probeGitConflictState(basePath));
+      if (reconcileFixes.length > 0) {
+        fixesApplied.push(...reconcileFixes);
+        const refreshed = listUnmergedGitPaths(basePath);
+        if (refreshed !== null) unmergedPaths = refreshed;
+      }
+    } catch {
+      // Non-fatal — fall through to report the unmerged paths as-is
+    }
   }
 
   // ── Orphaned auto-worktrees & Stale milestone branches ────────────────
