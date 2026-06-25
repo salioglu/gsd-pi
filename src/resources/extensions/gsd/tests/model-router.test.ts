@@ -489,6 +489,20 @@ test("resolveProfileDefaults: empty availableModelIds falls back to canonical An
   assert.ok(typeof planningModel === "string" && planningModel.startsWith("claude-"));
 });
 
+test("resolveProfileDefaults: empty availableModelIds preserves selected model when provided", async () => {
+  const { resolveProfileDefaults } = await import("../preferences-models.js");
+  const defaults = resolveProfileDefaults(
+    "balanced",
+    [],
+    defaultRoutingConfig(),
+    "zai/glm-5.2",
+  );
+  assert.equal(defaults.models?.planning, "zai/glm-5.2");
+  assert.equal(defaults.models?.execution, "zai/glm-5.2");
+  assert.equal(defaults.models?.completion, "zai/glm-5.2");
+  assert.equal(defaults.models?.subagent, "zai/glm-5.2");
+});
+
 test("resolveProfileDefaults: selected GLM model wins for standard and light profile slots", async () => {
   const { resolveProfileDefaults } = await import("../preferences-models.js");
   const defaults = resolveProfileDefaults(
@@ -592,6 +606,58 @@ test("loadEffectiveGSDPreferences: implicit balanced preserves selected GLM mode
     assert.equal(models?.planning, "zai/glm-5.2");
     assert.equal(models?.execution, "zai/glm-5.2");
     assert.equal(models?.completion, "zai/glm-5.2");
+  } finally {
+    if (oldHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = oldHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("loadEffectiveGSDPreferences: implicit balanced preserves selected model when scoped registry is empty", async () => {
+  const oldHome = process.env.GSD_HOME;
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const home = mkdtempSync(join(tmpdir(), "gsd-profile-empty-scope-selected-"));
+  try {
+    process.env.GSD_HOME = home;
+    writeFileSync(join(home, "PREFERENCES.md"), "---\nmode: solo\n---\n");
+    const { loadEffectiveGSDPreferencesWithRegistry } = await import("../preferences.ts");
+    const registry = {
+      getAvailable: () => [
+        { provider: "google", id: "gemini-2.0-flash" },
+        { provider: "openai-codex", id: "gpt-4o" },
+      ],
+    };
+    const loaded = loadEffectiveGSDPreferencesWithRegistry(registry, undefined, "zai", "zai/glm-5.2");
+    const models = loaded?.preferences.models as Record<string, string> | undefined;
+    assert.equal(models?.planning, "zai/glm-5.2");
+    assert.equal(models?.execution, "zai/glm-5.2");
+    assert.equal(models?.completion, "zai/glm-5.2");
+    assert.equal(models?.subagent, "zai/glm-5.2");
+  } finally {
+    if (oldHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = oldHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("loadEffectiveGSDPreferences: implicit balanced preserves selected model when registry is missing", async () => {
+  const oldHome = process.env.GSD_HOME;
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const home = mkdtempSync(join(tmpdir(), "gsd-profile-missing-registry-selected-"));
+  try {
+    process.env.GSD_HOME = home;
+    writeFileSync(join(home, "PREFERENCES.md"), "---\nmode: solo\n---\n");
+    const { loadEffectiveGSDPreferencesWithRegistry } = await import("../preferences.ts");
+    const loaded = loadEffectiveGSDPreferencesWithRegistry(undefined, undefined, undefined, "zai/glm-5.2");
+    const models = loaded?.preferences.models as Record<string, string> | undefined;
+    assert.equal(models?.planning, "zai/glm-5.2");
+    assert.equal(models?.execution, "zai/glm-5.2");
+    assert.equal(models?.completion, "zai/glm-5.2");
+    assert.equal(models?.subagent, "zai/glm-5.2");
   } finally {
     if (oldHome === undefined) delete process.env.GSD_HOME;
     else process.env.GSD_HOME = oldHome;
