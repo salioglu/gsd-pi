@@ -418,6 +418,34 @@ test("resolveModelForTier: light tier with no light provider model stays on sele
   }
 });
 
+test("resolveModelForTier: cross_provider:false ignores non-Anthropic preferred model and returns Claude", () => {
+  // When dynamic_routing.cross_provider is false, the sameProvider (Claude-only) filter must
+  // win over a non-Anthropic session model — the preferred model must not bypass the restriction.
+  const config: DynamicRoutingConfig = { ...defaultRoutingConfig(), cross_provider: false };
+  const result = resolveModelForTier(
+    "standard",
+    ["zai/glm-5.2", "claude-sonnet-4-6"],
+    config,
+    false, // crossProvider=false
+    "zai/glm-5.2",
+  );
+  assert.equal(result, "claude-sonnet-4-6");
+});
+
+test("resolveModelForTier: cross_provider:false honors preferred model when it is a Claude model", () => {
+  // When the session model itself is a Claude model, it should still win within the
+  // same-provider restriction.
+  const config: DynamicRoutingConfig = { ...defaultRoutingConfig(), cross_provider: false };
+  const result = resolveModelForTier(
+    "standard",
+    ["anthropic/claude-sonnet-4-6", "anthropic/claude-haiku-4-5"],
+    config,
+    false,
+    "anthropic/claude-sonnet-4-6",
+  );
+  assert.equal(result, "claude-sonnet-4-6");
+});
+
 test("resolveModelForTier: non-empty provider list without a tier match does not fall back to canonical", () => {
   try {
     resetLegacyTelemetry();

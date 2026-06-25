@@ -618,15 +618,19 @@ function findModelForTier(
     return eligible[0];
   }
 
-  const preferred = findPreferredModelForTier(tier, availableModelIds, preferredModelId);
-  if (preferred && eligible.includes(preferred)) return preferred;
-
   // Same-provider only: keep models whose bare ID matches a canonical
   // Anthropic ID at this tier (i.e., a claude-* model in the tier map).
   const sameProvider = eligible.filter(id => {
     const bare = bareModelId(id);
     return MODEL_CAPABILITY_TIER[bare] === tier && bare.startsWith("claude-");
   });
+
+  // Honor the preferred/session model only when it is itself a same-provider
+  // (Anthropic/Claude) model. A non-Anthropic session model must not bypass
+  // the cross_provider:false restriction.
+  const preferred = findPreferredModelForTier(tier, availableModelIds, preferredModelId);
+  if (preferred && sameProvider.includes(preferred)) return preferred;
+
   return sameProvider[0];
 }
 
