@@ -82,6 +82,66 @@ test("metadata-only milestones/<MID>/ does not flip layout to legacy (#852)", ()
   }
 });
 
+test("milestones/<MID>/ with only META.json + subdir does not flip layout to legacy", () => {
+  // Regression for the Cursor Bugbot finding: a flat-phase project whose
+  // milestones/<MID>/ contains only *-META.json plus an empty subdirectory
+  // (e.g. slices/) must NOT be treated as a content-bearing legacy milestone.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-meta-subdir-")));
+  try {
+    const gsd = join(root, ".gsd");
+    // Flat-phase layout: phases/01-m001/ with real content.
+    const phaseDir = join(gsd, "phases", "01-m001");
+    mkdirSync(phaseDir, { recursive: true });
+    writeFileSync(join(phaseDir, "01-CONTEXT.md"), "# context\n");
+
+    // Pollution: milestones/M001/ has a META file + a bare subdirectory.
+    const metaDir = join(gsd, "milestones", "M001");
+    mkdirSync(join(metaDir, "slices"), { recursive: true });
+    writeFileSync(join(metaDir, "M001-META.json"), '{"branch":"milestone/M001"}');
+
+    _clearGsdRootCache();
+    clearPathCache();
+
+    assert.equal(
+      isLegacyMilestonesLayout(root),
+      false,
+      "META-only + subdir milestones dir must not flip layout",
+    );
+    assert.ok(
+      milestonesDir(root).endsWith(join(".gsd", "phases")),
+      "milestonesDir resolves to phases/ not milestones/",
+    );
+  } finally {
+    _clearGsdRootCache();
+    clearPathCache();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("milestones/<MID>/ with non-empty slices/ subdir is detected as legacy (no files in milestone root)", () => {
+  // The common real-legacy fixture pattern: milestones/M001/slices/S01/ with no
+  // file directly in milestones/M001/.  The non-empty slices/ subdir must still
+  // trigger legacy detection so artifact resolution stays on the milestones/ path.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-legacy-subdir-")));
+  try {
+    const legacyDir = join(root, ".gsd", "milestones", "M001");
+    mkdirSync(join(legacyDir, "slices", "S01", "tasks"), { recursive: true });
+
+    _clearGsdRootCache();
+    clearPathCache();
+
+    assert.equal(
+      isLegacyMilestonesLayout(root),
+      true,
+      "non-empty slices/ subdir must still detect as legacy",
+    );
+  } finally {
+    _clearGsdRootCache();
+    clearPathCache();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("content-bearing milestones/<MID>/ still resolves to legacy (#852 regression guard)", () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-legacy-real-")));
   try {
