@@ -9,7 +9,7 @@
 // Critical invariant: rendered markdown must round-trip through
 // parseRoadmap(), parsePlan(), parseSummary() in files.ts.
 
-import { readFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus } from "./status-guards.js";
 import { dirname, join, relative } from "node:path";
@@ -22,6 +22,7 @@ import {
   getTask,
   getSlice,
   insertArtifact,
+  deleteArtifactByPath,
   getGateResults,
 } from "./gsd-db.js";
 import type { MilestoneRow, ArtifactRow } from "./db-milestone-artifact-rows.js";
@@ -590,6 +591,17 @@ export async function renderRoadmapFromDb(
       "projection",
       `renderRoadmapFromDb skipped unplanned milestone ${milestoneId} (zero slices, empty vision) — refusing to write a stub ROADMAP`,
     );
+    const absPath = resolveRoadmapProjectionPath(basePath, milestoneId);
+    if (existsSync(absPath)) {
+      const artifactPath = toArtifactPath(absPath, basePath);
+      unlinkSync(absPath);
+      try {
+        deleteArtifactByPath(artifactPath);
+      } catch {
+        logWarning("renderer", `failed to remove artifact from DB: ${artifactPath}`);
+      }
+      invalidateCaches();
+    }
     return { skipped: "unplanned-milestone" };
   }
 
