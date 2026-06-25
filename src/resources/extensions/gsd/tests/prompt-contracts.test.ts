@@ -469,7 +469,9 @@ test("complete-slice prompt keeps source fixes in execution units", () => {
 
 test("complete-slice prompt terminates after reopen or replan handoff", () => {
   const prompt = readPrompt("complete-slice");
-  assert.match(prompt, /After any failure-handoff tool call, the unit is done/i);
+  assert.match(prompt, /exactly one terminal workflow tool/i);
+  assert.match(prompt, /A text-only stop, even one mentioning a tool, is invalid/i);
+  assert.match(prompt, /After any successful failure-handoff tool call, the unit is done/i);
   assert.match(prompt, /`gsd_task_reopen` or `gsd_replan_slice` call is the handoff signal/i);
   assert.match(prompt, /Never call `gsd_replan_slice` after calling `gsd_task_reopen`/i);
   assert.match(prompt, /reopened tasks are pending/i);
@@ -477,6 +479,7 @@ test("complete-slice prompt terminates after reopen or replan handoff", () => {
   assert.match(prompt, /Do not read source code, run `gsd_exec`, invoke subagents/i);
   assert.match(prompt, /Terminal reopen sequence/i);
   assert.match(prompt, /Terminal replan sequence/i);
+  assert.match(prompt, /Never finish this unit with plain text only/i);
 });
 
 test("complete-slice prompt binds all file operations to workingDirectory", () => {

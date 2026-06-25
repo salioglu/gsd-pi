@@ -236,7 +236,6 @@ function completeSliceReopenReplanHandoffDetected(
   return (
     agentEndMessagesIncludeSuccessfulToolResult(agentEndMessages, "gsd_task_reopen") ||
     agentEndMessagesIncludeToolCall(agentEndMessages, "gsd_task_reopen") ||
-    agentEndMessagesMentionTool(agentEndMessages, "gsd_task_reopen") ||
     unitActivityMentionsTool(s.basePath, unitType, unitId, "gsd_task_reopen") ||
     unitActivityMentionsTool(s.canonicalProjectRoot, unitType, unitId, "gsd_task_reopen")
   );
@@ -250,7 +249,6 @@ function completeSliceReplanSignalDetected(
   return (
     agentEndMessagesIncludeSuccessfulToolResult(agentEndMessages, "gsd_replan_slice") ||
     agentEndMessagesIncludeToolCall(agentEndMessages, "gsd_replan_slice") ||
-    agentEndMessagesMentionTool(agentEndMessages, "gsd_replan_slice") ||
     unitActivityMentionsTool(s.basePath, s.currentUnit.type, s.currentUnit.id, "gsd_replan_slice") ||
     unitActivityMentionsTool(s.canonicalProjectRoot, s.currentUnit.type, s.currentUnit.id, "gsd_replan_slice")
   );
