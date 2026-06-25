@@ -82,6 +82,42 @@ test("metadata-only milestones/<MID>/ does not flip layout to legacy (#852)", ()
   }
 });
 
+test("milestones/<MID>/ with only META.json + subdir does not flip layout to legacy", () => {
+  // Regression for the Cursor Bugbot finding: a flat-phase project whose
+  // milestones/<MID>/ contains only *-META.json plus an empty subdirectory
+  // (e.g. slices/) must NOT be treated as a content-bearing legacy milestone.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-meta-subdir-")));
+  try {
+    const gsd = join(root, ".gsd");
+    // Flat-phase layout: phases/01-m001/ with real content.
+    const phaseDir = join(gsd, "phases", "01-m001");
+    mkdirSync(phaseDir, { recursive: true });
+    writeFileSync(join(phaseDir, "01-CONTEXT.md"), "# context\n");
+
+    // Pollution: milestones/M001/ has a META file + a bare subdirectory.
+    const metaDir = join(gsd, "milestones", "M001");
+    mkdirSync(join(metaDir, "slices"), { recursive: true });
+    writeFileSync(join(metaDir, "M001-META.json"), '{"branch":"milestone/M001"}');
+
+    _clearGsdRootCache();
+    clearPathCache();
+
+    assert.equal(
+      isLegacyMilestonesLayout(root),
+      false,
+      "META-only + subdir milestones dir must not flip layout",
+    );
+    assert.ok(
+      milestonesDir(root).endsWith(join(".gsd", "phases")),
+      "milestonesDir resolves to phases/ not milestones/",
+    );
+  } finally {
+    _clearGsdRootCache();
+    clearPathCache();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("content-bearing milestones/<MID>/ still resolves to legacy (#852 regression guard)", () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-legacy-real-")));
   try {
