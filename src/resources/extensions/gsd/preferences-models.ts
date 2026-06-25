@@ -509,9 +509,10 @@ export function resolveProfileDefaults(
   // against the available-model list when the registry is provided. If callers
   // omit the registry entirely, use canonical fallbacks explicitly.
   const tierMap = PROFILE_TIER_MAP[profile];
-  const resolveTierModel = (tier: ComplexityTier): string => Array.isArray(availableModelIds)
-    ? resolveModelForTier(tier, availableModelIds, routingConfig, undefined, preferredModelId)
-    : canonicalModelForTier(tier);
+  const resolveTierModel = (tier: ComplexityTier): string =>
+    Array.isArray(availableModelIds) || preferredModelId
+      ? resolveModelForTier(tier, availableModelIds ?? [], routingConfig, undefined, preferredModelId)
+      : canonicalModelForTier(tier);
   const models: GSDModelConfigV2 | undefined = profile === "burn-max"
     ? undefined
     : {

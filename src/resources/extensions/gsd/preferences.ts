@@ -222,13 +222,16 @@ export function loadEffectiveGSDPreferencesWithRegistry(
   anchorProvider?: string,
   preferredModelId?: string,
 ): LoadedGSDPreferences | null {
+  const preferenceOpts = preferredModelId !== undefined
+    ? { preferredModelId }
+    : undefined;
   if (!registry) {
-    return loadEffectiveGSDPreferences(basePath);
+    return loadEffectiveGSDPreferences(basePath, preferenceOpts);
   }
   const disabledProviders = resolveDisabledModelProvidersFromPreferences();
   const availableModelIds = modelIdsForProfileResolution(registry, anchorProvider, disabledProviders);
   if (!availableModelIds) {
-    return loadEffectiveGSDPreferences(basePath);
+    return loadEffectiveGSDPreferences(basePath, preferenceOpts);
   }
   return loadEffectiveGSDPreferences(basePath, { availableModelIds, preferredModelId });
 }

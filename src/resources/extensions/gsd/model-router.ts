@@ -677,8 +677,11 @@ export function resolveModelForTier(
     ? routingConfigOrCrossProvider
     : crossProvider ?? routingConfig.cross_provider !== false;
 
-  // No available models known — return canonical fallback
+  // No available models known — prefer the session model when provided, else canonical
   if (availableModelIds.length === 0) {
+    if (preferredModelId) {
+      return normalizeResolvedTierModelId(preferredModelId, tier, routingConfig);
+    }
     incrementLegacyTelemetry("legacy.providerDefaultUsed");
     return canonicalModelForTier(tier);
   }
