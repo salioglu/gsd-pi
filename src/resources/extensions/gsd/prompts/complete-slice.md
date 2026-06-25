@@ -28,7 +28,7 @@ Use `subagent` only when useful: reviewer, security, or tester. Apply findings b
 
 1. Use the inlined Slice Summary and UAT templates.
 2. {{skillActivation}}
-3. Run slice-level verification only through `gsd_exec` / Context Mode evidence; refresh state if needed. Do not use direct `bash` for verification commands. Tool availability is in **Tool Surface**.
+3. Run slice-level verification only through `gsd_exec` / Context Mode evidence; refresh current state if needed. Do not use direct `bash` for verification commands. Tool availability is in **Tool Surface**.
 4. Complete only after every required check passes. Exactly one terminal workflow tool is required: pass -> `gsd_slice_complete`; task follow-up -> `gsd_task_reopen`; planning follow-up -> `gsd_replan_slice`. A text-only stop, even one mentioning a tool, is invalid. If checks fail or source changes are needed, do **not** edit source files in this unit and do **not** call `gsd_slice_complete`.
 5. If verification fails:
    - Task-specific regression: if pre-task verification evidence shows it was absent before that task ran, call `gsd_task_reopen` with task and reason.
@@ -47,7 +47,7 @@ Use `subagent` only when useful: reviewer, security, or tester. Apply findings b
 10. Prepare `gsd_slice_complete` camelCase fields: `milestoneId`, `sliceId`, `sliceTitle`, `oneLiner`, `narrative`, `verification`, `uatContent`.
 11. Draft concrete UAT: preconditions, steps, expected outcomes, edge cases, and UAT Type. Declare type under `## UAT Type` exactly like `- UAT mode: browser-executable`.
     **Web apps:** when inlined Web App UAT guidance is present, declare `browser-executable` or `runtime-executable` (not `artifact-driven`) for localhost/browser/screenshot steps; include dev-server preconditions and name Playwright specs when they exist.
-12. Review inlined task-summary excerpts for DECISIONS.md/KNOWLEDGE.md-worthy decisions/gotchas. Read full `*-SUMMARY.md` only if needed. Capture with MCP-scoped `gsd_capture_thought`, not bare `capture_thought`; do not append knowledge files.
+12. Review the inlined task-summary excerpts for DECISIONS.md/KNOWLEDGE.md-worthy decisions/gotchas. Read full `*-SUMMARY.md` only if needed. Capture with MCP-scoped `gsd_capture_thought`, not bare `capture_thought`; do not append knowledge files.
 13. When verification passes, call `gsd_slice_complete`. The DB-backed tool is the canonical write path. Do **not** manually write `{{sliceSummaryPath}}`. Do **not** manually write `{{sliceUatPath}}`. Do not edit roadmap checkboxes.
 14. Do not run git commands.
 15. If project state needs refresh, call `gsd_summary_save` with `artifact_type: "PROJECT"` and full updated project markdown as `content`; omit `milestone_id`. Do not edit `.gsd/PROJECT.md` directly.
