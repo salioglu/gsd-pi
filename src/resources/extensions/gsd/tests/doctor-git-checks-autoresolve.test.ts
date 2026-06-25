@@ -108,3 +108,42 @@ test("doctor clears conflicts entirely when all unmerged paths are safe", async 
     "merge-state markers should be cleared in the same pass",
   );
 });
+
+test("doctor --dry-run does not mutate git state when safe conflicts are present", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-autoresolve-dryrun-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  runGit(["init", "-b", "main"], base);
+  runGit(["config", "user.name", "Test User"], base);
+  runGit(["config", "user.email", "test@example.com"], base);
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  writeFileSync(join(base, ".gsd", "STATE.md"), "base\n", "utf-8");
+  runGit(["add", "."], base);
+  runGit(["commit", "-m", "chore: init"], base);
+
+  runGit(["checkout", "-b", "feature"], base);
+  writeFileSync(join(base, ".gsd", "STATE.md"), "feature\n", "utf-8");
+  runGit(["add", "."], base);
+  runGit(["commit", "-m", "feat: edit"], base);
+
+  runGit(["checkout", "main"], base);
+  writeFileSync(join(base, ".gsd", "STATE.md"), "main\n", "utf-8");
+  runGit(["add", "."], base);
+  runGit(["commit", "-m", "feat: edit"], base);
+
+  tryGit(["merge", "feature"], base);
+
+  // dry-run must not mutate git state even when all conflicts are safe
+  const report = await runGSDDoctor(base, { dryRun: true, isolationMode: "none" });
+
+  // MERGE_HEAD must still exist — dry-run is read-only
+  assert.ok(
+    existsSync(join(base, ".git", "MERGE_HEAD")),
+    "dry-run must not clear merge-state markers",
+  );
+  // The conflict should still be reported (unresolved paths are reported as-is)
+  assert.ok(
+    report.issues.some((issue) => issue.code === "unresolved_git_conflicts"),
+    "dry-run should still report the conflict without resolving it",
+  );
+});
