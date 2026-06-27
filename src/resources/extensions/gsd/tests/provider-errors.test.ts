@@ -7,7 +7,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyError, isTransient, isTransientNetworkError } from "../error-classifier.ts";
@@ -26,6 +26,10 @@ import { _buildCancelledUnitStopReason } from "../auto/phase-helpers.ts";
 import { _classifyZeroToolProviderMessageForTest } from "../auto/unit-phase.ts";
 import { autoSession } from "../auto-runtime-state.ts";
 import { getNextFallbackModel } from "../preferences.ts";
+import { clearGuidedUnitContext, getGuidedUnitContext, setGuidedUnitContext } from "../guided-unit-context.ts";
+import { initNotificationStore, readNotifications, _resetNotificationStore } from "../notification-store.ts";
+import { installNotifyInterceptor } from "../bootstrap/notify-interceptor.ts";
+import { extractTrace } from "../session-forensics.ts";
 // Zero-import module — imported by path rather than through the package
 // barrel to avoid pulling the full AgentSession / @gsd/pi-ai dep graph into
 // this unit test (see #4837).
@@ -646,6 +650,139 @@ test("does not suppress deleted-worktree provider errors outside terminal comple
 
   assert.equal(suppressTerminalDeletedWorktreeMessageEnd(event), false);
   assert.equal(event.message.stopReason, "error");
+});
+
+test("manual guided discuss provider error records warning and activity marker (#944)", async () => {
+  const originalCwd = process.cwd();
+  const base = mkdtempSync(join(tmpdir(), "gsd-manual-discuss-error-"));
+  const notifications: Array<{ message: string; level?: string }> = [];
+  const sendMessageCalls: unknown[][] = [];
+
+  try {
+    autoSession.reset();
+    mkdirSync(join(base, ".git"), { recursive: true });
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+    process.chdir(base);
+    initNotificationStore(base);
+
+    // Use base as the guided context path so gsdRoot(base) hits the fast path
+    // (.gsd exists at base directly) and doesn't need git to walk up from a
+    // subdirectory — the empty .git folder is not a real repo and git resolution
+    // from a child directory would return the wrong .gsd path.
+    setGuidedUnitContext(base, "discuss-slice");
+
+    const ctx = {
+      model: { provider: "openai-codex", id: "gpt-5.1-codex" },
+      modelRegistry: { getAvailable: () => [] },
+      ui: {
+        notify(message: string, level?: "info" | "warning" | "error" | "success") {
+          notifications.push({ message, level });
+        },
+      },
+    } as any;
+    installNotifyInterceptor(ctx);
+
+    const pi = {
+      sendMessage: (...args: unknown[]) => {
+        sendMessageCalls.push(args);
+      },
+    } as any;
+
+    await handleAgentEnd(pi, {
+      messages: [{
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "",
+        content: [{ type: "text", text: "stream idle timeout while saving summary" }],
+      }],
+    } as any, ctx);
+
+    assert.deepEqual(sendMessageCalls, [], "manual discuss terminal errors must not auto-retry or redispatch");
+    assert.equal(getGuidedUnitContext(base), null, "guided unit context must still be cleared after the turn");
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0]?.level, "warning");
+    assert.match(notifications[0]?.message ?? "", /Manual \/gsd discuss discuss-slice ended with a provider error/);
+    assert.match(notifications[0]?.message ?? "", /openai-codex\/gpt-5\.1-codex/);
+    assert.match(notifications[0]?.message ?? "", /stream idle timeout/);
+
+    const persisted = readNotifications(base);
+    assert.equal(persisted.length, 1, "wrapped notify should persist exactly one warning notification");
+    assert.equal(persisted[0]?.severity, "warning");
+    assert.equal(persisted[0]?.source, "notify");
+
+    const activityDir = join(base, ".gsd", "activity");
+    const files = readdirSync(activityDir).filter((file) => file.endsWith(".jsonl"));
+    assert.equal(files.length, 1, "manual guided provider error should write one activity marker");
+    const entries = readFileSync(join(activityDir, files[0]!), "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    const trace = extractTrace(entries);
+    assert.equal(trace.errors.length, 1);
+    assert.match(trace.errors[0] ?? "", /discuss-slice/);
+    assert.match(trace.errors[0] ?? "", /openai-codex\/gpt-5\.1-codex/);
+    assert.match(trace.errors[0] ?? "", /stream idle timeout/);
+  } finally {
+    clearGuidedUnitContext();
+    _resetNotificationStore();
+    autoSession.reset();
+    process.chdir(originalCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("manual guided discuss user-cancel is not treated as a provider error (#944)", async () => {
+  const originalCwd = process.cwd();
+  const base = mkdtempSync(join(tmpdir(), "gsd-manual-discuss-cancel-"));
+  const guidedBase = join(base, "slice-work");
+  const notifications: Array<{ message: string; level?: string }> = [];
+
+  try {
+    autoSession.reset();
+    mkdirSync(join(base, ".git"), { recursive: true });
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+    mkdirSync(guidedBase, { recursive: true });
+    process.chdir(base);
+    initNotificationStore(base);
+
+    setGuidedUnitContext(guidedBase, "discuss-slice");
+
+    const ctx = {
+      model: { provider: "anthropic", id: "claude-opus-4" },
+      modelRegistry: { getAvailable: () => [] },
+      ui: {
+        notify(message: string, level?: "info" | "warning" | "error" | "success") {
+          notifications.push({ message, level });
+        },
+      },
+    } as any;
+    installNotifyInterceptor(ctx);
+
+    const pi = { sendMessage: () => {} } as any;
+
+    await handleAgentEnd(pi, {
+      messages: [{
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "Request aborted by user",
+        content: [],
+      }],
+    } as any, ctx);
+
+    assert.deepEqual(notifications, [], "user-cancel stopReason=error must not emit a provider-error warning");
+    assert.equal(getGuidedUnitContext(guidedBase), null, "context must be cleared even for user-cancel");
+
+    // No activity directory should have been created
+    let activityExists = false;
+    try { readdirSync(join(base, ".gsd", "activity")); activityExists = true; } catch { /* expected */ }
+    assert.equal(activityExists, false, "user-cancel must not write an activity error marker");
+  } finally {
+    clearGuidedUnitContext();
+    _resetNotificationStore();
+    autoSession.reset();
+    process.chdir(originalCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 // ── resumeAutoAfterProviderDelay ────────────────────────────────────────────
