@@ -195,15 +195,15 @@ function getContextSessionPart(ctx: ExtensionContext): string {
   try {
     const sessionId = sessionManager?.getSessionId?.();
     if (typeof sessionId === "string" && sessionId.length > 0) return `id:${sessionId}`;
-  } catch {
-    // Fall through to session file / process fallback.
+  } catch (e) {
+    logWarning("bootstrap", `session-id fetch failed: ${(e as Error).message}`);
   }
 
   try {
     const sessionFile = sessionManager?.getSessionFile?.();
     if (typeof sessionFile === "string" && sessionFile.length > 0) return `file:${sessionFile}`;
-  } catch {
-    // Fall through to process fallback.
+  } catch (e) {
+    logWarning("bootstrap", `session-file fetch failed: ${(e as Error).message}`);
   }
 
   return "process";
