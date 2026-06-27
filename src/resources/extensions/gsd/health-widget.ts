@@ -7,7 +7,6 @@ import type { GSDState } from "./types.js";
 import { runProviderChecks, summariseProviderIssues } from "./doctor-providers.js";
 import { runEnvironmentChecks, runEnvironmentChecksAsync } from "./doctor-environment.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
-import { nativeIsRepo, nativeLastCommitEpoch, nativeGetCurrentBranch, nativeCommitSubject } from "./native-git-bridge.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 import { loadLedgerFromDisk, getProjectTotals } from "./metrics.js";
 import { describeNextUnit, estimateTimeRemaining, updateSliceProgressCache } from "./auto-dashboard.js";
@@ -25,22 +24,6 @@ export const HEALTH_WIDGET_ACTIVE_HINTS =
 const LAST_COMMIT_LOOKUP_TIMEOUT_MS = 3_000;
 
 // ── Data loader ────────────────────────────────────────────────────────────────
-
-// Last-commit lookup is subprocess-backed (native-git-bridge → git spawns),
-// so it is treated like the other expensive checks: skipped on first paint,
-// and never used by the async widget refresh path.
-function loadLastCommitInfo(basePath: string): { epoch: number | null; message: string | null } {
-  try {
-    if (nativeIsRepo(basePath)) {
-      const branch = nativeGetCurrentBranch(basePath);
-      const epoch = nativeLastCommitEpoch(basePath, branch || "HEAD");
-      if (epoch > 0) {
-        return { epoch, message: nativeCommitSubject(basePath, branch || "HEAD") || null };
-      }
-    }
-  } catch { /* non-fatal */ }
-  return { epoch: null, message: null };
-}
 
 function runHealthWidgetGit(basePath: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
@@ -125,13 +108,6 @@ function loadHealthWidgetData(
         else if (r.status === "warning") environmentWarningCount++;
       }
     } catch { /* non-fatal */ }
-  }
-
-  // ── Last commit info ── (git spawns — gated like the other expensive checks)
-  if (includeChecks) {
-    const commit = loadLastCommitInfo(basePath);
-    lastCommitEpoch = commit.epoch;
-    lastCommitMessage = commit.message;
   }
 
   return {
