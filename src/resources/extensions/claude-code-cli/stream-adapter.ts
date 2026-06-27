@@ -1756,6 +1756,16 @@ function workflowMcpServerNameFromAllowedTools(allowedTools: unknown): string | 
 	return undefined;
 }
 
+function workflowQuestionToolAvailableFromAllowedTools(
+	allowedTools: unknown,
+	workflowMcpServerName: string | undefined,
+	gsdPhase: string | undefined,
+): boolean | undefined {
+	if (!workflowMcpServerName || !gsdPhase) return undefined;
+	return Array.isArray(allowedTools)
+		&& allowedTools.includes(`mcp__${workflowMcpServerName}__ask_user_questions`);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -2260,10 +2270,11 @@ async function pumpSdkMessages(
 		const prompt = buildPromptFromContext(context, {
 			workflowMcpServerName,
 			browserMcpServerName: browserMcpServerNameFromAllowedTools(sdkOpts.allowedTools),
-			questionToolAvailable: workflowMcpServerName && gsdPhase
-				? Array.isArray(sdkOpts.allowedTools)
-					&& sdkOpts.allowedTools.includes(`mcp__${workflowMcpServerName}__ask_user_questions`)
-				: undefined,
+			questionToolAvailable: workflowQuestionToolAvailableFromAllowedTools(
+				sdkOpts.allowedTools,
+				workflowMcpServerName,
+				gsdPhase,
+			),
 		});
 		const queryPrompt = buildSdkQueryPrompt(context, prompt);
 
