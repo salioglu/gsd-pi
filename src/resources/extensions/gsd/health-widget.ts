@@ -4,7 +4,7 @@
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { execFile } from "node:child_process";
 import type { GSDState } from "./types.js";
-import { runProviderChecks, summariseProviderIssues } from "./doctor-providers.js";
+import { runProviderChecks, runProviderChecksAsync, summariseProviderIssues } from "./doctor-providers.js";
 import { runEnvironmentChecks, runEnvironmentChecksAsync } from "./doctor-environment.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
@@ -133,7 +133,7 @@ async function loadHealthWidgetDataAsync(basePath: string): Promise<HealthWidget
   let environmentWarningCount = 0;
 
   try {
-    providerIssue = summariseProviderIssues(runProviderChecks());
+    providerIssue = summariseProviderIssues(await runProviderChecksAsync());
   } catch { /* non-fatal */ }
 
   try {
