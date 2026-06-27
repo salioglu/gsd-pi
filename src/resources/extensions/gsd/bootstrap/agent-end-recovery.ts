@@ -118,9 +118,14 @@ export function isUserInitiatedAbortMessage(message: string | undefined | null):
 export function shouldDeferTransientErrorToCoreRetry(
   cls: ErrorClass,
   rawErrorMsg: string,
+  deferCheckMsg: string = rawErrorMsg,
 ): boolean {
   if (!isTransient(cls) || cls.kind === "rate-limit") return false;
-  return !/retry failed after \d+ attempts:/i.test(rawErrorMsg);
+  // Empty rawErrorMsg means the SDK terminated the session without providing an
+  // error string — core is done, not mid-retry.  GSD must schedule its own
+  // retry rather than silently deferring to a core that has already exited.
+  if (!rawErrorMsg) return false;
+  return !/retry failed after \d+ attempts:/i.test(deferCheckMsg);
 }
 
 type ProviderModelFallbackParams = {
@@ -663,9 +668,9 @@ export async function handleAgentEnd(
       });
       return;
     }
-    // #3588: When errorMessage is uninformative, extract the real error from
-    // the assistant message text content for display purposes only.
-    // Classification still uses rawErrorMsg to avoid false positives from prose.
+    // #3588/#956: When errorMessage is uninformative, extract the real error
+    // from assistant text. Prefer rawErrorMsg for classification to avoid
+    // prose false-positives, but use display text when rawErrorMsg is empty.
     const displayMsg = resolveAgentEndErrorDisplay(
       rawErrorMsg,
       "content" in lastMsg ? lastMsg.content : undefined,
@@ -684,8 +689,8 @@ export async function handleAgentEnd(
     const errorDetail = displayMsg ? `: ${displayMsg}` : "";
     const explicitRetryAfterMs = ("retryAfterMs" in lastMsg && typeof lastMsg.retryAfterMs === "number") ? lastMsg.retryAfterMs : undefined;
 
-    // ── 1. Classify using rawErrorMsg to avoid prose false-positives ────
-    const cls = classifyError(rawErrorMsg, explicitRetryAfterMs);
+    // ── 1. Classify, preserving non-empty errorMessage precedence ──────
+    const cls = classifyError(rawErrorMsg || displayMsg, explicitRetryAfterMs);
 
     // ── 1a. Unsupported-model: provider rejected this model for the current
     //        account/plan at request time (#4513).  Persist a block so the
@@ -763,7 +768,7 @@ export async function handleAgentEnd(
     // Core retries transient failures in-session after this handler.
     // Keep that behavior for non-rate-limit classes to avoid pause/retry races,
     // but let rate-limit continue into model fallback logic below (#4373).
-    if (shouldDeferTransientErrorToCoreRetry(cls, rawErrorMsg)) {
+    if (shouldDeferTransientErrorToCoreRetry(cls, rawErrorMsg, rawErrorMsg || displayMsg)) {
       return;
     }
 
