@@ -6,6 +6,9 @@
 // had zero callers in production code — wiring it through
 // reconcileBeforeDispatch closes that gap.
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import {
   detectStaleRenders,
   renderPlanCheckboxes,
@@ -13,8 +16,16 @@ import {
   renderSliceSummary,
   renderTaskSummary,
 } from "../../markdown-renderer.js";
-import { getMilestone, getMilestoneSlices, getSlice, getSliceTasks, setSliceSummaryMd } from "../../gsd-db.js";
-import { resolveSliceFile } from "../../paths.js";
+import {
+  getMilestone,
+  getMilestoneSlices,
+  getSlice,
+  getSliceTasks,
+  isDbAvailable,
+  openDatabase,
+  setSliceSummaryMd,
+} from "../../gsd-db.js";
+import { gsdRoot, resolveSliceFile } from "../../paths.js";
 import type { GSDState } from "../../types.js";
 import { logWarning } from "../../workflow-logger.js";
 import type { DriftContext, DriftHandler, DriftRecord } from "../types.js";
@@ -107,10 +118,26 @@ function resolveRoadmapMilestoneIdFromPath(normPath: string): string {
   return fileMatch?.[1] ?? milestoneMatch[1];
 }
 
+function reopenDbForStaleRenderRepair(basePath: string): boolean {
+  if (isDbAvailable()) return true;
+  const dbPath = join(gsdRoot(basePath), "gsd.db");
+  if (!existsSync(dbPath)) return false;
+  try {
+    return openDatabase(dbPath);
+  } catch (err) {
+    logWarning("reconcile", `stale-render repair could not reopen DB: ${(err as Error).message}`);
+    return false;
+  }
+}
+
 async function repairStaleRenderFromBasePath(
   record: StaleRenderDrift,
   basePath: string,
 ): Promise<void> {
+  if (!reopenDbForStaleRenderRepair(basePath)) {
+    throw new Error(`stale-render drift: database unavailable for repair (${basePath})`);
+  }
+
   const normPath = record.renderPath.replace(/\\/g, "/");
   const reason = record.reason;
 
@@ -136,12 +163,31 @@ async function repairStaleRenderFromBasePath(
     const sliceId = pathMatch[2] && pathMatch[3] && /^\d+$/.test(pathMatch[2])
       ? `S${String(parseInt(pathMatch[3]!, 10)).padStart(2, "0")}`
       : pathMatch[2]!;
-    const wrote = await renderPlanCheckboxes(
-      basePath,
-      milestoneId,
-      sliceId,
-      record.renderPath,
-    );
+    let wrote = false;
+    try {
+      wrote = await renderPlanCheckboxes(
+        basePath,
+        milestoneId,
+        sliceId,
+        record.renderPath,
+      );
+    } catch (err) {
+      if (!reopenDbForStaleRenderRepair(basePath)) throw err;
+      wrote = await renderPlanCheckboxes(
+        basePath,
+        milestoneId,
+        sliceId,
+        record.renderPath,
+      );
+    }
+    if (!wrote && !isDbAvailable() && reopenDbForStaleRenderRepair(basePath)) {
+      wrote = await renderPlanCheckboxes(
+        basePath,
+        milestoneId,
+        sliceId,
+        record.renderPath,
+      );
+    }
     if (!wrote) {
       throw new Error(
         `stale-render drift: plan re-render wrote nothing for ${milestoneId}/${pathMatch[2]} ` +

@@ -6,11 +6,12 @@
  *
  * Validates inputs, writes task row and rendered SUMMARY.md to DB in a
  * transaction, then renders projections to disk and invalidates caches.
- * Projection write failures are reported as stale projections and do not roll
- * back committed DB state.
+ * If the critical task summary / plan projection write fails, the DB
+ * completion is compensated back to pending so DB state does not drift ahead
+ * of PLAN.md.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import type { CompleteTaskParams, EscalationArtifact } from "../types.js";
@@ -26,8 +27,11 @@ import {
   getTask,
   updateTaskStatus,
   deleteVerificationEvidence,
+  getDbPath,
   saveGateResult,
   getPendingGatesForTurn,
+  isDbAvailable,
+  openDatabase,
 } from "../gsd-db.js";
 import { getGatesForTurn } from "../gate-registry.js";
 import { gsdProjectionRoot, clearPathCache, resolveMilestonePath, resolveSlicePath } from "../paths.js";
@@ -294,6 +298,7 @@ export async function handleCompleteTask(
   let guardError: string | null = null;
   let summaryMd = "";
   let repairTaskSummaryRow: TaskRow | null = null;
+  const rollbackDbPath = getDbPath();
 
   // ── ADR-011 Phase 2: validate escalation payload BEFORE any side effects ─
   // Building the artifact runs the full shape validation (2-4 options, unique
@@ -450,8 +455,6 @@ export async function handleCompleteTask(
     return { error: guardError };
   }
 
-  let projectionStale = false;
-
   // Resolve and write summary to disk
   const summaryPath = taskSummaryPath(
     artifactBasePath,
@@ -465,12 +468,37 @@ export async function handleCompleteTask(
 
     // Toggle or regenerate the plan projection from DB. Missing projection
     // files are rebuilt by the renderer instead of being skipped.
-    await renderPlanCheckboxes(artifactBasePath, params.milestoneId, params.sliceId);
+    const wrotePlan = await renderPlanCheckboxes(artifactBasePath, params.milestoneId, params.sliceId);
+    if (!wrotePlan) {
+      throw new Error(`plan projection write returned false for ${params.milestoneId}/${params.sliceId}`);
+    }
   } catch (renderErr) {
-    projectionStale = true;
-    logWarning("projection", `complete_task projection write failed for ${params.milestoneId}/${params.sliceId}/${params.taskId}; DB completion remains committed`, {
+    const msg = `complete_task projection write failed for ${params.milestoneId}/${params.sliceId}/${params.taskId}; rolled completion back to pending`;
+    logWarning("projection", msg, {
       error: (renderErr as Error).message,
     });
+    try {
+      if (!isDbAvailable() && rollbackDbPath && rollbackDbPath !== ":memory:") {
+        openDatabase(rollbackDbPath);
+      }
+      deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
+      updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, "pending");
+      invalidateStateCache();
+    } catch (rollbackErr) {
+      logWarning(
+        "projection",
+        `complete_task rollback failed after projection write failure for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(rollbackErr as Error).message}`,
+      );
+    }
+    try {
+      if (existsSync(summaryPath)) unlinkSync(summaryPath);
+    } catch (summaryErr) {
+      logWarning(
+        "projection",
+        `complete_task could not remove SUMMARY.md after projection write failure for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(summaryErr as Error).message}`,
+      );
+    }
+    return { error: msg };
   }
 
   // ── Close gates owned by execute-task (Q5/Q6/Q7) for this task ────────
@@ -624,6 +652,5 @@ export async function handleCompleteTask(
     milestoneId: params.milestoneId,
     summaryPath,
     ...(escalationMetadata ? { escalation: escalationMetadata } : {}),
-    ...(projectionStale ? { stale: true } : {}),
   };
 }

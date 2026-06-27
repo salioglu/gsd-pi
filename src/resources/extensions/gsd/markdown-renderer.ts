@@ -25,6 +25,7 @@ import {
   insertArtifact,
   deleteArtifactByPath,
   getGateResults,
+  isDbAvailable,
 } from "./gsd-db.js";
 import type { MilestoneRow, ArtifactRow } from "./db-milestone-artifact-rows.js";
 import type { SliceRow, TaskRow } from "./db-task-slice-rows.js";
@@ -737,7 +738,8 @@ function isAutoRecoveryPlaceholderPlan(content: string): boolean {
  * projection (the 4S/0T-vs-5S/13T drift class). The artifacts table is an
  * output sink, never a render input.
  *
- * @returns true if the plan was written, false on skip/error
+ * @returns true if the plan was written, false when the DB slice has no tasks
+ * @throws when the DB connection is unavailable or the render write fails
  */
 export async function renderPlanCheckboxes(
   basePath: string,
@@ -747,6 +749,9 @@ export async function renderPlanCheckboxes(
 ): Promise<boolean> {
   const tasks = getSliceTasks(milestoneId, sliceId);
   if (tasks.length === 0) {
+    if (!isDbAvailable()) {
+      throw new Error(`database unavailable while rendering plan checkboxes for ${milestoneId}/${sliceId}`);
+    }
     process.stderr.write(
       `markdown-renderer: no tasks found for ${milestoneId}/${sliceId}\n`,
     );
