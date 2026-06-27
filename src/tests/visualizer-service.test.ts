@@ -1,0 +1,114 @@
+import assert from "node:assert/strict"
+import { createRequire, syncBuiltinESMExports } from "node:module"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
+import test from "node:test"
+
+import type { SerializedVisualizerData } from "../web/visualizer-service.ts"
+
+const require = createRequire(import.meta.url)
+const childProcess = require("node:child_process") as typeof import("node:child_process")
+const fs = require("node:fs") as typeof import("node:fs")
+
+function createVisualizerPayload(phase: string): SerializedVisualizerData {
+  return {
+    milestones: [],
+    phase,
+    totals: null,
+    byPhase: [],
+    bySlice: [],
+    byModel: [],
+    byTier: [],
+    tierSavingsLine: "",
+    units: [],
+    criticalPath: {
+      milestonePath: [],
+      slicePath: [],
+      milestoneSlack: {},
+      sliceSlack: {},
+    },
+    remainingSliceCount: 0,
+    agentActivity: null,
+    changelog: null,
+    sliceVerifications: [],
+    knowledge: null,
+    memories: null,
+    captures: null,
+    health: null,
+    discussion: [],
+    stats: null,
+  }
+}
+
+test("collectVisualizerData shares in-flight work and reuses a recent project result", async (t) => {
+  const mutableChildProcess = childProcess as typeof childProcess & {
+    execFile: typeof childProcess.execFile
+  }
+  const mutableFs = fs as typeof fs & {
+    existsSync: typeof fs.existsSync
+  }
+  const originalExecFile = mutableChildProcess.execFile
+  const originalExistsSync = mutableFs.existsSync
+  const originalDateNow = Date.now
+  const originalPackageRoot = process.env.GSD_WEB_PACKAGE_ROOT
+
+  type ExecCallback = (error: Error | null, stdout: string, stderr: string) => void
+  const pendingExecs: ExecCallback[] = []
+  let execCount = 0
+  let now = 1_000
+
+  mutableChildProcess.execFile = ((...args: unknown[]) => {
+    execCount += 1
+    pendingExecs.push(args[3] as ExecCallback)
+    return {} as ReturnType<typeof childProcess.execFile>
+  }) as typeof childProcess.execFile
+  mutableFs.existsSync = (() => true) as typeof fs.existsSync
+  Date.now = () => now
+  process.env.GSD_WEB_PACKAGE_ROOT = join(tmpdir(), "gsd-pi-visualizer-cache-test")
+  syncBuiltinESMExports()
+
+  t.after(() => {
+    mutableChildProcess.execFile = originalExecFile
+    mutableFs.existsSync = originalExistsSync
+    Date.now = originalDateNow
+    if (originalPackageRoot === undefined) {
+      delete process.env.GSD_WEB_PACKAGE_ROOT
+    } else {
+      process.env.GSD_WEB_PACKAGE_ROOT = originalPackageRoot
+    }
+    syncBuiltinESMExports()
+  })
+
+  const visualizerService = await import("../web/visualizer-service.ts")
+  visualizerService.resetVisualizerDataCacheForTests()
+
+  const first = visualizerService.collectVisualizerData("/project-a")
+  const second = visualizerService.collectVisualizerData("/project-a")
+
+  assert.equal(execCount, 1, "concurrent requests for one project share the subprocess")
+  pendingExecs.shift()?.(null, JSON.stringify(createVisualizerPayload("first")), "")
+
+  assert.deepEqual(await Promise.all([first, second]), [
+    createVisualizerPayload("first"),
+    createVisualizerPayload("first"),
+  ])
+
+  now = 5_000
+  assert.deepEqual(
+    await visualizerService.collectVisualizerData("/project-a"),
+    createVisualizerPayload("first"),
+    "requests inside the TTL reuse the cached payload",
+  )
+  assert.equal(execCount, 1)
+
+  const otherProject = visualizerService.collectVisualizerData("/project-b")
+  assert.equal(execCount, 2, "cache entries are keyed by project cwd")
+  pendingExecs.shift()?.(null, JSON.stringify(createVisualizerPayload("second")), "")
+  assert.deepEqual(await otherProject, createVisualizerPayload("second"))
+
+  now = 11_001
+  const refreshed = visualizerService.collectVisualizerData("/project-a")
+  assert.equal(execCount, 3, "expired cache entries refresh with a new subprocess")
+  pendingExecs.shift()?.(null, JSON.stringify(createVisualizerPayload("refreshed")), "")
+  assert.deepEqual(await refreshed, createVisualizerPayload("refreshed"))
+})
