@@ -30,6 +30,9 @@ export type WorkspaceGitReadyResult =
       targets: string[];
     };
 
+const CLEAN_TARGET_CACHE_TTL_MS = 10_000;
+const cleanTargetProbeCache = new Map<string, number>();
+
 function normalizeTargetPath(path: string): string {
   try {
     return realpathSync(path);
@@ -110,6 +113,15 @@ function formatBlockReason(
 
 async function ensureTargetGitReady(target: string): Promise<WorkspaceGitReadyResult> {
   const fixesApplied: string[] = [];
+  const cacheKey = normalizeTargetPath(target);
+  const cachedCleanAt = cleanTargetProbeCache.get(cacheKey);
+  if (cachedCleanAt !== undefined) {
+    if (Date.now() - cachedCleanAt < CLEAN_TARGET_CACHE_TTL_MS) {
+      return { ok: true, fixesApplied };
+    }
+    cleanTargetProbeCache.delete(cacheKey);
+  }
+
   let probe = probeGitConflictState(target);
 
   for (let attempt = 0; attempt < 3 && probe.status === "dirty"; attempt++) {
@@ -129,6 +141,7 @@ async function ensureTargetGitReady(target: string): Promise<WorkspaceGitReadyRe
   }
 
   if (probe.status === "unknown") {
+    cleanTargetProbeCache.delete(cacheKey);
     return {
       ok: false,
       reason: formatBlockReason("unrecoverable", [], [target]),
@@ -141,6 +154,7 @@ async function ensureTargetGitReady(target: string): Promise<WorkspaceGitReadyRe
 
   const conflictedPaths = productConflictPaths(probe);
   if (conflictedPaths.length > 0 || probe.checkFailures.length > 0) {
+    cleanTargetProbeCache.delete(cacheKey);
     return {
       ok: false,
       reason: formatBlockReason("product-conflicts", conflictedPaths, [target]),
@@ -149,6 +163,12 @@ async function ensureTargetGitReady(target: string): Promise<WorkspaceGitReadyRe
       conflictedPaths,
       targets: [target],
     };
+  }
+
+  if (probe.status === "clean") {
+    cleanTargetProbeCache.set(cacheKey, Date.now());
+  } else {
+    cleanTargetProbeCache.delete(cacheKey);
   }
 
   return { ok: true, fixesApplied };
