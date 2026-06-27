@@ -357,6 +357,7 @@ export function runExecSandbox(
       abortListener = () => {
         if (settled || timedOut) return;
         aborted = true;
+        clearTimeout(timer);
         initiateKill();
       };
       if (opts.signal.aborted) {
