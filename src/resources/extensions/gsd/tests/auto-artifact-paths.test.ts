@@ -246,3 +246,116 @@ test("resolveProjectMilestonePath ignores META-only dir even when phases/ has no
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ── #852: flat-phase dir must get flat-phase filename, not legacy ─────────────
+//
+// The most insidious variant: resolveProjectedMilestonePath found the correct
+// flat-phase directory (phases/15-m015/), but the old code at line 37 built
+// the LEGACY filename (M015-CONTEXT.md) unconditionally — producing
+// existsSync-false for phases/15-m015/M015-CONTEXT.md. The file is named
+// 15-CONTEXT.md. This test guards the layout-aware filename for ALL branches.
+
+test("flat-phase worktree dir resolves to 15-CONTEXT.md not M015-CONTEXT.md (#852)", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-filename-layout-")));
+  try {
+    const gsd = join(root, ".gsd");
+    // Flat-phase layout: phases/15-m015/ with the correctly-named file.
+    const phaseDir = join(gsd, "phases", "15-m015");
+    mkdirSync(phaseDir, { recursive: true });
+    writeFileSync(join(phaseDir, "15-CONTEXT.md"), "# M015 context\n");
+
+    _clearGsdRootCache();
+    clearPathCache();
+
+    const resolved = resolveExpectedArtifactPath("discuss-milestone", "M015", root);
+
+    // MUST use the flat-phase filename, not the legacy one.
+    assert.equal(
+      resolved,
+      join(phaseDir, "15-CONTEXT.md"),
+      "flat-phase dir must use 15-CONTEXT.md (phase-number prefix)",
+    );
+    assert.notEqual(
+      resolved,
+      join(phaseDir, "M015-CONTEXT.md"),
+      "must NOT use M015-CONTEXT.md (legacy milestone-id prefix) for a flat-phase dir",
+    );
+  } finally {
+    _clearGsdRootCache();
+    clearPathCache();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("flat-phase project-root dir resolves to 15-ROADMAP.md not M015-ROADMAP.md (#852)", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-filename-roadmap-")));
+  try {
+    const gsd = join(root, ".gsd");
+    const phaseDir = join(gsd, "phases", "16-m016");
+    mkdirSync(phaseDir, { recursive: true });
+    writeFileSync(join(phaseDir, "16-ROADMAP.md"), "# M016 roadmap\n");
+
+    _clearGsdRootCache();
+    clearPathCache();
+
+    const resolved = resolveExpectedArtifactPath("plan-milestone", "M016", root);
+    assert.equal(
+      resolved,
+      join(phaseDir, "16-ROADMAP.md"),
+      "flat-phase dir must use 16-ROADMAP.md (phase-number prefix)",
+    );
+  } finally {
+    _clearGsdRootCache();
+    clearPathCache();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── Bugbot c5ee8eba: canonical worktree + project-root legacy dir ─────────────
+//
+// On a canonical worktree (<project>/.gsd-worktrees/M001/):
+//   - legacyMilestonesDir(base) uses gsdProjectionRoot → <project>/.gsd-worktrees/M001/.gsd/milestones
+//   - resolveProjectMilestonePath(base) uses gsdRoot → <project>/.gsd/milestones/M001/
+//
+// These are different paths. When there is no flat-phase dir in the worktree
+// but a legacy milestones/<MID>/ dir exists at the project root, the old code
+// compared the project-root dir against the worktree legacyBase — a mismatch
+// — so isLegacy was false and the flat-phase filename "01-ROADMAP.md" was
+// built instead of "M001-ROADMAP.md". The file-not-found loop follows.
+
+test("canonical worktree + project-root legacy dir produces legacy filename (#bugbot c5ee8eba)", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-canonical-wt-legacy-")));
+  try {
+    // Project-root legacy milestone dir with some content (not just META).
+    const projectLegacyDir = join(root, ".gsd", "milestones", "M001");
+    mkdirSync(projectLegacyDir, { recursive: true });
+    // Write CONTEXT but NOT ROADMAP — forces the dir-resolution cold path for ROADMAP.
+    writeFileSync(join(projectLegacyDir, "M001-CONTEXT.md"), "# M001 context\n");
+
+    // Canonical worktree: <project>/.gsd-worktrees/M001/.gsd/ (no phases dir).
+    const wtRoot = join(root, ".gsd-worktrees", "M001");
+    mkdirSync(join(wtRoot, ".gsd"), { recursive: true });
+
+    _clearGsdRootCache();
+    clearPathCache();
+
+    const resolved = resolveExpectedArtifactPath("plan-milestone", "M001", wtRoot);
+
+    // Must use the legacy milestone-id prefix (M001-ROADMAP.md), not the
+    // flat-phase phase-number prefix (01-ROADMAP.md).
+    assert.equal(
+      resolved,
+      join(projectLegacyDir, "M001-ROADMAP.md"),
+      "canonical worktree + project-root legacy dir must use M001-ROADMAP.md",
+    );
+    assert.notEqual(
+      resolved,
+      join(projectLegacyDir, "01-ROADMAP.md"),
+      "must NOT produce flat-phase filename 01-ROADMAP.md for a legacy milestones/ dir",
+    );
+  } finally {
+    _clearGsdRootCache();
+    clearPathCache();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
