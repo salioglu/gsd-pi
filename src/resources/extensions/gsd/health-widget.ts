@@ -16,14 +16,31 @@ import {
   buildHealthLines,
   detectHealthWidgetProjectState,
   type HealthWidgetData,
+  type HealthWidgetProjectState,
 } from "./health-widget-core.js";
 
 export const HEALTH_WIDGET_ACTIVE_HINTS =
   "  /gsd auto to run  ·  /gsd status to inspect  ·  /gsd report for snapshots  ·  /gsd notifications for history  ·  /gsd help";
 
 const LAST_COMMIT_LOOKUP_TIMEOUT_MS = 3_000;
+const REFRESH_INTERVAL_MS = 60_000;
+const PROJECT_STATE_CACHE_TTL_MS = REFRESH_INTERVAL_MS;
 
 // ── Data loader ────────────────────────────────────────────────────────────────
+
+const projectStateCache = new Map<string, { state: HealthWidgetProjectState; computedAt: number }>();
+
+export function getCachedProjectState(basePath: string): HealthWidgetProjectState {
+  const now = Date.now();
+  const cached = projectStateCache.get(basePath);
+  if (cached && now - cached.computedAt <= PROJECT_STATE_CACHE_TTL_MS) {
+    return cached.state;
+  }
+
+  const state = detectHealthWidgetProjectState(basePath);
+  projectStateCache.set(basePath, { state, computedAt: now });
+  return state;
+}
 
 function runHealthWidgetGit(basePath: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
@@ -82,7 +99,7 @@ function loadHealthWidgetData(
   let lastCommitEpoch: number | null = null;
   let lastCommitMessage: string | null = null;
 
-  const projectState = detectHealthWidgetProjectState(basePath);
+  const projectState = getCachedProjectState(basePath);
 
   try {
     const prefs = loadEffectiveGSDPreferences();
@@ -158,8 +175,6 @@ async function loadHealthWidgetDataAsync(basePath: string): Promise<HealthWidget
 }
 
 // ── Widget init ────────────────────────────────────────────────────────────────
-
-const REFRESH_INTERVAL_MS = 60_000;
 
 /**
  * Initialize the always-on gsd-health widget (belowEditor).

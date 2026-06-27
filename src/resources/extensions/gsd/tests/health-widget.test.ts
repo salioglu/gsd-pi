@@ -14,7 +14,7 @@ import {
   formatRelativeTime,
   type HealthWidgetData,
 } from "../health-widget-core.ts";
-import { HEALTH_WIDGET_ACTIVE_HINTS, initHealthWidget } from "../health-widget.ts";
+import { HEALTH_WIDGET_ACTIVE_HINTS, getCachedProjectState, initHealthWidget } from "../health-widget.ts";
 import { registerHooks } from "../bootstrap/register-hooks.ts";
 import { GIT_NO_PROMPT_ENV } from "../git-constants.ts";
 
@@ -123,6 +123,27 @@ test("detectHealthWidgetProjectState: milestone without metrics returns active",
 
   mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
   assert.equal(detectHealthWidgetProjectState(dir), "active");
+});
+
+test("getCachedProjectState: reuses project state until the refresh TTL expires", (t) => {
+  const dir = makeTempDir("cached-state");
+  t.after(() => { cleanup(dir); });
+
+  let now = 1_000_000;
+  const dateNow = t.mock.method(Date, "now", () => now);
+  t.after(() => { dateNow.mock.restore(); });
+
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  assert.equal(getCachedProjectState(dir), "initialized");
+
+  mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
+  assert.equal(getCachedProjectState(dir), "initialized");
+
+  now += 60_000;
+  assert.equal(getCachedProjectState(dir), "initialized");
+
+  now += 1;
+  assert.equal(getCachedProjectState(dir), "active");
 });
 
 test("buildHealthLines: none state shows single onboarding line pointing at /gsd", (t) => {
