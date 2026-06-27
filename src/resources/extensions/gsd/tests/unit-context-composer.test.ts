@@ -142,8 +142,9 @@ test("Context Mode composer: nested output is compact single sentence", () => {
   assert.ok(!out.startsWith("## Context Mode"));
   assert.match(out, /^Context Mode \(verification lane\): /);
   assert.strictEqual(out.split(/\n/).length, 1);
-  assert.match(out, /tester/);
-  assert.match(out, /`subagent`/);
+  // Nested guidance is embedded into tester subagent prompts — it must instruct the tester
+  // to run verification and call gsd_save_gate_result, NOT to dispatch further subagents.
+  assert.doesNotMatch(out, /`subagent`/, "tester prompts must not be told to dispatch subagents");
   assert.match(out, /`gsd_save_gate_result`/);
   assert.doesNotMatch(out, /`gsd_exec`/);
   assert.doesNotMatch(out, /`gsd_exec_search`/);
