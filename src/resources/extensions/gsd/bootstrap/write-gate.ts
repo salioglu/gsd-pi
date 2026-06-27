@@ -180,7 +180,7 @@ function ensureWriteGateSnapshotDirectory(basePath: string): void {
   mkdirSync(join(gsdPath, "runtime"), { recursive: true });
 }
 
-function currentWriteGateSnapshot(basePath: string = process.cwd()): WriteGateSnapshot {
+export function currentWriteGateSnapshot(basePath: string = process.cwd()): WriteGateSnapshot {
   const state = getWriteGateState(basePath);
   return {
     verifiedDepthMilestones: [...state.verifiedDepthMilestones].sort(),
