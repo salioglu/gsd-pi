@@ -42,6 +42,7 @@ import {
   type ReconciliationDeps,
 } from "../state-reconciliation.ts";
 import { classifyFailure } from "../recovery-classification.ts";
+import { staleRenderHandler } from "../state-reconciliation/drift/stale-render.ts";
 import type { GSDState } from "../types.ts";
 
 function makeState(overrides: Partial<GSDState> = {}): GSDState {
@@ -694,6 +695,41 @@ test("ADR-017 (#5702): stale-render drift detected and repaired end-to-end", asy
   // Flat-phase format: **T01**: Title (colon after bold, not inside)
   assert.match(repairedContent, /\[x\][^\n]*\*\*T01\*\*/, "T01 checkbox should be checked after repair");
   assert.match(repairedContent, /\[x\][^\n]*\*\*T02\*\*/, "T02 checkbox should be checked after repair");
+});
+
+test("#1003: stale-render plan repair reopens DB before rendering", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-stale-render-reopen-"));
+  const sliceDir = join(base, ".gsd", "phases", "01-test");
+  mkdirSync(sliceDir, { recursive: true });
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmTreeQuiet(base);
+  });
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  clearRendererCaches();
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "First task", status: "done" });
+
+  const planPath = join(sliceDir, "01-01-PLAN.md");
+  writeFileSync(planPath, makeStalePlanContent("S01", [
+    { id: "T01", title: "First task", done: false },
+  ]));
+  closeDatabase();
+
+  await staleRenderHandler.repair(
+    {
+      kind: "stale-render",
+      renderPath: planPath,
+      reason: "T01 is done in DB but unchecked in plan",
+    },
+    { basePath: base, state: makeState() },
+  );
+
+  const repairedContent = readFileSync(planPath, "utf-8");
+  assert.match(repairedContent, /\[x\][^\n]*\*\*T01\*\*/, "T01 checkbox should be checked after DB reopen repair");
+  assert.equal(getSliceTasks("M001", "S01").length, 1, "DB should be reopened on the original project database");
 });
 
 test("ADR-017 (#5702): stale-render detector reason strings match repair contract", (t) => {
