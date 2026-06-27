@@ -201,6 +201,9 @@ const contextModeGuidanceOverrideExpectedTools: Record<string, readonly string[]
     "gsd_uat_exec",
     "gsd_resume",
   ],
+  // research-project uses scout subagents that write .gsd/research/ files directly;
+  // the parent dispatches Task calls and verifies file outputs — no GSD save tools.
+  "research-project": [],
   "gate-evaluate": [
     "subagent",
     "gsd_save_gate_result",
@@ -289,6 +292,22 @@ test("Context Mode composer: run-uat guidance steers to gsd_uat_exec in both ren
   const standalone = composeContextModeInstructions("run-uat", { enabled: true, renderMode: "standalone" });
   assert.match(standalone, /`gsd_uat_exec`/);
   assert.doesNotMatch(standalone, /`gsd_exec`/);
+});
+
+test("Context Mode composer: research-project guidance steers to scout orchestration", () => {
+  for (const renderMode of ["nested", "standalone"] as const) {
+    const out = composeContextModeInstructions("research-project", { enabled: true, renderMode });
+    assert.match(out, /research lane/i);
+    assert.match(out, /scout subagents/i);
+    assert.match(out, /\.gsd\/research\//);
+    assert.match(out, /STACK\.md/);
+    assert.match(out, /PITFALLS\.md/);
+    assert.doesNotMatch(out, /`gsd_summary_save`/);
+    assert.doesNotMatch(out, /`gsd_decision_save`/);
+    assert.doesNotMatch(out, /`gsd_exec`/);
+    assert.doesNotMatch(out, /`gsd_exec_search`/);
+    assert.doesNotMatch(out, /`gsd_resume`/);
+  }
 });
 
 test("Context Mode composer: narrow planning guidance steers only to contracted tools", () => {
