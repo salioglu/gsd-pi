@@ -136,7 +136,9 @@ test("prefs serializer correctly indents nested object when it is the first arra
   const frontmatter = serializePreferencesToFrontmatter({
     post_unit_hooks: [{
       on_block: { action: "pause" }, // first property — exercises the first-key-is-object branch
-      name: "gate",                  // name comes after so on_block stays first
+      name: "gate",                  // required fields come after so on_block stays first
+      after: ["execute-task"],
+      prompt: "review output",
     }],
   });
 
