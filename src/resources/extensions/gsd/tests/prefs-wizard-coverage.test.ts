@@ -131,6 +131,28 @@ test("prefs serializer preserves nested hook on_block objects", () => {
   assert.deepEqual(preferences.post_unit_hooks?.[0]?.on_block, { action: "pause" });
 });
 
+test("prefs serializer correctly indents nested object when it is the first array-item property", () => {
+  // on_block is the FIRST property — exercises the first-key-is-object branch
+  const frontmatter = serializePreferencesToFrontmatter({
+    post_unit_hooks: [{
+      on_block: { action: "pause" },
+    }],
+  });
+
+  assert.doesNotMatch(frontmatter, /\[object Object\]/);
+  // Children of on_block must be indented deeper than on_block itself (not siblings)
+  assert.ok(
+    frontmatter.includes("  - on_block:\n      action: pause\n"),
+    `Expected on_block children indented as nested YAML, got:\n${frontmatter}`,
+  );
+  // Sanity: parse + validate round-trip
+  const parsed = parsePreferencesMarkdown(`---\n${frontmatter}---\n`);
+  assert.notEqual(parsed, null);
+  const { errors, preferences } = validatePreferences(parsed!);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(preferences.post_unit_hooks?.[0]?.on_block, { action: "pause" });
+});
+
 test("prefs wizard save path preserves every known preference key", async () => {
   const missingSamples = [...KNOWN_PREFERENCE_KEYS].filter((key) => !(key in PREF_SAMPLE_VALUES));
   assert.deepEqual(missingSamples, [], "test fixture must cover every known preference key");
