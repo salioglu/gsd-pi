@@ -378,6 +378,8 @@ export const RUNTIME_EXCLUSION_PATHS: readonly string[] = [
   ".gsd/DISCUSSION-MANIFEST.json",
 ];
 
+const runtimeFilesCleanedUpRepos = new Set<string>();
+
 // ─── Integration Branch Metadata ───────────────────────────────────────────
 
 /**
@@ -755,7 +757,8 @@ export class GitServiceImpl {
     // and the worktree is torn down. This prevents a mid-execution behavioral
     // discontinuity where the first half of a milestone has .gsd/ artifacts
     // committed but the second half doesn't (#1326).
-    if (!this._runtimeFilesCleanedUp) {
+    const cleanupRepoKey = resolve(this.basePath);
+    if (!runtimeFilesCleanedUpRepos.has(cleanupRepoKey)) {
       let cleaned = false;
       for (const exclusion of RUNTIME_EXCLUSION_PATHS) {
         const removed = nativeRmCached(this.basePath, [exclusion]);
@@ -764,7 +767,7 @@ export class GitServiceImpl {
       if (cleaned) {
         nativeCommit(this.basePath, "chore: untrack .gsd/ runtime files from git index", { allowEmpty: false });
       }
-      this._runtimeFilesCleanedUp = true;
+      runtimeFilesCleanedUpRepos.add(cleanupRepoKey);
     }
 
     // Stage everything using pathspec exclusions so excluded paths are never
@@ -892,9 +895,6 @@ export class GitServiceImpl {
       return false;
     }
   }
-
-  /** Tracks whether runtime file cleanup has run this session. */
-  private _runtimeFilesCleanedUp = false;
 
   /**
    * Stage files (smart staging) and commit.
