@@ -185,6 +185,10 @@ export function initHealthWidget(ctx: ExtensionContext): void {
 
   const basePath = projectRoot();
 
+  // Re-init must reflect filesystem changes immediately; the TTL cache is for
+  // interval refreshes, not this one-off synchronous paint.
+  projectStateCache.delete(basePath);
+
   // String-array fallback — used in RPC mode (factory is a no-op there).
   // Skip the expensive provider/environment doctor checks here: this runs
   // synchronously on the interactive-startup path, where running them would
