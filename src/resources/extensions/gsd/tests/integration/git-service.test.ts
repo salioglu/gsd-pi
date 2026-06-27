@@ -3,7 +3,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync, chmodSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, delimiter } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync, execSync } from "node:child_process";
 
@@ -23,6 +23,7 @@ import {
   type PreMergeCheckResult,
   type TaskCommitContext,
 } from "../../git-service.ts";
+import { GIT_NO_PROMPT_ENV } from "../../git-constants.ts";
 import { nativeAddAllWithExclusions, nativeHasChanges, _resetHasChangesCache } from "../../native-git-bridge.ts";
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -405,6 +406,49 @@ describe('git-service', async () => {
     }).trim();
   }
 
+  function findGitExecutable(): string {
+    const command = process.platform === "win32" ? "where git" : "command -v git";
+    const output = execSync(command, { encoding: "utf-8" });
+    const found = output.split(/\r?\n/).map(line => line.trim()).find(Boolean);
+    assert.ok(found, "git executable is available");
+    return found;
+  }
+
+  function installGitRmCachedCounterShim(shimDir: string): void {
+    const shimScript = join(shimDir, "git-shim.cjs");
+    writeFileSync(shimScript, `
+const { appendFileSync } = require("node:fs");
+const { spawnSync } = require("node:child_process");
+
+const args = process.argv.slice(2);
+if (args[0] === "rm" && args[1] === "--cached") {
+  appendFileSync(process.env.GSD_GIT_SHIM_LOG, args.join("\\0") + "\\n");
+}
+
+const result = spawnSync(process.env.GSD_REAL_GIT || "git", args, {
+  stdio: "inherit",
+  env: process.env,
+});
+if (result.error) {
+  console.error(result.error.message);
+  process.exit(1);
+}
+process.exit(result.status ?? 0);
+`.trimStart(), "utf-8");
+
+    const posixShim = join(shimDir, "git");
+    const quotedScript = `'${shimScript.replace(/'/g, "'\\''")}'`;
+    writeFileSync(posixShim, `#!/bin/sh\nexec node ${quotedScript} "$@"\n`, "utf-8");
+    chmodSync(posixShim, 0o755);
+
+    writeFileSync(join(shimDir, "git.cmd"), "@echo off\r\nnode \"%~dp0git-shim.cjs\" %*\r\n", "utf-8");
+  }
+
+  function countRmCachedInvocations(logFile: string): number {
+    if (!existsSync(logFile)) return 0;
+    return readFileSync(logFile, "utf-8").split(/\r?\n/).filter(Boolean).length;
+  }
+
   // ─── GitServiceImpl: smart staging ─────────────────────────────────────
 
   test('GitServiceImpl: smart staging', () => {
@@ -445,6 +489,80 @@ describe('git-service', async () => {
     assert.ok(statusOut.includes(".gsd/STATE.md"), "STATE.md still untracked after commit");
 
     rmSync(repo, { recursive: true, force: true });
+  });
+
+  test('GitServiceImpl: runtime cleanup runs once per repo across service instances', () => {
+    const repo = initTempRepo();
+    const shimDir = mkdtempSync(join(tmpdir(), "gsd-git-rm-shim-"));
+    const logFile = join(shimDir, "git-rm-cached.log");
+    const originalPath = process.env.PATH;
+    const originalRealGit = process.env.GSD_REAL_GIT;
+    const originalShimLog = process.env.GSD_GIT_SHIM_LOG;
+    const originalSafePath = GIT_NO_PROMPT_ENV.PATH;
+    const originalSafeRealGit = GIT_NO_PROMPT_ENV.GSD_REAL_GIT;
+    const originalSafeShimLog = GIT_NO_PROMPT_ENV.GSD_GIT_SHIM_LOG;
+
+    try {
+      installGitRmCachedCounterShim(shimDir);
+      const realGit = findGitExecutable();
+      process.env.GSD_REAL_GIT = realGit;
+      process.env.GSD_GIT_SHIM_LOG = logFile;
+      process.env.PATH = `${shimDir}${delimiter}${originalPath ?? ""}`;
+      GIT_NO_PROMPT_ENV.GSD_REAL_GIT = realGit;
+      GIT_NO_PROMPT_ENV.GSD_GIT_SHIM_LOG = logFile;
+      GIT_NO_PROMPT_ENV.PATH = process.env.PATH;
+
+      createFile(repo, "src/first.ts", "first");
+      const first = new GitServiceImpl(repo).commit({ message: "test: first cleanup pass" });
+      assert.deepStrictEqual(first, "test: first cleanup pass", "first commit succeeds");
+      assert.deepStrictEqual(
+        countRmCachedInvocations(logFile),
+        RUNTIME_EXCLUSION_PATHS.length,
+        "first service instance checks each runtime exclusion once",
+      );
+
+      createFile(repo, "src/second.ts", "second");
+      const second = new GitServiceImpl(repo).commit({ message: "test: second cleanup pass" });
+      assert.deepStrictEqual(second, "test: second cleanup pass", "second commit succeeds");
+      assert.deepStrictEqual(
+        countRmCachedInvocations(logFile),
+        RUNTIME_EXCLUSION_PATHS.length,
+        "fresh service instance for the same repo does not rerun runtime cleanup",
+      );
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      if (originalRealGit === undefined) {
+        delete process.env.GSD_REAL_GIT;
+      } else {
+        process.env.GSD_REAL_GIT = originalRealGit;
+      }
+      if (originalShimLog === undefined) {
+        delete process.env.GSD_GIT_SHIM_LOG;
+      } else {
+        process.env.GSD_GIT_SHIM_LOG = originalShimLog;
+      }
+      if (originalSafePath === undefined) {
+        delete GIT_NO_PROMPT_ENV.PATH;
+      } else {
+        GIT_NO_PROMPT_ENV.PATH = originalSafePath;
+      }
+      if (originalSafeRealGit === undefined) {
+        delete GIT_NO_PROMPT_ENV.GSD_REAL_GIT;
+      } else {
+        GIT_NO_PROMPT_ENV.GSD_REAL_GIT = originalSafeRealGit;
+      }
+      if (originalSafeShimLog === undefined) {
+        delete GIT_NO_PROMPT_ENV.GSD_GIT_SHIM_LOG;
+      } else {
+        GIT_NO_PROMPT_ENV.GSD_GIT_SHIM_LOG = originalSafeShimLog;
+      }
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(shimDir, { recursive: true, force: true });
+    }
   });
 
   test('GitServiceImpl: task autoCommit skips keyFiles inside submodules', () => {
