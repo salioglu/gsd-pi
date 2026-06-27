@@ -73,7 +73,7 @@ export async function collectVisualizerData(projectCwdOverride?: string): Promis
   const cached = visualizerDataCache.get(cacheKey)
   const now = Date.now()
 
-  if (cached?.promise) {
+  if (cached?.promise && cached.expiresAt >= now) {
     return cached.promise
   }
   if (cached?.data && cached.expiresAt >= now) {
@@ -81,14 +81,19 @@ export async function collectVisualizerData(projectCwdOverride?: string): Promis
   }
 
   const promise = loadVisualizerData(config)
-  visualizerDataCache.set(cacheKey, { promise, expiresAt: 0 })
+  visualizerDataCache.set(cacheKey, {
+    promise,
+    expiresAt: now + VISUALIZER_TIMEOUT_MS,
+  })
 
   try {
     const data = await promise
-    visualizerDataCache.set(cacheKey, {
-      data,
-      expiresAt: Date.now() + VISUALIZER_CACHE_TTL_MS,
-    })
+    if (visualizerDataCache.get(cacheKey)?.promise === promise) {
+      visualizerDataCache.set(cacheKey, {
+        data,
+        expiresAt: Date.now() + VISUALIZER_CACHE_TTL_MS,
+      })
+    }
     return data
   } catch (error) {
     if (visualizerDataCache.get(cacheKey)?.promise === promise) {

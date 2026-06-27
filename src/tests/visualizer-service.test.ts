@@ -172,3 +172,69 @@ test("collectVisualizerData shares in-flight work and reuses a recent project re
   pendingExecs.shift()?.(null, JSON.stringify(createVisualizerPayload("refreshed")), "")
   assert.deepEqual(await refreshed, createVisualizerPayload("refreshed"))
 })
+
+test("collectVisualizerData expires a stuck in-flight subprocess and ignores its late result", async (t) => {
+  const mutableChildProcess = childProcess as typeof childProcess & {
+    execFile: typeof childProcess.execFile
+  }
+  const mutableFs = fs as typeof fs & {
+    existsSync: typeof fs.existsSync
+  }
+  const originalExecFile = mutableChildProcess.execFile
+  const originalExistsSync = mutableFs.existsSync
+  const originalDateNow = Date.now
+  const originalPackageRoot = process.env.GSD_WEB_PACKAGE_ROOT
+
+  type ExecCallback = (error: Error | null, stdout: string, stderr: string) => void
+  const pendingExecs: ExecCallback[] = []
+  let execCount = 0
+  let now = 1_000
+
+  mutableChildProcess.execFile = ((...args: unknown[]) => {
+    execCount += 1
+    pendingExecs.push(args[3] as ExecCallback)
+    return {} as ReturnType<typeof childProcess.execFile>
+  }) as typeof childProcess.execFile
+  mutableFs.existsSync = (() => true) as typeof fs.existsSync
+  Date.now = () => now
+  process.env.GSD_WEB_PACKAGE_ROOT = join(tmpdir(), "gsd-pi-visualizer-cache-test-stuck")
+  syncBuiltinESMExports()
+
+  t.after(() => {
+    mutableChildProcess.execFile = originalExecFile
+    mutableFs.existsSync = originalExistsSync
+    Date.now = originalDateNow
+    if (originalPackageRoot === undefined) {
+      delete process.env.GSD_WEB_PACKAGE_ROOT
+    } else {
+      process.env.GSD_WEB_PACKAGE_ROOT = originalPackageRoot
+    }
+    syncBuiltinESMExports()
+  })
+
+  const visualizerService = await import("../web/visualizer-service.ts")
+  visualizerService.resetVisualizerDataCacheForTests()
+
+  const stuck = visualizerService.collectVisualizerData("/project-stuck")
+  const shared = visualizerService.collectVisualizerData("/project-stuck")
+  assert.equal(execCount, 1, "requests share the subprocess before the in-flight entry expires")
+
+  now = 31_001
+  const refreshed = visualizerService.collectVisualizerData("/project-stuck")
+  assert.equal(execCount, 2, "stuck in-flight entries expire and spawn a fresh subprocess")
+
+  pendingExecs[1]?.(null, JSON.stringify(createVisualizerPayload("fresh")), "")
+  assert.deepEqual(await refreshed, createVisualizerPayload("fresh"))
+
+  pendingExecs[0]?.(null, JSON.stringify(createVisualizerPayload("stale")), "")
+  assert.deepEqual(await Promise.all([stuck, shared]), [
+    createVisualizerPayload("stale"),
+    createVisualizerPayload("stale"),
+  ])
+
+  assert.deepEqual(
+    await visualizerService.collectVisualizerData("/project-stuck"),
+    createVisualizerPayload("fresh"),
+    "a late result from an expired in-flight subprocess must not replace the current cache entry",
+  )
+})
