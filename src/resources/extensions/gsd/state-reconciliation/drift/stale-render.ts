@@ -24,7 +24,11 @@ import {
   isDbAvailable,
   setSliceSummaryMd,
 } from "../../gsd-db.js";
-import { openWorkflowDatabasePath } from "../../db-workspace.js";
+import {
+  getWorkflowDatabasePath,
+  openWorkflowDatabasePath,
+  refreshWorkflowDatabaseFromDisk,
+} from "../../db-workspace.js";
 import { gsdRoot, resolveSliceFile } from "../../paths.js";
 import type { GSDState } from "../../types.js";
 import { logWarning } from "../../workflow-logger.js";
@@ -118,11 +122,29 @@ function resolveRoadmapMilestoneIdFromPath(normPath: string): string {
   return fileMatch?.[1] ?? milestoneMatch[1];
 }
 
-function reopenDbForStaleRenderRepair(basePath: string): boolean {
-  if (isDbAvailable()) return true;
-  const dbPath = join(gsdRoot(basePath), "gsd.db");
+function expectedDbPathForStaleRenderRepair(basePath: string): string {
+  return join(gsdRoot(basePath), "gsd.db");
+}
+
+function ensureDbForStaleRenderRepair(basePath: string): boolean {
+  const dbPath = expectedDbPathForStaleRenderRepair(basePath);
+  if (isDbAvailable() && getWorkflowDatabasePath() === dbPath) return true;
   if (!existsSync(dbPath)) return false;
   try {
+    return openWorkflowDatabasePath(dbPath);
+  } catch (err) {
+    logWarning("reconcile", `stale-render repair could not reopen DB: ${(err as Error).message}`);
+    return false;
+  }
+}
+
+function retryDbForStaleRenderRepair(basePath: string): boolean {
+  const dbPath = expectedDbPathForStaleRenderRepair(basePath);
+  if (!existsSync(dbPath)) return false;
+  try {
+    if (isDbAvailable() && getWorkflowDatabasePath() === dbPath && refreshWorkflowDatabaseFromDisk()) {
+      return true;
+    }
     return openWorkflowDatabasePath(dbPath);
   } catch (err) {
     logWarning("reconcile", `stale-render repair could not reopen DB: ${(err as Error).message}`);
@@ -134,7 +156,7 @@ async function repairStaleRenderFromBasePath(
   record: StaleRenderDrift,
   basePath: string,
 ): Promise<void> {
-  if (!reopenDbForStaleRenderRepair(basePath)) {
+  if (!ensureDbForStaleRenderRepair(basePath)) {
     throw new Error(`stale-render drift: database unavailable for repair (${basePath})`);
   }
 
@@ -172,7 +194,7 @@ async function repairStaleRenderFromBasePath(
         record.renderPath,
       );
     } catch (err) {
-      if (!reopenDbForStaleRenderRepair(basePath)) throw err;
+      if (!retryDbForStaleRenderRepair(basePath)) throw err;
       wrote = await renderPlanCheckboxes(
         basePath,
         milestoneId,
@@ -180,7 +202,7 @@ async function repairStaleRenderFromBasePath(
         record.renderPath,
       );
     }
-    if (!wrote && !isDbAvailable() && reopenDbForStaleRenderRepair(basePath)) {
+    if (!wrote && retryDbForStaleRenderRepair(basePath)) {
       wrote = await renderPlanCheckboxes(
         basePath,
         milestoneId,

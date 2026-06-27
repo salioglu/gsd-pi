@@ -732,6 +732,46 @@ test("#1003: stale-render plan repair reopens DB before rendering", async (t) =>
   assert.equal(getSliceTasks("M001", "S01").length, 1, "DB should be reopened on the original project database");
 });
 
+test("#1003: stale-render plan repair switches back from an open wrong DB", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-stale-render-wrong-db-"));
+  const wrongBase = mkdtempSync(join(tmpdir(), "gsd-stale-render-other-db-"));
+  const sliceDir = join(base, ".gsd", "phases", "01-test");
+  mkdirSync(sliceDir, { recursive: true });
+  mkdirSync(join(wrongBase, ".gsd"), { recursive: true });
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmTreeQuiet(base);
+    rmTreeQuiet(wrongBase);
+  });
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  clearRendererCaches();
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "First task", status: "done" });
+
+  const planPath = join(sliceDir, "01-01-PLAN.md");
+  writeFileSync(planPath, makeStalePlanContent("S01", [
+    { id: "T01", title: "First task", done: false },
+  ]));
+  closeDatabase();
+
+  openDatabase(join(wrongBase, ".gsd", "gsd.db"));
+
+  await staleRenderHandler.repair(
+    {
+      kind: "stale-render",
+      renderPath: planPath,
+      reason: "T01 is done in DB but unchecked in plan",
+    },
+    { basePath: base, state: makeState() },
+  );
+
+  const repairedContent = readFileSync(planPath, "utf-8");
+  assert.match(repairedContent, /\[x\][^\n]*\*\*T01\*\*/, "T01 checkbox should be checked after switching back to the project DB");
+  assert.equal(getSliceTasks("M001", "S01").length, 1, "repair should leave the project DB active");
+});
+
 test("ADR-017 (#5702): stale-render detector reason strings match repair contract", (t) => {
   t.skip("TODO(flat-phase): stale-render detection temporarily disabled during layout transition"); return;
   const base = mkdtempSync(join(tmpdir(), "gsd-adr017-render-reasons-"));
