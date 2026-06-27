@@ -148,4 +148,62 @@ describe("extractTrace pending tool calls (#945)", () => {
     assert.equal(trace.errors.length, 1);
     assert.equal(trace.errors[0], "Tool call gsd_summary_save started but no toolResult was recorded");
   });
+
+  test("pending bash call with no toolResult marks commandsRun entry as failed", () => {
+    // A bash tool call that was initiated but never got a toolResult (stream abort).
+    const entries = [
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "toolu_bash_missing",
+              name: "bash",
+              arguments: { command: "npm run build" },
+            },
+          ],
+        },
+      },
+    ];
+
+    const trace = extractTrace(entries);
+
+    // The tool call should be recorded as an error.
+    assert.equal(trace.toolCalls.length, 1);
+    assert.equal(trace.toolCalls[0]?.name, "bash");
+    assert.equal(trace.toolCalls[0]?.isError, true);
+
+    // The commandsRun entry must be consistent: failed: true, not failed: false.
+    assert.equal(trace.commandsRun.length, 1);
+    assert.equal(trace.commandsRun[0]?.command, "npm run build");
+    assert.equal(trace.commandsRun[0]?.failed, true,
+      "commandsRun entry should be failed when its bash call never returned a result");
+  });
+
+  test("pending bg_shell call with no toolResult marks commandsRun entry as failed", () => {
+    const entries = [
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "toolu_bg_missing",
+              name: "bg_shell",
+              arguments: { command: "sleep 30" },
+            },
+          ],
+        },
+      },
+    ];
+
+    const trace = extractTrace(entries);
+
+    assert.equal(trace.commandsRun.length, 1);
+    assert.equal(trace.commandsRun[0]?.failed, true,
+      "bg_shell commandsRun entry should be failed when no toolResult was recorded");
+  });
 });

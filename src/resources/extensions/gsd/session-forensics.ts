@@ -231,6 +231,13 @@ export function extractTrace(entries: unknown[]): ExecutionTrace {
       isError: true,
     });
     errors.push(missingResultError);
+
+    // Mark the matching commandsRun entry as failed so it is consistent with
+    // the isError: true on the tool call above (bash/bg_shell only).
+    if (pending.name === "bash" || pending.name === "bg_shell") {
+      const lastCmd = findLast(commandsRun, c => c.command === String(pending.input.command));
+      if (lastCmd) lastCmd.failed = true;
+    }
   }
 
   return {
