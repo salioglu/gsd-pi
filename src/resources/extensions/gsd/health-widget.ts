@@ -30,10 +30,10 @@ const PROJECT_STATE_CACHE_TTL_MS = REFRESH_INTERVAL_MS;
 
 const projectStateCache = new Map<string, { state: HealthWidgetProjectState; computedAt: number }>();
 
-export function getCachedProjectState(basePath: string): HealthWidgetProjectState {
+export function getCachedProjectState(basePath: string, force?: boolean): HealthWidgetProjectState {
   const now = Date.now();
   const cached = projectStateCache.get(basePath);
-  if (cached && now - cached.computedAt <= PROJECT_STATE_CACHE_TTL_MS) {
+  if (!force && cached && now - cached.computedAt <= PROJECT_STATE_CACHE_TTL_MS) {
     return cached.state;
   }
 
@@ -84,7 +84,7 @@ async function loadLastCommitInfoAsync(basePath: string): Promise<{ epoch: numbe
 
 function loadHealthWidgetData(
   basePath: string,
-  options?: { includeChecks?: boolean },
+  options?: { includeChecks?: boolean; forceProjectState?: boolean },
 ): HealthWidgetData {
   // `includeChecks` gates the expensive subprocess-backed checks (provider +
   // environment doctor: `lsof`, `docker`, `node --version`, ...). The initial
@@ -99,7 +99,7 @@ function loadHealthWidgetData(
   let lastCommitEpoch: number | null = null;
   let lastCommitMessage: string | null = null;
 
-  const projectState = getCachedProjectState(basePath);
+  const projectState = getCachedProjectState(basePath, options?.forceProjectState);
 
   try {
     const prefs = loadEffectiveGSDPreferences();
@@ -195,7 +195,7 @@ export function initHealthWidget(ctx: ExtensionContext): void {
   // block first paint by ~0.9s (lsof/docker probes, otherwise run again
   // immediately by the factory below). The factory's async refresh fills in
   // real health once the screen is up.
-  const initialData = loadHealthWidgetData(basePath, { includeChecks: false });
+  const initialData = loadHealthWidgetData(basePath, { includeChecks: false, forceProjectState: true });
   ctx.ui.setWidget("gsd-health", buildHealthLines(initialData), { placement: "belowEditor" });
 
   // Factory-based widget for TUI mode — replaces the string-array above

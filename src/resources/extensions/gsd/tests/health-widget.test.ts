@@ -146,6 +146,32 @@ test("getCachedProjectState: reuses project state until the refresh TTL expires"
   assert.equal(getCachedProjectState(dir), "active");
 });
 
+test("getCachedProjectState: force=true bypasses TTL and returns fresh state within TTL window", (t) => {
+  const dir = makeTempDir("forced-state");
+  t.after(() => { cleanup(dir); });
+
+  let now = 2_000_000;
+  const dateNow = t.mock.method(Date, "now", () => now);
+  t.after(() => { dateNow.mock.restore(); });
+
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  // Prime the cache with "initialized".
+  assert.equal(getCachedProjectState(dir), "initialized");
+
+  // Disk changes within the TTL window.
+  mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
+  now += 1_000; // well within 60s TTL
+
+  // Normal call still returns stale cached value.
+  assert.equal(getCachedProjectState(dir), "initialized");
+
+  // force=true bypasses TTL and returns the fresh disk state.
+  assert.equal(getCachedProjectState(dir, true), "active");
+
+  // Subsequent non-forced call also reflects the freshened cache.
+  assert.equal(getCachedProjectState(dir), "active");
+});
+
 test("buildHealthLines: none state shows single onboarding line pointing at /gsd", (t) => {
   const lines = buildHealthLines(activeData({ projectState: "none" }));
   assert.equal(lines.length, 1, "renders exactly one line");
