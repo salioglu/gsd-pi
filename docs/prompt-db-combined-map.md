@@ -239,6 +239,11 @@ execute-task prompt fires
         └─► INSERT INTO gate_runs (audit)
         └─► Write T##-SUMMARY.md to disk
         └─► Toggle checkbox in S##-PLAN.md
+        └─► If summary or plan projection write fails:
+              DELETE verification_evidence for the task
+              UPDATE tasks SET status='pending'
+              remove attempted T##-SUMMARY.md
+              return an error instead of a stale success
 
 complete-slice prompt fires (after all tasks complete)
   └─► gsd_slice_complete tool

@@ -721,6 +721,8 @@ remain outside manifest restore.
 | `capture_thought` | memories | memories | KNOWLEDGE.md projection for Patterns/Lessons (both backfilled and newly captured) |
 | `memory_query` | memories, memories_fts, memory_embeddings | memories (hit_count++) | — |
 
+`gsd_task_complete` treats the task summary and slice plan projection as closeout-critical. If writing `T##-SUMMARY.md` or re-rendering `S##-PLAN.md` fails, the tool returns an error after deleting the task's verification evidence and reverting its task row to `pending`; it does not leave a committed `complete` task with a stale plan projection.
+
 ---
 
 ## 6. DB State → Dispatch Rule Mapping
