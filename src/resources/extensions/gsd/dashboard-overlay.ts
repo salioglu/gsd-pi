@@ -29,7 +29,7 @@ import { getWorkerBatches, hasActiveWorkers, type WorkerEntry } from "../subagen
 import { formatDuration, padRight, joinColumns, centerLine, fitColumns, STATUS_GLYPH, STATUS_COLOR } from "../shared/mod.js";
 import { estimateTimeRemaining } from "./auto-dashboard.js";
 import { computeProgressScore, formatProgressLine } from "./progress-score.js";
-import { runEnvironmentChecks, type EnvironmentCheckResult } from "./doctor-environment.js";
+import { runEnvironmentChecksAsync, type EnvironmentCheckResult } from "./doctor-environment.js";
 import { formattedShortcutPair } from "./shortcut-defs.js";
 import { renderDialogFrame, renderKeyHints } from "./tui/render-kit.js";
 
@@ -71,6 +71,9 @@ export class GSDDashboardOverlay {
   private loading = true;
   private loadedDashboardIdentity?: string;
   private refreshInFlight: Promise<void> | null = null;
+  private envRefreshInFlight: Promise<void> | null = null;
+  private cachedEnvBasePath?: string;
+  private cachedEnvIssues: EnvironmentCheckResult[] = [];
   private disposed = false;
   private resizeHandler: (() => void) | null = null;
   private cachedMetrics: {
@@ -181,10 +184,37 @@ export class GSDDashboardOverlay {
       this.loading = false;
     }
 
+    this.scheduleEnvironmentRefresh(this.dashData.basePath || process.cwd());
+
     if (identityChanged) {
       this.invalidate();
     }
     this.tui.requestRender();
+  }
+
+  private scheduleEnvironmentRefresh(basePath: string): void {
+    if (this.cachedEnvBasePath !== basePath) {
+      this.cachedEnvBasePath = basePath;
+      this.cachedEnvIssues = [];
+      this.invalidate();
+    }
+    if (this.envRefreshInFlight || this.disposed) return;
+    this.envRefreshInFlight = this.refreshEnvironmentHealth(basePath)
+      .finally(() => {
+        this.envRefreshInFlight = null;
+      });
+  }
+
+  private async refreshEnvironmentHealth(basePath: string): Promise<void> {
+    try {
+      const envResults = await runEnvironmentChecksAsync(basePath);
+      if (this.disposed || this.cachedEnvBasePath !== basePath) return;
+      this.cachedEnvIssues = envResults.filter(r => r.status !== "ok");
+      this.invalidate();
+      this.tui.requestRender();
+    } catch {
+      // Non-fatal — keep last known environment issues
+    }
   }
 
   private async loadData(): Promise<boolean> {
@@ -629,8 +659,7 @@ export class GSDDashboardOverlay {
     }
 
     // Environment health section (#1221) — only show issues
-    const envResults = runEnvironmentChecks(this.dashData.basePath || process.cwd());
-    const envIssues = envResults.filter(r => r.status !== "ok");
+    const envIssues = this.cachedEnvIssues;
     if (envIssues.length > 0) {
       lines.push(blank());
       lines.push(hr());
