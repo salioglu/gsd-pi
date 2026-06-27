@@ -4,9 +4,10 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
+import { performance } from "node:perf_hooks";
 
 import { GSDDashboardOverlay } from "../dashboard-overlay.ts";
 import type { UnitMetrics } from "../metrics.ts";
@@ -82,6 +83,58 @@ test("GSDDashboardOverlay non-identity refresh avoids reparsing preferences", as
   await assert.doesNotReject(
     () => (overlay as any).refreshDashboard(false),
     "unchanged overlay identity should not call getAutoDashboardData or read preferences",
+  );
+});
+
+test("GSDDashboardOverlay render and scroll do not run environment doctor subprocesses", (t) => {
+  const basePath = join(
+    tmpdir(),
+    `gsd-dashboard-overlay-env-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  const shimDir = join(
+    tmpdir(),
+    `gsd-dashboard-overlay-shim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  mkdirSync(basePath, { recursive: true });
+  mkdirSync(shimDir, { recursive: true });
+  writeFileSync(join(basePath, "package.json"), JSON.stringify({ engines: { node: ">=22.0.0" } }));
+
+  const posixNodeShim = join(shimDir, "node");
+  writeFileSync(posixNodeShim, "#!/bin/sh\nsleep 1\nexit 1\n");
+  chmodSync(posixNodeShim, 0o755);
+  writeFileSync(join(shimDir, "node.cmd"), "@echo off\r\nping -n 2 127.0.0.1 > nul\r\nexit /b 1\r\n");
+
+  const originalPath = process.env.PATH;
+  const overlay = new GSDDashboardOverlay({ requestRender() {} }, fakeTheme as any, () => {});
+  overlay.dispose();
+
+  t.after(() => {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+    rmSync(basePath, { recursive: true, force: true });
+    rmSync(shimDir, { recursive: true, force: true });
+  });
+
+  (overlay as any).loading = false;
+  (overlay as any).milestoneData = null;
+  (overlay as any).dashData = {
+    ...(overlay as any).dashData,
+    basePath,
+  };
+
+  process.env.PATH = `${shimDir}${delimiter}${originalPath ?? ""}`;
+  const start = performance.now();
+  overlay.render(100);
+  overlay.handleInput("j");
+  overlay.render(100);
+  const elapsed = performance.now() - start;
+
+  assert.ok(
+    elapsed < 500,
+    `rendering and scrolling should not wait for environment subprocesses, took ${Math.round(elapsed)}ms`,
   );
 });
 
