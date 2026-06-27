@@ -207,7 +207,6 @@ test("health widget async refresh does not block timers while git log is slow", 
   } as any);
 
   assert.ok(factory, "health widget factory is registered");
-  const resolvedFactory = factory;
 
   heartbeat = setInterval(() => {
     const now = performance.now();
@@ -215,7 +214,9 @@ test("health widget async refresh does not block timers while git log is slow", 
     lastTick = now;
   }, 25);
 
-  widget = resolvedFactory(
+  // assert.ok above guards at runtime; double-cast is needed because TypeScript
+  // cannot track the factory assignment through the `as any` closure call.
+  widget = (factory as unknown as HealthWidgetFactory)(
     { requestRender: () => { resolveRefresh?.(); } },
     { fg: (_style: string, text: string) => text },
   );
