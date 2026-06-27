@@ -118,6 +118,10 @@ export function shouldDeferTransientErrorToCoreRetry(
   rawErrorMsg: string,
 ): boolean {
   if (!isTransient(cls) || cls.kind === "rate-limit") return false;
+  // Empty rawErrorMsg means the SDK terminated the session without providing an
+  // error string — core is done, not mid-retry.  GSD must schedule its own
+  // retry rather than silently deferring to a core that has already exited.
+  if (!rawErrorMsg) return false;
   return !/retry failed after \d+ attempts:/i.test(rawErrorMsg);
 }
 
