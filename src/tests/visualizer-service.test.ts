@@ -40,6 +40,66 @@ function createVisualizerPayload(phase: string): SerializedVisualizerData {
   }
 }
 
+test("collectVisualizerData clears the cache entry when the subprocess errors, allowing retries", async (t) => {
+  const mutableChildProcess = childProcess as typeof childProcess & {
+    execFile: typeof childProcess.execFile
+  }
+  const mutableFs = fs as typeof fs & {
+    existsSync: typeof fs.existsSync
+  }
+  const originalExecFile = mutableChildProcess.execFile
+  const originalExistsSync = mutableFs.existsSync
+  const originalPackageRoot = process.env.GSD_WEB_PACKAGE_ROOT
+
+  type ExecCallback = (error: Error | null, stdout: string, stderr: string) => void
+  const pendingExecs: ExecCallback[] = []
+  let execCount = 0
+
+  mutableChildProcess.execFile = ((...args: unknown[]) => {
+    execCount += 1
+    pendingExecs.push(args[3] as ExecCallback)
+    return {} as ReturnType<typeof childProcess.execFile>
+  }) as typeof childProcess.execFile
+  mutableFs.existsSync = (() => true) as typeof fs.existsSync
+  process.env.GSD_WEB_PACKAGE_ROOT = join(tmpdir(), "gsd-pi-visualizer-cache-test-error")
+  syncBuiltinESMExports()
+
+  t.after(() => {
+    mutableChildProcess.execFile = originalExecFile
+    mutableFs.existsSync = originalExistsSync
+    if (originalPackageRoot === undefined) {
+      delete process.env.GSD_WEB_PACKAGE_ROOT
+    } else {
+      process.env.GSD_WEB_PACKAGE_ROOT = originalPackageRoot
+    }
+    syncBuiltinESMExports()
+  })
+
+  const visualizerService = await import("../web/visualizer-service.ts")
+  visualizerService.resetVisualizerDataCacheForTests()
+
+  // Start two concurrent requests — they share the same in-flight promise.
+  const first = visualizerService.collectVisualizerData("/project-err")
+  const second = visualizerService.collectVisualizerData("/project-err")
+  assert.equal(execCount, 1, "concurrent requests share one subprocess")
+
+  // Simulate a subprocess timeout / error (what execFile calls back with when its
+  // `timeout` option fires and the child is killed).
+  const timedOutError = Object.assign(new Error("spawnSync node ETIMEDOUT"), { killed: true, signal: "SIGTERM" })
+  pendingExecs.shift()?.(timedOutError, "", "")
+
+  // Both callers should receive a rejection.
+  await assert.rejects(first, /subprocess failed/)
+  // `second` holds the same promise reference, also rejected.
+  await assert.rejects(second, /subprocess failed/)
+
+  // After the error the cache entry must be cleared so a retry spawns a fresh subprocess.
+  const retry = visualizerService.collectVisualizerData("/project-err")
+  assert.equal(execCount, 2, "retry after timeout spawns a new subprocess")
+  pendingExecs.shift()?.(null, JSON.stringify(createVisualizerPayload("retry")), "")
+  assert.deepEqual(await retry, createVisualizerPayload("retry"))
+})
+
 test("collectVisualizerData shares in-flight work and reuses a recent project result", async (t) => {
   const mutableChildProcess = childProcess as typeof childProcess & {
     execFile: typeof childProcess.execFile
