@@ -539,6 +539,18 @@ export async function handleCompleteSlice(
   // ── Post-mutation hook: projections, manifest, event log ───────────────
   // Separate try/catch per step so a projection failure doesn't prevent
   // the event log entry (critical for worktree reconciliation).
+  //
+  // If the primary summary/UAT/roadmap write block failed (projectionStale),
+  // retry the milestone-level roadmap here so ROADMAP.md is not left stale
+  // after a committed slice completion. This restores the recovery that the
+  // removed flushWorkflowProjections/renderAllProjections provided.
+  if (projectionStale) {
+    try {
+      await renderRoadmapFromDb(artifactBasePath, params.milestoneId);
+    } catch (projErr) {
+      logWarning("tool", `complete-slice milestone roadmap retry warning for ${params.milestoneId}/${params.sliceId}: ${(projErr as Error).message}`);
+    }
+  }
   try {
     await renderRoadmapFromDb(artifactBasePath, params.milestoneId);
   } catch (projErr) {
