@@ -1732,7 +1732,7 @@ export function serializePreferencesToFrontmatter(prefs: Record<string, unknown>
             } else if (typeof firstVal === "object" && firstVal !== null) {
               lines.push(`${prefix}  - ${firstKey}:`);
               for (const [k, v] of Object.entries(firstVal as Record<string, unknown>)) {
-                serializeValue(k, v, indent + 2);
+                serializeValue(k, v, indent + 3);
               }
             } else {
               lines.push(`${prefix}  - ${firstKey}: ${yamlSafeString(firstVal)}`);
