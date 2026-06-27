@@ -16,6 +16,7 @@ import { execSync } from "node:child_process";
 
 import { captureIntegrationBranch, getCurrentBranch } from "../../worktree.ts";
 import { readIntegrationBranch, QUICK_BRANCH_RE } from "../../git-service.ts";
+import { disableDebug, enableDebug, getDebugCounters } from "../../debug-logger.ts";
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -205,16 +206,25 @@ test('cleanupQuickBranch: recovers from disk state (cross-session)', async () =>
 test('cleanupQuickBranch: no-op without pending state', async () => {
     const repo = createTestRepo();
     const origCwd = process.cwd();
-    process.chdir(repo);
+    try {
+      process.chdir(repo);
+      enableDebug(repo);
 
-    const { cleanupQuickBranch } = await import("../../quick.ts");
-    const result = cleanupQuickBranch();
+      const { cleanupQuickBranch } = await import("../../quick.ts");
+      const result = cleanupQuickBranch();
+      const firstGitInvocations = getDebugCounters().gitInvocations;
+      const secondResult = cleanupQuickBranch();
 
-    assert.ok(!result, "returns false when no pending state");
-    assert.deepStrictEqual(getCurrentBranch(repo), "main", "stays on main");
-
-    process.chdir(origCwd);
-    rmSync(repo, { recursive: true, force: true });
+      assert.ok(!result, "returns false when no pending state");
+      assert.ok(!secondResult, "still returns false when no pending state");
+      assert.deepStrictEqual(getDebugCounters().gitInvocations, firstGitInvocations,
+        "cached no-state cleanup does not re-run git branch inference");
+      assert.deepStrictEqual(getCurrentBranch(repo), "main", "stays on main");
+    } finally {
+      disableDebug();
+      process.chdir(origCwd);
+      rmSync(repo, { recursive: true, force: true });
+    }
 });
 
 test('cleanupQuickBranch: infers return state from current gsd/quick branch', async () => {

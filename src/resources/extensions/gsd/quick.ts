@@ -31,6 +31,7 @@ interface QuickReturnState {
 }
 
 let pendingQuickReturn: QuickReturnState | null = null;
+const pendingQuickReturnMisses = new Set<string>();
 
 // ─── Quick Task Helpers ───────────────────────────────────────────────────────
 
@@ -195,6 +196,7 @@ function quickReturnStatePath(basePath: string): string {
 
 function persistPendingReturn(state: QuickReturnState): void {
   pendingQuickReturn = state;
+  pendingQuickReturnMisses.delete(state.basePath);
   mkdirSync(join(gsdRoot(state.basePath), "runtime"), { recursive: true });
   writeFileSync(quickReturnStatePath(state.basePath), JSON.stringify(state) + "\n", "utf-8");
 }
@@ -202,6 +204,9 @@ function persistPendingReturn(state: QuickReturnState): void {
 function readPendingReturn(basePath: string): QuickReturnState | null {
   if (pendingQuickReturn && pendingQuickReturn.basePath === basePath) {
     return pendingQuickReturn;
+  }
+  if (pendingQuickReturnMisses.has(basePath)) {
+    return null;
   }
 
   try {
@@ -216,6 +221,7 @@ function readPendingReturn(basePath: string): QuickReturnState | null {
       && typeof parsed.description === "string"
     ) {
       pendingQuickReturn = parsed as QuickReturnState;
+      pendingQuickReturnMisses.delete(basePath);
       return pendingQuickReturn;
     }
   } catch {
@@ -225,9 +231,11 @@ function readPendingReturn(basePath: string): QuickReturnState | null {
   const inferred = inferQuickReturnFromBranch(basePath);
   if (inferred) {
     pendingQuickReturn = inferred;
+    pendingQuickReturnMisses.delete(basePath);
     return inferred;
   }
 
+  pendingQuickReturnMisses.add(basePath);
   return null;
 }
 
@@ -235,6 +243,7 @@ function clearPendingReturn(basePath: string): void {
   if (pendingQuickReturn?.basePath === basePath) {
     pendingQuickReturn = null;
   }
+  pendingQuickReturnMisses.add(basePath);
   rmSync(quickReturnStatePath(basePath), { force: true });
 }
 
