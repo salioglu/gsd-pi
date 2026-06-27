@@ -116,13 +116,14 @@ export function isUserInitiatedAbortMessage(message: string | undefined | null):
 export function shouldDeferTransientErrorToCoreRetry(
   cls: ErrorClass,
   rawErrorMsg: string,
+  deferCheckMsg: string = rawErrorMsg,
 ): boolean {
   if (!isTransient(cls) || cls.kind === "rate-limit") return false;
   // Empty rawErrorMsg means the SDK terminated the session without providing an
   // error string — core is done, not mid-retry.  GSD must schedule its own
   // retry rather than silently deferring to a core that has already exited.
   if (!rawErrorMsg) return false;
-  return !/retry failed after \d+ attempts:/i.test(rawErrorMsg);
+  return !/retry failed after \d+ attempts:/i.test(deferCheckMsg);
 }
 
 type ProviderModelFallbackParams = {
@@ -659,7 +660,7 @@ export async function handleAgentEnd(
     // Core retries transient failures in-session after this handler.
     // Keep that behavior for non-rate-limit classes to avoid pause/retry races,
     // but let rate-limit continue into model fallback logic below (#4373).
-    if (shouldDeferTransientErrorToCoreRetry(cls, rawErrorMsg)) {
+    if (shouldDeferTransientErrorToCoreRetry(cls, rawErrorMsg, rawErrorMsg || displayMsg)) {
       return;
     }
 

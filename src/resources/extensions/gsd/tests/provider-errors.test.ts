@@ -495,6 +495,7 @@ test("agent_end retries when empty errorMessage has stream failure in content (#
   const timers: Array<{ fn: () => void; delay: number }> = [];
 
   resetTransientRetryState();
+  autoSession.active = true;
   globalThis.setTimeout = ((fn: () => void, delay?: number) => {
     timers.push({ fn, delay: delay ?? 0 });
     return 0 as unknown as ReturnType<typeof setTimeout>;
