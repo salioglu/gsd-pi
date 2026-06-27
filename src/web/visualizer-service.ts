@@ -10,6 +10,7 @@ import { resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subproc
 
 const VISUALIZER_MAX_BUFFER = 2 * 1024 * 1024
 const VISUALIZER_CACHE_TTL_MS = 10_000
+const VISUALIZER_TIMEOUT_MS = 30_000
 const VISUALIZER_MODULE_ENV = "GSD_VISUALIZER_MODULE"
 
 /**
@@ -154,6 +155,7 @@ async function loadVisualizerData(config: VisualizerRuntimeConfig): Promise<Seri
           GSD_VISUALIZER_BASE: projectCwd,
         },
         maxBuffer: VISUALIZER_MAX_BUFFER,
+        timeout: VISUALIZER_TIMEOUT_MS,
         windowsHide: true,
       },
       (error, stdout, stderr) => {
