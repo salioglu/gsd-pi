@@ -207,6 +207,7 @@ test("health widget async refresh does not block timers while git log is slow", 
   } as any);
 
   assert.ok(factory, "health widget factory is registered");
+  const resolvedFactory = factory;
 
   heartbeat = setInterval(() => {
     const now = performance.now();
@@ -214,7 +215,7 @@ test("health widget async refresh does not block timers while git log is slow", 
     lastTick = now;
   }, 25);
 
-  widget = factory(
+  widget = resolvedFactory(
     { requestRender: () => { resolveRefresh?.(); } },
     { fg: (_style: string, text: string) => text },
   );
