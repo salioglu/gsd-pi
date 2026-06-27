@@ -541,10 +541,18 @@ export async function handleCompleteSlice(
   // the event log entry (critical for worktree reconciliation).
   try {
     renderTopLevelRoadmapFromDb(artifactBasePath);
+  } catch (projErr) {
+    logWarning("tool", `complete-slice roadmap projection warning for ${params.milestoneId}/${params.sliceId}: ${(projErr as Error).message}`);
+  }
+  try {
     renderTopLevelQueueFromDb(artifactBasePath);
+  } catch (projErr) {
+    logWarning("tool", `complete-slice queue projection warning for ${params.milestoneId}/${params.sliceId}: ${(projErr as Error).message}`);
+  }
+  try {
     await renderStateProjection(artifactBasePath);
   } catch (projErr) {
-    logWarning("tool", `complete-slice projection warning for ${params.milestoneId}/${params.sliceId}: ${(projErr as Error).message}`);
+    logWarning("tool", `complete-slice state projection warning for ${params.milestoneId}/${params.sliceId}: ${(projErr as Error).message}`);
   }
   try {
     writeManifest(artifactBasePath);
