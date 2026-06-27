@@ -198,12 +198,12 @@ function runCli(plan: GoogleCliRunPlan, options?: SimpleStreamOptions): Promise<
 			child.stdin?.end(plan.stdin);
 		}
 
-		child.stdout.setEncoding("utf8");
-		child.stderr.setEncoding("utf8");
-		child.stdout.on("data", (chunk) => {
+		child.stdout!.setEncoding("utf8");
+		child.stderr!.setEncoding("utf8");
+		child.stdout!.on("data", (chunk) => {
 			stdout += chunk;
 		});
-		child.stderr.on("data", (chunk) => {
+		child.stderr!.on("data", (chunk) => {
 			stderr += chunk;
 		});
 
