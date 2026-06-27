@@ -13,7 +13,7 @@ import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-exten
 import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
 
 import { buildMilestoneFileName, canonicalPhaseDirName, clearPathCache, milestonesDir, legacyMilestonesDir, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
-import { applyAskUserQuestionsGateResult, clearDiscussionFlowState, formatPendingAskUserQuestionsGateMessage, formatTimedOutAskUserQuestionsGateMessage, hostWriteGateAdapter, isApprovalGateVerifiedInSnapshot, isDepthConfirmationAnswer, isMilestoneDepthVerified, isMilestoneDepthVerifiedInSnapshot, isQueuePhaseActive, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeBash, shouldBlockWorktreeWrite, isGateQuestionId, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { applyAskUserQuestionsGateResult, clearDiscussionFlowState, currentWriteGateSnapshot, formatPendingAskUserQuestionsGateMessage, formatTimedOutAskUserQuestionsGateMessage, hostWriteGateAdapter, isApprovalGateVerifiedInSnapshot, isDepthConfirmationAnswer, isMilestoneDepthVerifiedInSnapshot, isQueuePhaseActive, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeBash, shouldBlockWorktreeWrite, isGateQuestionId, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId, type WriteGateSnapshot } from "./write-gate.js";
 import { canonicalToolName } from "../engine-hook-contract.js";
 import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
@@ -583,6 +583,10 @@ function deferApprovalGate(gateId: string, basePath: string): void {
   // workflow MCP child already verified this gate, deferring would block
   // tools for a gate that can never legitimately arm.
   const snapshot = hostWriteGateAdapter.readState(basePath);
+  deferApprovalGateFromSnapshot(gateId, basePath, snapshot);
+}
+
+function deferApprovalGateFromSnapshot(gateId: string, basePath: string, snapshot: WriteGateSnapshot): void {
   if (isApprovalGateVerifiedInSnapshot(snapshot, gateId)) return;
   const milestoneId = extractDepthVerificationMilestoneId(gateId);
   if (milestoneId && isMilestoneDepthVerifiedInSnapshot(snapshot, milestoneId)) return;
@@ -1233,13 +1237,15 @@ export function registerHooks(
 
     const gateId = approvalGateIdForUnit(unitType, unitId);
     if (gateId) {
+      const basePath = contextBasePath(ctx);
+      const gateSnapshot = currentWriteGateSnapshot(basePath);
       // Skip the gate if this milestone is already depth-verified — the approval
       // pattern matched again on post-verification text (a false-positive re-trigger).
       // Without this guard, the second firing blocks gsd_plan_milestone in the same
       // turn and leaves CONTEXT.md on disk with no DB row (#discuss-milestone-no-db).
       const gateMilestoneId = extractDepthVerificationMilestoneId(gateId);
-      if (gateMilestoneId && isMilestoneDepthVerified(gateMilestoneId, contextBasePath(ctx))) return;
-      deferApprovalGate(gateId, contextBasePath(ctx));
+      if (gateMilestoneId && isMilestoneDepthVerifiedInSnapshot(gateSnapshot, gateMilestoneId)) return;
+      deferApprovalGateFromSnapshot(gateId, basePath, gateSnapshot);
     }
 
     approvalQuestionAbortInFlight = true;
