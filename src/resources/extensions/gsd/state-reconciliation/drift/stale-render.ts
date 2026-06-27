@@ -22,9 +22,9 @@ import {
   getSlice,
   getSliceTasks,
   isDbAvailable,
-  openDatabase,
   setSliceSummaryMd,
 } from "../../gsd-db.js";
+import { openWorkflowDatabasePath } from "../../db-workspace.js";
 import { gsdRoot, resolveSliceFile } from "../../paths.js";
 import type { GSDState } from "../../types.js";
 import { logWarning } from "../../workflow-logger.js";
@@ -123,7 +123,7 @@ function reopenDbForStaleRenderRepair(basePath: string): boolean {
   const dbPath = join(gsdRoot(basePath), "gsd.db");
   if (!existsSync(dbPath)) return false;
   try {
-    return openDatabase(dbPath);
+    return openWorkflowDatabasePath(dbPath);
   } catch (err) {
     logWarning("reconcile", `stale-render repair could not reopen DB: ${(err as Error).message}`);
     return false;

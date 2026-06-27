@@ -27,12 +27,11 @@ import {
   getTask,
   updateTaskStatus,
   deleteVerificationEvidence,
-  getDbPath,
   saveGateResult,
   getPendingGatesForTurn,
   isDbAvailable,
-  openDatabase,
 } from "../gsd-db.js";
+import { getWorkflowDatabasePath, openWorkflowDatabasePath } from "../db-workspace.js";
 import { getGatesForTurn } from "../gate-registry.js";
 import { gsdProjectionRoot, clearPathCache, resolveMilestonePath, resolveSlicePath } from "../paths.js";
 import { resolveCanonicalMilestoneRoot } from "../worktree-manager.js";
@@ -298,7 +297,7 @@ export async function handleCompleteTask(
   let guardError: string | null = null;
   let summaryMd = "";
   let repairTaskSummaryRow: TaskRow | null = null;
-  const rollbackDbPath = getDbPath();
+  const rollbackDbPath = getWorkflowDatabasePath();
 
   // ── ADR-011 Phase 2: validate escalation payload BEFORE any side effects ─
   // Building the artifact runs the full shape validation (2-4 options, unique
@@ -479,7 +478,7 @@ export async function handleCompleteTask(
     });
     try {
       if (!isDbAvailable() && rollbackDbPath && rollbackDbPath !== ":memory:") {
-        openDatabase(rollbackDbPath);
+        openWorkflowDatabasePath(rollbackDbPath);
       }
       deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
       updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, "pending");
