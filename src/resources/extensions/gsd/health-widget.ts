@@ -16,14 +16,31 @@ import {
   buildHealthLines,
   detectHealthWidgetProjectState,
   type HealthWidgetData,
+  type HealthWidgetProjectState,
 } from "./health-widget-core.js";
 
 export const HEALTH_WIDGET_ACTIVE_HINTS =
   "  /gsd auto to run  ·  /gsd status to inspect  ·  /gsd report for snapshots  ·  /gsd notifications for history  ·  /gsd help";
 
 const LAST_COMMIT_LOOKUP_TIMEOUT_MS = 3_000;
+const REFRESH_INTERVAL_MS = 60_000;
+const PROJECT_STATE_CACHE_TTL_MS = REFRESH_INTERVAL_MS;
 
 // ── Data loader ────────────────────────────────────────────────────────────────
+
+const projectStateCache = new Map<string, { state: HealthWidgetProjectState; computedAt: number }>();
+
+export function getCachedProjectState(basePath: string, force?: boolean): HealthWidgetProjectState {
+  const now = Date.now();
+  const cached = projectStateCache.get(basePath);
+  if (!force && cached && now - cached.computedAt <= PROJECT_STATE_CACHE_TTL_MS) {
+    return cached.state;
+  }
+
+  const state = detectHealthWidgetProjectState(basePath);
+  projectStateCache.set(basePath, { state, computedAt: now });
+  return state;
+}
 
 function runHealthWidgetGit(basePath: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
@@ -67,7 +84,7 @@ async function loadLastCommitInfoAsync(basePath: string): Promise<{ epoch: numbe
 
 function loadHealthWidgetData(
   basePath: string,
-  options?: { includeChecks?: boolean },
+  options?: { includeChecks?: boolean; forceProjectState?: boolean },
 ): HealthWidgetData {
   // `includeChecks` gates the expensive subprocess-backed checks (provider +
   // environment doctor: `lsof`, `docker`, `node --version`, ...). The initial
@@ -82,7 +99,7 @@ function loadHealthWidgetData(
   let lastCommitEpoch: number | null = null;
   let lastCommitMessage: string | null = null;
 
-  const projectState = detectHealthWidgetProjectState(basePath);
+  const projectState = getCachedProjectState(basePath, options?.forceProjectState);
 
   try {
     const prefs = loadEffectiveGSDPreferences();
@@ -159,8 +176,6 @@ async function loadHealthWidgetDataAsync(basePath: string): Promise<HealthWidget
 
 // ── Widget init ────────────────────────────────────────────────────────────────
 
-const REFRESH_INTERVAL_MS = 60_000;
-
 /**
  * Initialize the always-on gsd-health widget (belowEditor).
  * Call once from the extension entry point after context is available.
@@ -170,13 +185,17 @@ export function initHealthWidget(ctx: ExtensionContext): void {
 
   const basePath = projectRoot();
 
+  // Re-init must reflect filesystem changes immediately; the TTL cache is for
+  // interval refreshes, not this one-off synchronous paint.
+  projectStateCache.delete(basePath);
+
   // String-array fallback — used in RPC mode (factory is a no-op there).
   // Skip the expensive provider/environment doctor checks here: this runs
   // synchronously on the interactive-startup path, where running them would
   // block first paint by ~0.9s (lsof/docker probes, otherwise run again
   // immediately by the factory below). The factory's async refresh fills in
   // real health once the screen is up.
-  const initialData = loadHealthWidgetData(basePath, { includeChecks: false });
+  const initialData = loadHealthWidgetData(basePath, { includeChecks: false, forceProjectState: true });
   ctx.ui.setWidget("gsd-health", buildHealthLines(initialData), { placement: "belowEditor" });
 
   // Factory-based widget for TUI mode — replaces the string-array above

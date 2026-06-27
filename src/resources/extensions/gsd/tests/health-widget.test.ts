@@ -14,7 +14,7 @@ import {
   formatRelativeTime,
   type HealthWidgetData,
 } from "../health-widget-core.ts";
-import { HEALTH_WIDGET_ACTIVE_HINTS, initHealthWidget } from "../health-widget.ts";
+import { HEALTH_WIDGET_ACTIVE_HINTS, getCachedProjectState, initHealthWidget } from "../health-widget.ts";
 import { registerHooks } from "../bootstrap/register-hooks.ts";
 import { GIT_NO_PROMPT_ENV } from "../git-constants.ts";
 
@@ -123,6 +123,86 @@ test("detectHealthWidgetProjectState: milestone without metrics returns active",
 
   mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
   assert.equal(detectHealthWidgetProjectState(dir), "active");
+});
+
+test("getCachedProjectState: reuses project state until the refresh TTL expires", (t) => {
+  const dir = makeTempDir("cached-state");
+  t.after(() => { cleanup(dir); });
+
+  let now = 1_000_000;
+  const dateNow = t.mock.method(Date, "now", () => now);
+  t.after(() => { dateNow.mock.restore(); });
+
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  assert.equal(getCachedProjectState(dir), "initialized");
+
+  mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
+  assert.equal(getCachedProjectState(dir), "initialized");
+
+  now += 60_000;
+  assert.equal(getCachedProjectState(dir), "initialized");
+
+  now += 1;
+  assert.equal(getCachedProjectState(dir), "active");
+});
+
+test("getCachedProjectState: force=true bypasses TTL and returns fresh state within TTL window", (t) => {
+  const dir = makeTempDir("forced-state");
+  t.after(() => { cleanup(dir); });
+
+  let now = 2_000_000;
+  const dateNow = t.mock.method(Date, "now", () => now);
+  t.after(() => { dateNow.mock.restore(); });
+
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  // Prime the cache with "initialized".
+  assert.equal(getCachedProjectState(dir), "initialized");
+
+  // Disk changes within the TTL window.
+  mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
+  now += 1_000; // well within 60s TTL
+
+  // Normal call still returns stale cached value.
+  assert.equal(getCachedProjectState(dir), "initialized");
+
+  // force=true bypasses TTL and returns the fresh disk state.
+  assert.equal(getCachedProjectState(dir, true), "active");
+
+  // Subsequent non-forced call also reflects the freshened cache.
+  assert.equal(getCachedProjectState(dir), "active");
+});
+
+test("initHealthWidget: re-init paints fresh project state within cache TTL", (t) => {
+  const dir = makeTempDir("reinit-state");
+  t.after(() => { cleanup(dir); });
+
+  let now = 3_000_000;
+  const dateNow = t.mock.method(Date, "now", () => now);
+  t.after(() => { dateNow.mock.restore(); });
+
+  const originalCwd = process.cwd();
+  process.chdir(dir);
+  t.after(() => { process.chdir(originalCwd); });
+
+  const initialLineSets: string[][] = [];
+  const ctx = {
+    hasUI: true,
+    ui: {
+      setWidget: (_key: string, value: unknown) => {
+        if (Array.isArray(value)) initialLineSets.push(value as string[]);
+      },
+    },
+  } as any;
+
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  initHealthWidget(ctx);
+  assert.equal(initialLineSets.at(-1)?.[0], "  GSD  Project Initialized");
+
+  mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
+  now += 1_000;
+
+  initHealthWidget(ctx);
+  assert.match(initialLineSets.at(-1)?.[0] ?? "", /System OK/);
 });
 
 test("buildHealthLines: none state shows single onboarding line pointing at /gsd", (t) => {
