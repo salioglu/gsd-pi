@@ -421,6 +421,9 @@ export const UNIT_REGISTRY = {
       requiredWorkflowTools: ["ask_user_questions"],
     },
   },
+  // research-project dispatches 4 parallel scout subagents (Task calls); each scout
+  // writes one file under .gsd/research/ directly. The parent coordinator does not
+  // call gsd_summary_save or gsd_decision_save — the scouts own their own output.
   "research-project": {
     kind: "primary",
     scopeClass: "standard",
