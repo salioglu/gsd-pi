@@ -175,6 +175,7 @@ function resolveCompletionStopFromOutcome(
 // tolerates — same behavior as a fresh session.
 const STUCK_RECOVERY_ATTEMPTS_KEY = "stuck_recovery_attempts";
 const MAX_CONSECUTIVE_ALREADY_ACTIVE_SKIPS = 3;
+const MAX_CONSECUTIVE_ORCHESTRATION_SKIPS = 3;
 const ORCHESTRATION_MISSING_REASON =
   "Auto Orchestration Module is not wired; cannot dispatch built-in GSD Unit.";
 
@@ -419,6 +420,8 @@ export async function autoLoop(
   let consecutiveErrors = 0;
   let consecutiveCooldowns = 0;
   let consecutiveAlreadyActiveSkips = 0;
+  let consecutiveOrchestrationSkips = 0;
+  let lastOrchestrationSkipKey: string | null = null;
   const recentErrorMessages: string[] = [];
 
   while (s.active) {
@@ -938,11 +941,52 @@ export async function autoLoop(
 
           if (orchestrationResult.kind === "skipped") {
             s.pendingOrchestrationDispatch = null;
+            // Idempotent re-poll skips are benign (an active unit is still running).
+            // The orchestrator's own stuck-window detection handles the truly-stuck case.
+            // Do not count these toward the consecutive-skip streak.
+            if (orchestrationResult.reason === "idempotent advance: unit already active") {
+              emitIterationEnd({ skipped: true });
+              completeIteration();
+              finishTurn("skipped");
+              continue;
+            }
+            const skipState = orchestrationResult.stateSnapshot;
+            const skipKey = [
+              orchestrationResult.reason,
+              skipState?.phase,
+              skipState?.activeMilestone?.id,
+              skipState?.activeSlice?.id,
+              skipState?.activeTask?.id,
+            ].join("|");
+            consecutiveOrchestrationSkips = skipKey === lastOrchestrationSkipKey
+              ? consecutiveOrchestrationSkips + 1
+              : 1;
+            lastOrchestrationSkipKey = skipKey;
+            if (consecutiveOrchestrationSkips >= MAX_CONSECUTIVE_ORCHESTRATION_SKIPS) {
+              const msg = `Orchestration skipped ${consecutiveOrchestrationSkips} consecutive attempts without progress. Pausing auto-mode for manual recovery.`;
+              ctx.ui.notify(msg, "error");
+              await deps.pauseAuto(ctx, pi, {
+                message: msg,
+                category: "unknown",
+              }, {
+                expectedCurrentUnit: null,
+              });
+              finishTurn("paused", "manual-attention", orchestrationResult.reason ?? "orchestration-skipped");
+              finishIncompleteIteration({
+                status: "paused",
+                reason: orchestrationResult.reason ?? "orchestration-skipped",
+                failureClass: "manual-attention",
+              });
+              break;
+            }
             emitIterationEnd({ skipped: true });
             completeIteration();
             finishTurn("skipped");
             continue;
           }
+
+          consecutiveOrchestrationSkips = 0;
+          lastOrchestrationSkipKey = null;
 
           if (orchestrationResult.kind === "paused") {
             s.pendingOrchestrationDispatch = null;
