@@ -153,6 +153,18 @@ export const CONTEXT_MODE_GUIDANCE_BY_UNIT: Readonly<Record<string, string>> = {
     "Use `gsd_milestone_status` to inspect current milestone state, then `gsd_reassess_roadmap` to persist the roadmap reassessment.",
   "run-uat":
     "Use `gsd_uat_exec` for acceptance checks so evidence is typed as UAT-owned, and `gsd_resume` after compaction or resume.",
+  "gate-evaluate":
+    "Use `subagent` to dispatch tester agents, then persist each gate with `gsd_save_gate_result`; rely on testers for verification evidence.",
+};
+
+// Per-unit guidance for the nested render mode (renderMode: "nested"), used when this
+// unit's Context Mode line is embedded into a subagent prompt — e.g. the tester prompts
+// dispatched by gate-evaluate. Must instruct the subagent on what IT should do, not
+// re-state the parent coordinator's dispatch instructions. Falls back to
+// CONTEXT_MODE_GUIDANCE_BY_UNIT then the lane default when no nested entry exists.
+export const CONTEXT_MODE_NESTED_GUIDANCE_BY_UNIT: Readonly<Record<string, string>> = {
+  "gate-evaluate":
+    "Run verification checks to answer the gate question, then persist the verdict with `gsd_save_gate_result`.",
 };
 
 /**
@@ -170,7 +182,9 @@ export function composeContextModeInstructions(
 
   const lane = CONTEXT_MODE_LANE_LABELS[manifest.contextMode];
   const guidance =
-    CONTEXT_MODE_GUIDANCE_BY_UNIT[unitType] ?? CONTEXT_MODE_GUIDANCE_BY_LANE[manifest.contextMode];
+    (opts.renderMode === "nested" ? CONTEXT_MODE_NESTED_GUIDANCE_BY_UNIT[unitType] : undefined)
+    ?? CONTEXT_MODE_GUIDANCE_BY_UNIT[unitType]
+    ?? CONTEXT_MODE_GUIDANCE_BY_LANE[manifest.contextMode];
   if (opts.renderMode === "nested") {
     return `Context Mode (${lane} lane): ${guidance}`;
   }

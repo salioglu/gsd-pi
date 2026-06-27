@@ -142,9 +142,13 @@ test("Context Mode composer: nested output is compact single sentence", () => {
   assert.ok(!out.startsWith("## Context Mode"));
   assert.match(out, /^Context Mode \(verification lane\): /);
   assert.strictEqual(out.split(/\n/).length, 1);
-  assert.match(out, /`gsd_exec`/);
-  assert.match(out, /`gsd_exec_search`/);
-  assert.match(out, /`gsd_resume`/);
+  // Nested guidance is embedded into tester subagent prompts — it must instruct the tester
+  // to run verification and call gsd_save_gate_result, NOT to dispatch further subagents.
+  assert.doesNotMatch(out, /`subagent`/, "tester prompts must not be told to dispatch subagents");
+  assert.match(out, /`gsd_save_gate_result`/);
+  assert.doesNotMatch(out, /`gsd_exec`/);
+  assert.doesNotMatch(out, /`gsd_exec_search`/);
+  assert.doesNotMatch(out, /`gsd_resume`/);
   assert.ok(out.length < 240, `nested guidance should stay compact, got ${out.length} chars`);
 });
 
@@ -196,6 +200,10 @@ const contextModeGuidanceOverrideExpectedTools: Record<string, readonly string[]
   "run-uat": [
     "gsd_uat_exec",
     "gsd_resume",
+  ],
+  "gate-evaluate": [
+    "subagent",
+    "gsd_save_gate_result",
   ],
 };
 
