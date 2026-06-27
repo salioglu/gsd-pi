@@ -2,11 +2,13 @@
 // File Purpose: Always-on ambient health signal rendered below the editor.
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
+import { execFile } from "node:child_process";
 import type { GSDState } from "./types.js";
 import { runProviderChecks, summariseProviderIssues } from "./doctor-providers.js";
 import { runEnvironmentChecks, runEnvironmentChecksAsync } from "./doctor-environment.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { nativeIsRepo, nativeLastCommitEpoch, nativeGetCurrentBranch, nativeCommitSubject } from "./native-git-bridge.js";
+import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 import { loadLedgerFromDisk, getProjectTotals } from "./metrics.js";
 import { describeNextUnit, estimateTimeRemaining, updateSliceProgressCache } from "./auto-dashboard.js";
 import { projectRoot } from "./commands/context.js";
@@ -20,11 +22,13 @@ import {
 export const HEALTH_WIDGET_ACTIVE_HINTS =
   "  /gsd auto to run  ·  /gsd status to inspect  ·  /gsd report for snapshots  ·  /gsd notifications for history  ·  /gsd help";
 
+const LAST_COMMIT_LOOKUP_TIMEOUT_MS = 3_000;
+
 // ── Data loader ────────────────────────────────────────────────────────────────
 
 // Last-commit lookup is subprocess-backed (native-git-bridge → git spawns),
 // so it is treated like the other expensive checks: skipped on first paint,
-// run only by the background refresh.
+// and never used by the async widget refresh path.
 function loadLastCommitInfo(basePath: string): { epoch: number | null; message: string | null } {
   try {
     if (nativeIsRepo(basePath)) {
@@ -36,6 +40,46 @@ function loadLastCommitInfo(basePath: string): { epoch: number | null; message: 
     }
   } catch { /* non-fatal */ }
   return { epoch: null, message: null };
+}
+
+function runHealthWidgetGit(basePath: string, args: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    const child = execFile(
+      "git",
+      args,
+      {
+        cwd: basePath,
+        timeout: LAST_COMMIT_LOOKUP_TIMEOUT_MS,
+        encoding: "utf-8",
+        env: GIT_NO_PROMPT_ENV,
+      },
+      (err, stdout) => resolve(err ? null : String(stdout).trimEnd()),
+    );
+    child.on("error", () => resolve(null));
+  });
+}
+
+async function loadLastCommitInfoAsync(basePath: string): Promise<{ epoch: number | null; message: string | null }> {
+  try {
+    if ((await runHealthWidgetGit(basePath, ["rev-parse", "--git-dir"])) === null) {
+      return { epoch: null, message: null };
+    }
+
+    const branch = await runHealthWidgetGit(basePath, ["branch", "--show-current"]);
+    const ref = branch || "HEAD";
+    const raw = await runHealthWidgetGit(basePath, ["log", "-1", "--format=%ct%x00%s", ref]);
+    if (!raw) return { epoch: null, message: null };
+
+    const separator = raw.indexOf("\0");
+    const epochText = separator >= 0 ? raw.slice(0, separator) : raw;
+    const epoch = parseInt(epochText.trim(), 10) || 0;
+    if (epoch <= 0) return { epoch: null, message: null };
+
+    const message = separator >= 0 ? raw.slice(separator + 1).trim() : "";
+    return { epoch, message: message || null };
+  } catch {
+    return { epoch: null, message: null };
+  }
 }
 
 function loadHealthWidgetData(
@@ -104,10 +148,8 @@ function loadHealthWidgetData(
 }
 
 // Non-blocking variant used by the widget's background refresh: the cheap fields
-// come from the synchronous snapshot, then provider + environment checks are
-// layered in off the event-loop critical path (env checks run concurrently via
-// runEnvironmentChecksAsync). Keeps the always-on widget from stalling the UI on
-// its initial enrichment or its 60s refresh.
+// come from the synchronous snapshot, then provider, environment, and last-commit
+// checks are layered in off the event-loop critical path.
 async function loadHealthWidgetDataAsync(basePath: string): Promise<HealthWidgetData> {
   const data = loadHealthWidgetData(basePath, { includeChecks: false });
   let providerIssue = data.providerIssue;
@@ -126,7 +168,7 @@ async function loadHealthWidgetDataAsync(basePath: string): Promise<HealthWidget
     }
   } catch { /* non-fatal */ }
 
-  const commit = loadLastCommitInfo(basePath);
+  const commit = await loadLastCommitInfoAsync(basePath);
 
   return {
     ...data,

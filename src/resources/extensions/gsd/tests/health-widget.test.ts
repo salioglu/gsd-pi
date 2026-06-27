@@ -3,8 +3,10 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { performance } from "node:perf_hooks";
+import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   buildHealthLines,
@@ -12,8 +14,9 @@ import {
   formatRelativeTime,
   type HealthWidgetData,
 } from "../health-widget-core.ts";
-import { HEALTH_WIDGET_ACTIVE_HINTS } from "../health-widget.ts";
+import { HEALTH_WIDGET_ACTIVE_HINTS, initHealthWidget } from "../health-widget.ts";
 import { registerHooks } from "../bootstrap/register-hooks.ts";
+import { GIT_NO_PROMPT_ENV } from "../git-constants.ts";
 
 function makeTempDir(prefix: string): string {
   const dir = join(
@@ -31,6 +34,58 @@ function cleanup(dir: string): void {
     // best-effort
   }
 }
+
+function runGit(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function makeTempRepo(prefix: string): string {
+  const dir = makeTempDir(prefix);
+  runGit(dir, "init");
+  runGit(dir, "config", "user.email", "test@test.com");
+  runGit(dir, "config", "user.name", "Test");
+  writeFileSync(join(dir, "README.md"), "# test\n", "utf-8");
+  runGit(dir, "add", "README.md");
+  runGit(dir, "commit", "-m", "initial commit");
+  return dir;
+}
+
+function installSlowGitLogShim(binDir: string): void {
+  writeFileSync(
+    join(binDir, "git"),
+    [
+      "#!/bin/sh",
+      'if [ "$1" = "log" ]; then sleep 1; fi',
+      'PATH="$GSD_REAL_PATH"',
+      "export PATH",
+      'exec git "$@"',
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+  chmodSync(join(binDir, "git"), 0o755);
+
+  writeFileSync(
+    join(binDir, "git.cmd"),
+    [
+      "@echo off",
+      'if "%1"=="log" powershell -NoProfile -Command "Start-Sleep -Seconds 1"',
+      'set "PATH=%GSD_REAL_PATH%"',
+      "git %*",
+      "",
+    ].join("\r\n"),
+    "utf-8",
+  );
+}
+
+type HealthWidgetFactory = (
+  tui: { requestRender(): void },
+  theme: { fg(style: string, text: string): string },
+) => { dispose(): void };
 
 function activeData(overrides: Partial<HealthWidgetData> = {}): HealthWidgetData {
   return {
@@ -99,6 +154,84 @@ test("health widget active hints include visualization and notifications", () =>
   assert.match(HEALTH_WIDGET_ACTIVE_HINTS, /\/gsd report for snapshots/);
   assert.match(HEALTH_WIDGET_ACTIVE_HINTS, /\/gsd notifications for history/);
   assert.match(HEALTH_WIDGET_ACTIVE_HINTS, /\/gsd help/);
+});
+
+test("health widget async refresh does not block timers while git log is slow", async (t) => {
+  const dir = makeTempRepo("slow-git-log");
+  const binDir = makeTempDir("slow-git-log-bin");
+  mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
+  installSlowGitLogShim(binDir);
+
+  const originalCwd = process.cwd();
+  const originalProcessPath = process.env.PATH;
+  const originalEnvPath = GIT_NO_PROMPT_ENV.PATH;
+  const originalEnvRealPath = GIT_NO_PROMPT_ENV.GSD_REAL_PATH;
+  const shimmedPath = `${binDir}${delimiter}${originalProcessPath ?? ""}`;
+
+  process.chdir(dir);
+  process.env.PATH = shimmedPath;
+  GIT_NO_PROMPT_ENV.PATH = shimmedPath;
+  GIT_NO_PROMPT_ENV.GSD_REAL_PATH = originalProcessPath ?? "";
+
+  let factory: HealthWidgetFactory | null = null;
+  let resolveRefresh: (() => void) | undefined;
+  const refreshed = new Promise<void>((resolve) => { resolveRefresh = resolve; });
+  const gaps: number[] = [];
+  let lastTick = performance.now();
+  let heartbeat: NodeJS.Timeout | undefined;
+  let refreshTimeout: NodeJS.Timeout | undefined;
+  let widget: { dispose(): void } | undefined;
+
+  t.after(() => {
+    if (widget) widget.dispose();
+    if (heartbeat) clearInterval(heartbeat);
+    if (refreshTimeout) clearTimeout(refreshTimeout);
+    process.chdir(originalCwd);
+    if (originalProcessPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalProcessPath;
+    if (originalEnvPath === undefined) delete GIT_NO_PROMPT_ENV.PATH;
+    else GIT_NO_PROMPT_ENV.PATH = originalEnvPath;
+    if (originalEnvRealPath === undefined) delete GIT_NO_PROMPT_ENV.GSD_REAL_PATH;
+    else GIT_NO_PROMPT_ENV.GSD_REAL_PATH = originalEnvRealPath;
+    cleanup(binDir);
+    cleanup(dir);
+  });
+
+  initHealthWidget({
+    hasUI: true,
+    ui: {
+      setWidget: (_key: string, value: unknown) => {
+        if (typeof value === "function") factory = value as HealthWidgetFactory;
+      },
+    },
+  } as any);
+
+  assert.ok(factory, "health widget factory is registered");
+
+  heartbeat = setInterval(() => {
+    const now = performance.now();
+    gaps.push(now - lastTick);
+    lastTick = now;
+  }, 25);
+
+  // assert.ok above guards at runtime; double-cast is needed because TypeScript
+  // cannot track the factory assignment through the `as any` closure call.
+  widget = (factory as unknown as HealthWidgetFactory)(
+    { requestRender: () => { resolveRefresh?.(); } },
+    { fg: (_style: string, text: string) => text },
+  );
+
+  await Promise.race([
+    refreshed,
+    new Promise<never>((_, reject) => {
+      refreshTimeout = setTimeout(() => reject(new Error("health widget refresh did not complete")), 4_000);
+    }),
+  ]);
+  if (refreshTimeout) clearTimeout(refreshTimeout);
+
+  assert.ok(gaps.length > 0, "heartbeat ran while refresh was in flight");
+  const maxGap = Math.max(...gaps);
+  assert.ok(maxGap < 750, `slow git log must not starve timers; max gap was ${Math.round(maxGap)}ms`);
 });
 
 test("buildHealthLines: active state with budget ceiling shows percent summary", (t) => {
