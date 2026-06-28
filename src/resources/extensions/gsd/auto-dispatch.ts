@@ -30,6 +30,7 @@ import {
   setSliceSketchFlag,
   transaction,
   getAssessment,
+  getSliceRunUatAssessment,
 } from "./gsd-db.js";
 import { isClosedStatus } from "./status-guards.js";
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
@@ -320,6 +321,19 @@ export async function readUatGateVerdict(
     if (legacyUatVerdict) {
       return { verdict: legacyUatVerdict, uatType };
     }
+  }
+
+  // ADR-017 DB fallback: when the ASSESSMENT markdown is missing or orphaned
+  // from its canonical path (e.g. after a milestone artifact-layout migration
+  // moves slice artifacts from `phases/…` to `milestones/…`), consult the
+  // authoritative assessments table by (mid, slice) identity instead of path.
+  // `gsd_uat_result_save` always writes this row, so it is the source of truth.
+  const runUatAssessment = getSliceRunUatAssessment(mid, sliceId);
+  if (runUatAssessment?.status) {
+    return {
+      verdict: runUatAssessment.status,
+      uatType: uatType ?? extractUatType(runUatAssessment.fullContent),
+    };
   }
 
   return null;

@@ -544,6 +544,31 @@ export function getAssessment(path: string): Record<string, unknown> | null {
   return row ?? null;
 }
 
+/**
+ * Look up a slice's `run-uat` assessment by (milestoneId, sliceId) identity,
+ * independent of the artifact `path`. Used as a DB fallback by the UAT
+ * closeout gate when a path migration orphans the ASSESSMENT markdown from its
+ * canonical expected path (ADR-017: DB-authoritative UAT sign-off).
+ *
+ * `status` holds the normalized verdict (`pass`/`fail`/…) written by
+ * `executeUatResultSave`; `fullContent` carries the ASSESSMENT body so callers
+ * can derive `uatType` without re-reading a file that may not exist.
+ */
+export function getSliceRunUatAssessment(
+  milestoneId: string,
+  sliceId: string,
+): { status: string; fullContent: string } | null {
+  if (!getDbOrNull()!) return null;
+  const row = getDbOrNull()!.prepare(
+    `SELECT status, full_content AS fullContent FROM assessments
+      WHERE milestone_id = :mid AND slice_id = :sid AND scope = 'run-uat'
+      ORDER BY created_at DESC, ROWID DESC
+      LIMIT 1`,
+  ).get({ ":mid": milestoneId, ":sid": sliceId });
+  if (!row) return null;
+  return { status: String(row["status"] ?? ""), fullContent: String(row["fullContent"] ?? "") };
+}
+
 export function getLatestAssessmentByScope(
   milestoneId: string,
   scope: string,
