@@ -19,7 +19,7 @@
  *   4. remove()  — git worktree remove + branch cleanup
  */
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, resolve, sep } from "node:path";
 import { GSDError, GSD_PARSE_ERROR, GSD_STALE_STATE, GSD_LOCK_HELD, GSD_GIT_ERROR, GSD_MERGE_CONFLICT } from "./errors.js";
@@ -37,6 +37,7 @@ import {
   nativeGetCurrentBranch,
   nativeIsAncestor,
   nativeLogOneline,
+  nativeMergeAbort,
   nativeMergeSquash,
   nativeWorktreeAdd,
   nativeWorktreeList,
@@ -84,6 +85,33 @@ function deleteBranchIfPresent(basePath: string, branch: string, warningPrefix: 
     nativeBranchDelete(basePath, branch, true);
   } catch (e) {
     logWarning("worktree", `${warningPrefix}: ${(e as Error).message}`);
+  }
+}
+
+function cleanupFailedSquashMergeState(basePath: string): void {
+  try {
+    nativeMergeAbort(basePath);
+  } catch {
+    // Squash conflicts may not create MERGE_HEAD; continue with reset/marker cleanup.
+  }
+  try {
+    execFileSync("git", ["reset", "--merge"], {
+      cwd: basePath,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+    });
+  } catch (e) {
+    logWarning("worktree", `failed squash merge reset failed: ${(e as Error).message}`);
+  }
+
+  const gitDir = resolveGitDir(basePath);
+  for (const marker of ["SQUASH_MSG", "MERGE_MSG", "MERGE_MODE", "MERGE_HEAD", "AUTO_MERGE"]) {
+    try {
+      const markerPath = join(gitDir, marker);
+      if (existsSync(markerPath)) unlinkSync(markerPath);
+    } catch (e) {
+      logWarning("worktree", `failed squash merge marker cleanup failed (${marker}): ${(e as Error).message}`);
+    }
   }
 }
 
@@ -1086,6 +1114,17 @@ export function mergeWorktreeToMain(
 
   const result = nativeMergeSquash(basePath, branch);
   if (!result.success) {
+    const dirtyWorkingTree = result.conflicts.includes("__dirty_working_tree__");
+    if (!dirtyWorkingTree) {
+      cleanupFailedSquashMergeState(basePath);
+    }
+    if (!dirtyWorkingTree && branch.startsWith("milestone/")) {
+      try {
+        removeWorktree(basePath, name, { branch, deleteBranch: true, force: true });
+      } catch (e) {
+        logWarning("worktree", `failed milestone branch cleanup after squash merge failure: ${(e as Error).message}`);
+      }
+    }
     throw new GSDError(GSD_MERGE_CONFLICT, `Merge conflicts detected in: ${result.conflicts.join(", ")}`);
   }
 
