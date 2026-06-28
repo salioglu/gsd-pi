@@ -557,6 +557,10 @@ export class AgentSessionPromptModule {
 			this.host._retryAbortController = undefined;
 		}
 
+		// Only record a fingerprint when the current failure is a terminal kind (terminated/timeout).
+		// Unconditionally assigning retryFingerprint would clear the stored fingerprint for other
+		// retryable errors (e.g. overloaded_error), allowing a later identical terminated/timeout
+		// failure to bypass the no-progress guard.
 		if (retryFingerprint !== undefined) {
 			this.lastNoProgressTerminalRetry = retryFingerprint;
 		}
