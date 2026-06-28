@@ -773,13 +773,13 @@ test("#1003: stale-render plan repair switches back from an open wrong DB", asyn
 });
 
 test("#1034: validation-blocked milestone summary drift returns blocker instead of exhausting repair passes", async () => {
-  const drift: DriftRecord = {
+  const drift: Extract<DriftRecord, { kind: "stale-render" }> = {
     kind: "stale-render",
     renderPath: "/repo/.gsd/milestones/M001/M001-SUMMARY.md",
     reason: "M001 is complete with summary in DB but SUMMARY.md missing on disk",
   };
   let repairCalled = false;
-  const handler: DriftHandler = {
+  const handler: DriftHandler<Extract<DriftRecord, { kind: "stale-render" }>> = {
     kind: "stale-render",
     detect: () => [drift],
     blocker: staleRenderHandler.blocker!,
