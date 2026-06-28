@@ -13,6 +13,7 @@ import {
   diffWorktreeNumstat,
   getWorktreeGSDDiff,
   getWorktreeLog,
+  mergeWorktreeToMain,
   worktreeBranchName,
   worktreePath,
   pruneEphemeralGhostWorktreeDirectories,
@@ -330,6 +331,44 @@ describe("getWorktreeLog", () => {
   test("shows commits", () => {
     const log = getWorktreeLog(base, "feature-x");
     assert.ok(log.includes("add M002"), "log should include the commit message");
+  });
+});
+
+// ─── mergeWorktreeToMain ─────────────────────────────────────────────────────
+
+describe("mergeWorktreeToMain", () => {
+  let base: string;
+  let wtPath: string;
+
+  beforeEach(() => {
+    base = makeBaseRepo();
+    wtPath = worktreePath(base, "M900");
+    mkdirSync(join(base, ".gsd-worktrees"), { recursive: true });
+    run(`git worktree add -b milestone/M900 "${wtPath}"`, base);
+  });
+
+  afterEach(() => { rmSync(base, { recursive: true, force: true }); });
+
+  test("cleans failed milestone squash state and deletes orphan branch", () => {
+    writeFileSync(join(wtPath, "README.md"), "# Milestone change\n", "utf-8");
+    run("git add README.md", wtPath);
+    run('git commit -m "feat: milestone change"', wtPath);
+
+    writeFileSync(join(base, "README.md"), "# Main change\n", "utf-8");
+    run("git add README.md", base);
+    run('git commit -m "feat: main change"', base);
+
+    assert.throws(
+      () => mergeWorktreeToMain(base, "M900", "feat: merge M900", "milestone/M900"),
+      /Merge conflicts detected/,
+    );
+
+    assert.equal(run("git status --porcelain", base), "", "failed squash cleanup should leave main clean");
+    assert.ok(!existsSync(wtPath), "failed milestone worktree should be removed");
+    assert.ok(
+      !run("git branch", base).includes("milestone/M900"),
+      "failed milestone branch should be deleted after worktree removal",
+    );
   });
 });
 

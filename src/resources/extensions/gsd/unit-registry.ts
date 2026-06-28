@@ -345,7 +345,13 @@ export const UNIT_REGISTRY = {
     scopeClass: "execute-task",
     phaseChain: ["execution"],
     toolContract: {
-      allowedGsdTools: ["gsd_task_complete", "gsd_summary_save", "gsd_decision_save"],
+      allowedGsdTools: [
+        "gsd_milestone_status",
+        "gsd_task_complete",
+        "gsd_exec",
+        "gsd_summary_save",
+        "gsd_decision_save",
+      ],
       requiredWorkflowTools: ["gsd_task_complete", "gsd_summary_save"],
     },
   },
