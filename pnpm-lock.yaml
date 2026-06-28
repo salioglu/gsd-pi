@@ -597,6 +597,9 @@ importers:
 
   web:
     dependencies:
+      '@gsd/agent-core':
+        specifier: workspace:*
+        version: link:../packages/gsd-agent-core
       '@hookform/resolvers':
         specifier: ^3.9.1
         version: 3.10.0(react-hook-form@7.76.1(react@19.2.5))
