@@ -104,7 +104,7 @@ export function checkToolCallLoop(
       reason:
         `Tool loop detected (identical args): ${toolName} called ${consecutiveCount} times ` +
         `with identical arguments. Blocking to prevent infinite loop. ` +
-        `Try a different approach or modify your arguments.`,
+        `Do not retry this tool or call other tools this turn — stop and respond to the user in text.`,
       count: consecutiveCount,
     };
   }
@@ -124,7 +124,8 @@ export function checkToolCallLoop(
       reason:
         `Tool loop detected (repeated tool): ${toolName} called ${perToolCount} times ` +
         `this turn (cap ${perToolCap}). Blocking to prevent infinite loop. ` +
-        `The tool may be unavailable or failing repeatedly — try a different approach.`,
+        `The tool may be unavailable or failing repeatedly. ` +
+        `Do not retry this tool or pivot to other tools this turn — stop and respond to the user in text.`,
       count: perToolCount,
     };
   }
