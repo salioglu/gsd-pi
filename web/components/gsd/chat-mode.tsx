@@ -20,7 +20,6 @@ import {
   type CompletedToolExecution,
   type ActiveToolExecution,
   type PendingUiRequest,
-  type TurnSegment,
 } from "@/lib/gsd-workspace-store"
 import { deriveWorkflowAction } from "@/lib/workflow-actions"
 import { useTerminalFontSize } from "@/lib/use-terminal-font-size"
@@ -1099,66 +1098,6 @@ const ChatBubble = memo(function ChatBubble({
   )
 })
 
-/* ─── ChatMessageList ─── */
-
-/**
- * Renders ChatMessage[] as a scrollable list of ChatBubble components.
- *
- * Scroll behavior:
- *   - Auto-scrolls to bottom on new messages ONLY when the user is within 100px of bottom
- *   - If the user has scrolled up to read history, auto-scroll is suppressed
- */
-function ChatMessageList({
-  messages,
-  onSubmitPrompt,
-  fontSize,
-}: {
-  messages: ChatMessage[]
-  onSubmitPrompt: (data: string) => void
-  fontSize?: number
-}) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const isNearBottomRef = useRef(true)
-  const prevMessageCountRef = useRef(messages.length)
-
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    isNearBottomRef.current = distanceFromBottom < 100
-  }, [])
-
-  // Scroll to bottom on new messages (if user is near bottom)
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-
-    const isNewMessage = messages.length !== prevMessageCountRef.current
-    prevMessageCountRef.current = messages.length
-
-    if (isNearBottomRef.current) {
-      el.scrollTop = el.scrollHeight
-    }
-
-    // If a new message arrives while scrolled up, still update the count but don't scroll
-    void isNewMessage
-  }, [messages])
-
-  return (
-    <div
-      ref={scrollRef}
-      onScroll={handleScroll}
-      className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
-      style={fontSize ? { fontSize: `${fontSize}px` } : undefined}
-    >
-      {messages.map((msg) => (
-        <ChatBubble key={msg.id} message={msg} onSubmitPrompt={onSubmitPrompt} />
-      ))}
-      {/* Bottom spacer for scroll anchor */}
-      <div className="h-2" />
-    </div>
-  )
-}
 
 /* ─── ChatInputBar ─── */
 
@@ -1997,8 +1936,8 @@ const ToolExecutionBlock = memo(function ToolExecutionBlock({ tool }: { tool: Co
 
   // Result text (for bash output, read result, etc.)
   const resultText = tool.result?.content
-    ?.filter((c) => c.type === "text" && c.text)
-    .map((c) => c.text)
+    ?.filter((c: { type: string; text?: string }) => c.type === "text" && c.text)
+    .map((c: { type: string; text?: string }) => c.text)
     .join("\n") ?? ""
 
   useEffect(() => {

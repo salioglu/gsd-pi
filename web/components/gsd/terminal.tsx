@@ -260,7 +260,7 @@ export function Terminal({ className }: TerminalProps) {
         {/* Completed transcript blocks from previous turns */}
         {flatTranscript.length > 0 && (
           <div className="mt-2 space-y-2" data-testid="terminal-transcript">
-            {flatTranscript.map((block, i) => (
+            {flatTranscript.map((block: string, i: number) => (
               <div
                 key={`transcript-${i}`}
                 className="whitespace-pre-wrap rounded border border-border/50 bg-accent/20 px-3 py-2 text-foreground"

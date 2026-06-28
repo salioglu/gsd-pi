@@ -3,19 +3,16 @@
 import {
   applyCommandSurfaceActionResult,
   setCommandSurfacePending,
-  type CommandSurfaceCompactionResult,
   type CommandSurfaceDiagnosticsPhaseState,
   type CommandSurfaceDoctorState,
   type CommandSurfaceForkMessage,
   type CommandSurfaceGitSummaryState,
   type CommandSurfaceKnowledgeCapturesState,
   type CommandSurfaceModelOption,
-  type CommandSurfaceSection,
   type CommandSurfaceSessionBrowserState,
   type CommandSurfaceSessionStats,
   type CommandSurfaceTarget,
   type CommandSurfaceThinkingLevel,
-  type WorkspaceCommandSurfaceState,
   type WorkspaceRecoveryDiagnostics,
 } from "./command-surface-contract"
 import type { DoctorFixResult, DoctorReport, ForensicReport, SkillHealthReport } from "./diagnostics-types"
@@ -32,12 +29,8 @@ import type {
   CleanupResult,
   SteerData,
 } from "./remaining-command-types"
-import { isGitSummaryResponse, type GitSummaryResponse } from "./git-summary-contract"
+import type { GitSummaryResponse } from "./git-summary-contract"
 import type {
-  SessionBrowserNameFilter,
-  SessionBrowserResponse,
-  SessionBrowserSession,
-  SessionBrowserSortMode,
   SessionManageResponse,
 } from "./session-browser-contract"
 import { authFetch } from "./auth"
@@ -46,6 +39,7 @@ import {
   withFreshnessFailed,
   withFreshnessRequested,
   withFreshnessSucceeded,
+  withEntitySliceSucceeded,
 } from "./workspace-live-state"
 import type {
   LiveStateInvalidationEvent,
@@ -1074,16 +1068,19 @@ export class CommandSurfaceStore {
       }
       const nextLiveBase: WorkspaceLiveState = {
         ...this.host.getState().live,
-        resumableSessions: overlayLiveBridgeSessionState(
-          resolveResumableSessions(this.host.getState()).map((session) =>
-            session.path === result.sessionPath
-              ? {
-                  ...session,
-                  name: result.name,
-                }
-              : session,
+        resumableSessions: withEntitySliceSucceeded(
+          this.host.getState().live.resumableSessions,
+          overlayLiveBridgeSessionState(
+            resolveResumableSessions(this.host.getState()).map((session) =>
+              session.path === result.sessionPath
+                ? {
+                    ...session,
+                    name: result.name,
+                  }
+                : session,
+            ),
+            nextBoot,
           ),
-          nextBoot,
         ),
       }
 
@@ -1511,13 +1508,16 @@ export class CommandSurfaceStore {
 
     const nextLiveBase: WorkspaceLiveState = {
       ...this.host.getState().live,
-      resumableSessions: overlayLiveBridgeSessionState(
-        resolveResumableSessions(this.host.getState()).map((session) => ({
-          ...session,
-          isActive: session.path === sessionPath,
-          ...(session.path === sessionPath && nextSessionName ? { name: nextSessionName } : {}),
-        })),
-        nextBoot,
+      resumableSessions: withEntitySliceSucceeded(
+        this.host.getState().live.resumableSessions,
+        overlayLiveBridgeSessionState(
+          resolveResumableSessions(this.host.getState()).map((session) => ({
+            ...session,
+            isActive: session.path === sessionPath,
+            ...(session.path === sessionPath && nextSessionName ? { name: nextSessionName } : {}),
+          })),
+          nextBoot,
+        ),
       ),
     }
 

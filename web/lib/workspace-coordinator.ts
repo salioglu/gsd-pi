@@ -63,12 +63,12 @@ export function dispatchWorkspaceEvent(
   coordinator.onLastEventType(event.type)
 
   if (event.type === "bridge_status") {
-    coordinator.onBridgeStatus(event)
+    coordinator.onBridgeStatus(event as Extract<WorkspaceEvent, { type: "bridge_status" }>)
     return
   }
 
   if (event.type === "live_state_invalidation") {
-    coordinator.onLiveStateInvalidation(event)
+    coordinator.onLiveStateInvalidation(event as LiveStateInvalidationEvent)
   }
 
   coordinator.onLiveInteraction(event)

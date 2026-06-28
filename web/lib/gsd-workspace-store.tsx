@@ -16,65 +16,27 @@ import {
   type BrowserSlashCommandSurface,
 } from "./browser-slash-command-dispatch"
 import {
-  applyCommandSurfaceActionResult,
   closeCommandSurfaceState,
   createInitialCommandSurfaceState,
   openCommandSurfaceState,
   selectCommandSurfaceStateTarget,
-  setCommandSurfacePending,
   setCommandSurfaceSection,
-  type CommandSurfaceCompactionResult,
-  type CommandSurfaceDiagnosticsPhaseState,
-  type CommandSurfaceDoctorState,
-  type CommandSurfaceForkMessage,
-  type CommandSurfaceGitSummaryState,
-  type CommandSurfaceModelOption,
-  type CommandSurfaceRecoveryState,
   type CommandSurfaceSection,
-  type CommandSurfaceSessionBrowserState,
-  type CommandSurfaceSessionStats,
   type CommandSurfaceTarget,
-  type CommandSurfaceThinkingLevel,
-  type CommandSurfaceKnowledgeCapturesState,
-  type WorkspaceCommandSurfaceState,
-  type WorkspaceRecoveryDiagnostics,
   type WorkspaceRecoverySummary,
+  type WorkspaceCommandSurfaceState,
 } from "./command-surface-contract"
-import type { DoctorFixResult, DoctorReport, ForensicReport, SkillHealthReport } from "./diagnostics-types"
-import type { KnowledgeData, CapturesData, CaptureResolveRequest, CaptureResolveResult } from "./knowledge-captures-types"
-import type { SettingsData } from "./settings-types"
-import type {
-  HistoryData,
-  InspectData,
-  HooksData,
-  ExportResult,
-  UndoInfo,
-  UndoResult,
-  CleanupData,
-  CleanupResult,
-  SteerData,
-} from "./remaining-command-types"
-import { isGitSummaryResponse, type GitSummaryResponse } from "./git-summary-contract"
 import type { PendingImage } from "./image-utils"
 import type { ChatMessage } from "./pty-chat-parser"
 import { WorkspaceEventStream } from "./workspace-event-stream"
 import { createTerminalLine, withTerminalLine } from "./workspace-terminal-log"
-import type {
-  SessionBrowserNameFilter,
-  SessionBrowserResponse,
-  SessionBrowserSession,
-  SessionBrowserSortMode,
-  SessionManageResponse,
-} from "./session-browser-contract"
 import { authFetch, appendAuthParam } from "./auth"
 import { ContextualTips } from "@gsd/agent-core/contextual-tips.js"
 import {
   applyBootToLiveState,
   createInitialWorkspaceLiveState,
   createWorkspaceRecoverySummary,
-  resolveAutoDashboard,
   resolveResumableSessions,
-  resolveWorkspaceIndex,
   withEntitySliceFailed,
   withEntitySliceInvalidated,
   withEntitySliceRequested,
@@ -126,7 +88,6 @@ import {
 import {
   findOnboardingProviderLabel,
   getCurrentModelSelection,
-  getLiveActiveSessionPath,
   getPreferredOnboardingProviderId,
   markRecoveryStateInvalidated,
   normalizeClientError,
@@ -135,10 +96,6 @@ import {
 } from "./command-surface-helpers"
 import {
   cloneBootWithBridge,
-  describeSessionPath,
-  patchBootActiveSession,
-  patchBootSessionName,
-  patchBootSessionState,
 } from "./workspace-boot-helpers"
 import {
   dispatchWorkspaceEvent,
