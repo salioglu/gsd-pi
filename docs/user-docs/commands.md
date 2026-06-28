@@ -369,6 +369,10 @@ The following commands are sent directly in your **Telegram chat** to a configur
 >
 > **Tip:** If `Ctrl+V` is intercepted by your terminal (e.g. Warp), use `Alt+V` instead for clipboard image paste.
 
+### Claude Code selected-text Quick Action (macOS)
+
+`scripts/claude-code-send-selection.sh` is an optional Automator Quick Action shim for Claude Code.app. It reads selected text from stdin (or the clipboard as a fallback), pastes it into Claude Code, submits it, and restores the previous clipboard. To use it, create an Automator **Quick Action** with **Run Shell Script**, point it at the script path, and bind your preferred macOS keyboard shortcut.
+
 ## CLI Flags
 
 | Flag | Description |

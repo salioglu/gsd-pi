@@ -1,4 +1,4 @@
-# ADR-041: Three Session Types — SessionManager, AgentSession, AutoSession
+# ADR-042: Three Session Types — SessionManager, AgentSession, AutoSession
 
 **Status:** Accepted  
 **Date:** 2026-06-28  
