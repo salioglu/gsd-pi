@@ -4,11 +4,22 @@ import {
 	applyTextDelta,
 	applyThinkingDelta,
 	completeTurn,
+	finalizeThinkingStream,
 	pushPendingUserMessage,
 	resetActiveTurn,
 	type TranscriptChatMessage,
 	type TranscriptState,
 } from "@gsd/agent-core";
+
+type ActiveToolExecution = {
+	id: string;
+	name: string;
+	args: Record<string, unknown>;
+};
+
+type TranscriptStateWithActiveTool = TranscriptState & {
+	activeToolExecution?: ActiveToolExecution | null;
+};
 
 function asTranscriptUserMessage(message: { role?: string; content?: unknown }): TranscriptChatMessage | null {
 	if (message.role !== "user") return null;
@@ -37,6 +48,9 @@ export function applyAgentEventToTranscript(state: TranscriptState, event: Agent
 			if (inner.type === "thinking_delta" && typeof inner.delta === "string") {
 				return applyThinkingDelta(state, inner.delta);
 			}
+			if (inner.type === "thinking_end") {
+				return finalizeThinkingStream(state);
+			}
 			return state;
 		}
 		case "message_end": {
@@ -46,17 +60,30 @@ export function applyAgentEventToTranscript(state: TranscriptState, event: Agent
 			}
 			return state;
 		}
+		case "tool_execution_start": {
+			return {
+				...state,
+				activeToolExecution: {
+					id: event.toolCallId,
+					name: event.toolName,
+					args: (event.args as Record<string, unknown> | undefined) ?? {},
+				},
+			} as TranscriptState;
+		}
 		case "tool_execution_end": {
-			return appendToolSegment(state, {
+			const active = (state as TranscriptStateWithActiveTool).activeToolExecution;
+			const args = active?.id === event.toolCallId ? active.args : {};
+			const next = appendToolSegment(state, {
 				id: event.toolCallId,
 				name: event.toolName,
-				args: {},
+				args,
 				result: {
 					content: event.result.content as Array<{ type: string; text?: string }> | undefined,
 					details: event.result.details as Record<string, unknown> | undefined,
 					isError: event.isError,
 				},
 			});
+			return { ...next, activeToolExecution: null } as TranscriptState;
 		}
 		default:
 			return state;
