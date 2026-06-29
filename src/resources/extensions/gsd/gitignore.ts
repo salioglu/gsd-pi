@@ -26,6 +26,7 @@ import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
  */
 const GSD_RUNTIME_PATTERNS = [
   ".gsd-worktrees/",
+  ".gsd-backups/",
   ".gsd/activity/",
   ".gsd/audit/",
   ".gsd/forensics/",
