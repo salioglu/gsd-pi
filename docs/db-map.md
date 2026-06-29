@@ -56,7 +56,9 @@ After commit: regenerate markdown artifacts → write to disk → invalidate cac
 **Provider fallback chain:**
 1. `node:sqlite` (Node ≥ 22 built-in) — preferred
 2. `better-sqlite3` (npm) — fallback if node:sqlite unavailable
-3. null → DB unavailable (non-fatal; GSD degrades gracefully)
+3. null → DB unavailable. Runtime `deriveState()` fails closed with an explicit blocker; markdown-only recovery is available only through explicit migration/recovery commands.
+
+**Runtime state derivation:** `deriveState()` opens the existing workflow DB through `state/derive/db-open.ts`, projects rows in `state/derive/from-db.ts`, and returns a DB-unavailable blocker instead of implicitly deriving runtime state from markdown projections. Markdown hierarchy import is explicit recovery/migration behavior, not the normal read path.
 
 ---
 

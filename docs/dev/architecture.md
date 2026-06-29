@@ -159,7 +159,11 @@ Model routing (complexity classification, budget pressure, routing history, capa
 | `visualizer-data.ts` | Data loading for visualizer tabs, including active memory-store rows |
 | `visualizer-views.ts` | Tab renderers (progress, timeline, deps, metrics, health, agent, changes, knowledge, memories, captures, export) |
 | `metrics.ts` | Token and cost tracking ledger |
-| `state.ts` | DB-authoritative state derivation with explicit legacy markdown fallback for tests/recovery, plus QUEUE-ORDER.json replay into milestone sequence |
+| `state.ts` | Compatibility barrel for GSD state derivation; runtime callers use the DB-backed `state/derive/` pipeline and only the private legacy helper parses markdown for tests/recovery |
+| `state/derive/index.ts` | DB-backed `deriveState()` orchestrator, cache use, recent-decision loading, and DB-unavailable blocker state |
+| `state/derive/from-db.ts` | Pure DB-to-`GSDState` projection, milestone lock scoping, active unit selection, and registry assembly |
+| `state/derive/cache.ts` | State derivation cache and telemetry counters |
+| `state/derive/db-open.ts` | Workflow DB open helpers, queue-order projection sync, and DB-unavailable state construction |
 | `session-lock.ts` | OS-level exclusive session locking (proper-lockfile) |
 | `crash-recovery.ts` | Lock file management for crash detection and recovery |
 | `guidance.ts` | Single catalog mapping typed findings (recovery kinds, milestone blockers, doctor issue codes, crash unit classes) to user-facing remediation prose |

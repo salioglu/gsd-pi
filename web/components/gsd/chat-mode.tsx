@@ -20,7 +20,6 @@ import {
   type CompletedToolExecution,
   type ActiveToolExecution,
   type PendingUiRequest,
-  type TurnSegment,
 } from "@/lib/gsd-workspace-store"
 import { deriveWorkflowAction } from "@/lib/workflow-actions"
 import { useTerminalFontSize } from "@/lib/use-terminal-font-size"
@@ -1099,66 +1098,6 @@ const ChatBubble = memo(function ChatBubble({
   )
 })
 
-/* ─── ChatMessageList ─── */
-
-/**
- * Renders ChatMessage[] as a scrollable list of ChatBubble components.
- *
- * Scroll behavior:
- *   - Auto-scrolls to bottom on new messages ONLY when the user is within 100px of bottom
- *   - If the user has scrolled up to read history, auto-scroll is suppressed
- */
-function ChatMessageList({
-  messages,
-  onSubmitPrompt,
-  fontSize,
-}: {
-  messages: ChatMessage[]
-  onSubmitPrompt: (data: string) => void
-  fontSize?: number
-}) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const isNearBottomRef = useRef(true)
-  const prevMessageCountRef = useRef(messages.length)
-
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    isNearBottomRef.current = distanceFromBottom < 100
-  }, [])
-
-  // Scroll to bottom on new messages (if user is near bottom)
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-
-    const isNewMessage = messages.length !== prevMessageCountRef.current
-    prevMessageCountRef.current = messages.length
-
-    if (isNearBottomRef.current) {
-      el.scrollTop = el.scrollHeight
-    }
-
-    // If a new message arrives while scrolled up, still update the count but don't scroll
-    void isNewMessage
-  }, [messages])
-
-  return (
-    <div
-      ref={scrollRef}
-      onScroll={handleScroll}
-      className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
-      style={fontSize ? { fontSize: `${fontSize}px` } : undefined}
-    >
-      {messages.map((msg) => (
-        <ChatBubble key={msg.id} message={msg} onSubmitPrompt={onSubmitPrompt} />
-      ))}
-      {/* Bottom spacer for scroll anchor */}
-      <div className="h-2" />
-    </div>
-  )
-}
 
 /* ─── ChatInputBar ─── */
 
@@ -1997,8 +1936,8 @@ const ToolExecutionBlock = memo(function ToolExecutionBlock({ tool }: { tool: Co
 
   // Result text (for bash output, read result, etc.)
   const resultText = tool.result?.content
-    ?.filter((c) => c.type === "text" && c.text)
-    .map((c) => c.text)
+    ?.filter((c: { type: string; text?: string }) => c.type === "text" && c.text)
+    .map((c: { type: string; text?: string }) => c.text)
     .join("\n") ?? ""
 
   useEffect(() => {
@@ -2092,7 +2031,7 @@ const ToolExecutionBlock = memo(function ToolExecutionBlock({ tool }: { tool: Co
  * Consumes structured agent events from the workspace store:
  * - streamingAssistantText: live text deltas from the LLM
  * - streamingThinkingText: live thinking/reasoning deltas
- * - liveTranscript: completed text blocks from previous turns
+ * - completedTurns: completed turns with segment-ordered content
  * - activeToolExecution: currently running tool call
  *
  * User messages are tracked locally and sent via submitInput().
@@ -2176,56 +2115,41 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
 
   const completedTimeline = useMemo((): TimelineItem[] => {
     const items: TimelineItem[] = []
-    const transcriptBlocks = state.liveTranscript
-    const segmentBlocks = state.completedTurnSegments
-    const userMsgs = state.chatUserMessages
 
-    // Interleave: user messages alternate with assistant turns.
-    // For completed turns, render from segments to preserve chronological order.
-    for (let i = 0; i < Math.max(userMsgs.length, transcriptBlocks.length); i++) {
-      if (i < userMsgs.length) {
-        items.push({ kind: "message", message: userMsgs[i] })
+    for (let i = 0; i < state.completedTurns.length; i++) {
+      const turn = state.completedTurns[i]!
+      if (turn.userMessage) {
+        items.push({ kind: "message", message: turn.userMessage })
       }
-      if (i < segmentBlocks.length && segmentBlocks[i].length > 0) {
-        // Render each segment in order
-        for (const seg of segmentBlocks[i]) {
-          if (seg.kind === "thinking") {
-            items.push({ kind: "thinking", content: seg.content, id: `turn-${i}-thinking-${items.length}` })
-          } else if (seg.kind === "text") {
-            items.push({
-              kind: "message",
-              message: {
-                id: `turn-${i}-text-${items.length}`,
-                role: "assistant",
-                content: seg.content,
-                complete: true,
-                timestamp: i + 1,
-              },
-            })
-          } else if (seg.kind === "tool") {
-            items.push({ kind: "tool", tool: seg.tool })
-          }
+      for (const seg of turn.segments) {
+        if (seg.kind === "thinking") {
+          items.push({ kind: "thinking", content: seg.content, id: `turn-${i}-thinking-${items.length}` })
+        } else if (seg.kind === "text") {
+          items.push({
+            kind: "message",
+            message: {
+              id: `turn-${i}-text-${items.length}`,
+              role: "assistant",
+              content: seg.content,
+              complete: true,
+              timestamp: i + 1,
+            },
+          })
+        } else if (seg.kind === "tool") {
+          items.push({ kind: "tool", tool: seg.tool })
         }
-      } else if (i < transcriptBlocks.length && transcriptBlocks[i].trim()) {
-        // Fallback: no segments stored yet (shouldn't happen for new turns, but safe)
-        items.push({
-          kind: "message",
-          message: {
-            id: `transcript-${i}`,
-            role: "assistant",
-            content: transcriptBlocks[i],
-            complete: true,
-            timestamp: i + 1,
-          },
-        })
       }
     }
 
     return items
-  }, [state.liveTranscript, state.completedTurnSegments, state.chatUserMessages])
+  }, [state.completedTurns])
 
   const streamingTimeline = useMemo((): TimelineItem[] => {
     const items: TimelineItem[] = []
+
+    if (state.pendingUserMessage) {
+      items.push({ kind: "message", message: state.pendingUserMessage })
+    }
 
     // Current turn: render finalized segments, then any in-flight content
     for (const seg of state.currentTurnSegments) {
@@ -2284,7 +2208,7 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
     }
 
     return items
-  }, [state.currentTurnSegments, state.streamingAssistantText, state.streamingThinkingText, state.activeToolExecution, state.pendingUiRequests, isStreaming, renderTimestamp])
+  }, [state.pendingUserMessage, state.currentTurnSegments, state.streamingAssistantText, state.streamingThinkingText, state.activeToolExecution, state.pendingUiRequests, isStreaming, renderTimestamp])
 
   // Prompt submit handler for TUI prompts (select/text/password)
   const handlePromptSubmit = useCallback((data: string) => {
