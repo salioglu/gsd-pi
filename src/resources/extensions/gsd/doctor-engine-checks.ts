@@ -408,6 +408,9 @@ export async function checkEngineHealth(
     for (let i = issues.length - 1; i >= 0; i--) {
       const issue = issues[i]!;
       if (issue.code !== "checkbox_db_status_divergence") continue;
+      // flushWorkflowProjections only re-renders milestone shell projections (e.g.
+      // ROADMAP.md), not slice PLAN.md files — keep task-level PLAN divergences.
+      if (issue.scope !== "slice") continue;
       const milestoneId = issue.unitId.split("/")[0] ?? "";
       if (reRendered.has(milestoneId)) {
         issues.splice(i, 1);
