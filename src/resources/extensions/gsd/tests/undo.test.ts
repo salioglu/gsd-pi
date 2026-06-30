@@ -10,6 +10,7 @@ import {
   handleUndo,
   handleUndoTask,
   handleResetSlice,
+  parseActivityLogFilename,
   uncheckTaskInPlan,
 } from "../undo.ts";
 import {
@@ -183,6 +184,48 @@ test("extractCommitShas ignores malformed commit tokens", () => {
   ].join("\n");
 
   assert.deepEqual(extractCommitShas(content), ["1234567"]);
+});
+
+test("parseActivityLogFilename splits hyphenated unit types from their IDs", () => {
+  // Task-level: unit type and ID both contain hyphens.
+  assert.deepEqual(parseActivityLogFilename("001-execute-task-M001-S01-T01.jsonl"), {
+    unitType: "execute-task",
+    unitId: "M001-S01-T01",
+  });
+  // Variant must win over its shorter prefix ("execute-task").
+  assert.deepEqual(parseActivityLogFilename("002-execute-task-simple-M001-S02-T03.jsonl"), {
+    unitType: "execute-task-simple",
+    unitId: "M001-S02-T03",
+  });
+  // Milestone- and slice-shaped IDs.
+  assert.deepEqual(parseActivityLogFilename("003-research-milestone-M001.jsonl"), {
+    unitType: "research-milestone",
+    unitId: "M001",
+  });
+  assert.deepEqual(parseActivityLogFilename("004-plan-slice-M001-S01.jsonl"), {
+    unitType: "plan-slice",
+    unitId: "M001-S01",
+  });
+});
+
+test("parseActivityLogFilename accepts non-milestone-shaped unit IDs", () => {
+  // Regression (#1057): project-level units use IDs that do not start with
+  // "M<digit>". A milestone-shaped regex made /gsd undo bail out with
+  // "could not parse latest activity log" when one of these was most recent.
+  assert.deepEqual(parseActivityLogFilename("005-discuss-project-PROJECT.jsonl"), {
+    unitType: "discuss-project",
+    unitId: "PROJECT",
+  });
+  assert.deepEqual(parseActivityLogFilename("006-workflow-preferences-WORKFLOW-PREFS.jsonl"), {
+    unitType: "workflow-preferences",
+    unitId: "WORKFLOW-PREFS",
+  });
+});
+
+test("parseActivityLogFilename returns null for unrecognized names", () => {
+  assert.equal(parseActivityLogFilename("007-not-a-real-unit-M001.jsonl"), null);
+  assert.equal(parseActivityLogFilename("no-sequence-prefix.jsonl"), null);
+  assert.equal(parseActivityLogFilename("001-execute-task-M001-S01-T01.txt"), null);
 });
 
 // ─── handleUndoTask tests ────────────────────────────────────────────────────
