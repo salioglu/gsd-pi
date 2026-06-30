@@ -2,7 +2,7 @@ import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
 import { getGateIdsForTurn } from "../gate-registry.js";
-import { transaction, getSlice, getTask, insertTask, upsertTaskPlanning, insertGateRow } from "../gsd-db.js";
+import { transaction, getSlice, getTask, insertTask, upsertTaskPlanning, insertGateRow, setSliceSketchFlag } from "../gsd-db.js";
 import { invalidateStateCache } from "../state.js";
 import { renderTaskPlanFromDb, renderPlanFromDb } from "../markdown-renderer.js";
 import { resolveTasksDir } from "../paths.js";
@@ -171,6 +171,8 @@ export async function handlePlanTask(
     } catch (syncErr) {
       logWarning("tool", `plan-task: slice-plan sync failed: ${(syncErr as Error).message}`);
     }
+
+    setSliceSketchFlag(params.milestoneId, params.sliceId, false);
 
     invalidateStateCache();
     clearParseCache();
