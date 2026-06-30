@@ -102,6 +102,23 @@ function checkProjectionCheckboxDbStatus(basePath: string, milestoneIds: string[
   }
 }
 
+function isClearedByMilestoneShellProjectionFlush(
+  basePath: string,
+  issue: DoctorIssue,
+  reRenderedMilestoneIds: Set<string>,
+): boolean {
+  if (issue.code !== "checkbox_db_status_divergence") return false;
+  if (issue.scope !== "slice") return false;
+
+  const milestoneId = issue.unitId.split("/")[0] ?? "";
+  if (!reRenderedMilestoneIds.has(milestoneId)) return false;
+
+  const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+  if (!roadmapPath || !issue.file) return false;
+
+  return issue.file === relativeFile(basePath, roadmapPath);
+}
+
 export async function checkEngineHealth(
   basePath: string,
   issues: DoctorIssue[],
@@ -407,12 +424,9 @@ export async function checkEngineHealth(
     const reRendered = new Set(reRenderedMilestoneIds);
     for (let i = issues.length - 1; i >= 0; i--) {
       const issue = issues[i]!;
-      if (issue.code !== "checkbox_db_status_divergence") continue;
-      // flushWorkflowProjections only re-renders milestone shell projections (e.g.
-      // ROADMAP.md), not slice PLAN.md files — keep task-level PLAN divergences.
-      if (issue.scope !== "slice") continue;
-      const milestoneId = issue.unitId.split("/")[0] ?? "";
-      if (reRendered.has(milestoneId)) {
+      // flushWorkflowProjections re-renders milestone shell projections (not
+      // slice PLAN.md files), so only clear stale ROADMAP checkbox diagnostics.
+      if (isClearedByMilestoneShellProjectionFlush(basePath, issue, reRendered)) {
         issues.splice(i, 1);
       }
     }

@@ -91,6 +91,45 @@ test("checkEngineHealth reports checkbox divergence against DB status", async (t
   );
 });
 
+test("checkEngineHealth keeps PLAN checkbox divergence after stale projection flush", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-checkbox-plan-drift-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const gsdDir = join(base, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  openDatabase(join(gsdDir, "gsd.db"));
+  insertMilestone({ id: "M001", title: "Foundation", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending", risk: "low", depends: [], sequence: 1 });
+  insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "Task", status: "complete", sequence: 1 });
+
+  const roadmap = await renderRoadmapFromDb(base, "M001");
+  if ("skipped" in roadmap) assert.fail("planned milestone should render a roadmap");
+  const plan = await renderPlanFromDb(base, "M001", "S01");
+
+  writeFileSync(roadmap.roadmapPath, readFileSync(roadmap.roadmapPath, "utf-8").replace("- [ ] **S01:", "- [x] **S01:"), "utf-8");
+  writeFileSync(plan.planPath, readFileSync(plan.planPath, "utf-8").replace("- [x] **T01**:", "- [ ] **T01**:"), "utf-8");
+  appendEvent(base, {
+    cmd: "complete-task",
+    params: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    ts: "2999-01-01T00:00:00.000Z",
+    actor: "agent",
+  });
+
+  const issues: any[] = [];
+  const fixes: string[] = [];
+  await checkEngineHealth(base, issues, fixes);
+
+  const divergences = issues.filter((issue) => issue.code === "checkbox_db_status_divergence");
+  assert.deepEqual(
+    divergences.map((issue) => issue.unitId),
+    ["M001/S01/T01"],
+    "stale ROADMAP divergence is cleared after re-render, but stale PLAN task divergence remains",
+  );
+  assert.ok(fixes.includes("re-rendered stale projections for M001"));
+  assert.match(readFileSync(plan.planPath, "utf-8"), /- \[ \] \*\*T01\*\*:/);
+});
+
 test("checkEngineHealth reads canonical reopen events from worktree bases", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-doctor-reopen-worktree-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
