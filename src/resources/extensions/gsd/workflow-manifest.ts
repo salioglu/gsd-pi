@@ -354,6 +354,8 @@ interface ManifestWriteState {
   filePath: string;
   latestJson: string | null;
   inFlightJson: string | null;
+  /** Set by sync exit flush so an in-flight async write cannot leave stale data on disk. */
+  syncFlushJson: string | null;
   active: Promise<void> | null;
 }
 
@@ -378,14 +380,21 @@ function logManifestWriteFailure(filePath: string, err: unknown): void {
 }
 
 async function drainManifestWrites(key: string, state: ManifestWriteState): Promise<void> {
+  let lastWriteError: unknown = null;
   try {
-    while (state.latestJson !== null) {
+    while (state.latestJson !== null && state.syncFlushJson === null) {
       const json = state.latestJson;
       state.latestJson = null;
       state.inFlightJson = json;
       try {
         await atomicWriteAsync(state.filePath, json);
+        if (state.syncFlushJson !== null) {
+          atomicWriteSync(state.filePath, state.syncFlushJson);
+          break;
+        }
+        lastWriteError = null;
       } catch (err) {
+        lastWriteError = err;
         logManifestWriteFailure(state.filePath, err);
       } finally {
         state.inFlightJson = null;
@@ -397,6 +406,9 @@ async function drainManifestWrites(key: string, state: ManifestWriteState): Prom
       manifestWrites.delete(key);
     }
   }
+  if (lastWriteError !== null && state.syncFlushJson === null) {
+    throw lastWriteError;
+  }
 }
 
 function enqueueManifestWrite(basePath: string, json: string): void {
@@ -407,6 +419,7 @@ function enqueueManifestWrite(basePath: string, json: string): void {
       filePath: manifestFilePath(basePath),
       latestJson: null,
       inFlightJson: null,
+      syncFlushJson: null,
       active: null,
     };
     manifestWrites.set(key, state);
@@ -455,6 +468,7 @@ function flushAllManifestsSync(): void {
       atomicWriteSync(state.filePath, json);
       state.latestJson = null;
       state.inFlightJson = null;
+      state.syncFlushJson = json;
       manifestWrites.delete(key);
     } catch (err) {
       logManifestWriteFailure(state.filePath, err);
