@@ -1,12 +1,13 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { _getAdapter, closeDatabase, insertMilestone, openDatabase } from "../gsd-db.ts";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { _getAdapter, closeDatabase, insertMilestone, insertSlice, insertTask, openDatabase } from "../gsd-db.ts";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { filterDoctorIssues } from "../doctor-format.ts";
 import { checkEngineHealth } from "../doctor-engine-checks.ts";
 import { appendEvent } from "../workflow-events.ts";
+import { renderPlanFromDb, renderRoadmapFromDb } from "../markdown-renderer.ts";
 
 afterEach(() => {
   closeDatabase();
@@ -59,6 +60,112 @@ test("checkEngineHealth reports db_unavailable when gsd.db exists but the DB is 
   assert.ok(dbIssue, "doctor should surface degraded DB mode when a DB file exists");
   assert.equal(dbIssue.unitId, "project");
   assert.equal(dbIssue.file, ".gsd/gsd.db");
+});
+
+test("checkEngineHealth reports checkbox divergence against DB status", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-checkbox-drift-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const gsdDir = join(base, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  openDatabase(join(gsdDir, "gsd.db"));
+  insertMilestone({ id: "M001", title: "Foundation", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending", risk: "low", depends: [], sequence: 1 });
+  insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "Task", status: "complete", sequence: 1 });
+
+  const roadmap = await renderRoadmapFromDb(base, "M001");
+  if ("skipped" in roadmap) assert.fail("planned milestone should render a roadmap");
+  const plan = await renderPlanFromDb(base, "M001", "S01");
+
+  writeFileSync(roadmap.roadmapPath, readFileSync(roadmap.roadmapPath, "utf-8").replace("- [ ] **S01:", "- [x] **S01:"), "utf-8");
+  writeFileSync(plan.planPath, readFileSync(plan.planPath, "utf-8").replace("- [x] **T01**:", "- [ ] **T01**:"), "utf-8");
+
+  const issues: any[] = [];
+  await checkEngineHealth(base, issues, []);
+
+  const divergences = issues.filter((issue) => issue.code === "checkbox_db_status_divergence");
+  assert.deepEqual(
+    divergences.map((issue) => issue.unitId).sort(),
+    ["M001/S01", "M001/S01/T01"],
+  );
+});
+
+test("checkEngineHealth keeps PLAN checkbox divergence after stale projection flush", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-checkbox-plan-drift-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const gsdDir = join(base, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  openDatabase(join(gsdDir, "gsd.db"));
+  insertMilestone({ id: "M001", title: "Foundation", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending", risk: "low", depends: [], sequence: 1 });
+  insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "Task", status: "complete", sequence: 1 });
+
+  const roadmap = await renderRoadmapFromDb(base, "M001");
+  if ("skipped" in roadmap) assert.fail("planned milestone should render a roadmap");
+  const plan = await renderPlanFromDb(base, "M001", "S01");
+
+  writeFileSync(roadmap.roadmapPath, readFileSync(roadmap.roadmapPath, "utf-8").replace("- [ ] **S01:", "- [x] **S01:"), "utf-8");
+  writeFileSync(plan.planPath, readFileSync(plan.planPath, "utf-8").replace("- [x] **T01**:", "- [ ] **T01**:"), "utf-8");
+  appendEvent(base, {
+    cmd: "complete-task",
+    params: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    ts: "2999-01-01T00:00:00.000Z",
+    actor: "agent",
+  });
+
+  const issues: any[] = [];
+  const fixes: string[] = [];
+  await checkEngineHealth(base, issues, fixes);
+
+  const divergences = issues.filter((issue) => issue.code === "checkbox_db_status_divergence");
+  assert.deepEqual(
+    divergences.map((issue) => issue.unitId),
+    ["M001/S01/T01"],
+    "stale ROADMAP divergence is cleared after re-render, but stale PLAN task divergence remains",
+  );
+  assert.ok(fixes.includes("re-rendered stale projections for M001"));
+  assert.match(readFileSync(plan.planPath, "utf-8"), /- \[ \] \*\*T01\*\*:/);
+});
+
+test("checkEngineHealth reads task checkboxes from the <tasks> block, not a stray line above it", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-task-section-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const gsdDir = join(base, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  openDatabase(join(gsdDir, "gsd.db"));
+  insertMilestone({ id: "M001", title: "Foundation", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending", risk: "low", depends: [], sequence: 1 });
+  insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "Task", status: "complete", sequence: 1 });
+
+  const roadmap = await renderRoadmapFromDb(base, "M001");
+  if ("skipped" in roadmap) assert.fail("planned milestone should render a roadmap");
+  const plan = await renderPlanFromDb(base, "M001", "S01");
+
+  // Flip the authoritative <tasks> checkbox so it disagrees with the DB
+  // (DB: complete, markdown: unchecked = real drift), then inject a *checked*
+  // decoy line for the same task above the <tasks> block. The old whole-file
+  // regex matched the decoy first and hid the real drift; parsePlan reads the
+  // authoritative <tasks> block and still reports it. No events are appended,
+  // so the projection-drift re-render never runs and the crafted file stands.
+  const rendered = readFileSync(plan.planPath, "utf-8")
+    .replace("- [x] **T01**:", "- [ ] **T01**:")
+    .replace("<tasks>\n", "- [x] **T01**: stale duplicate above the tasks block\n\n<tasks>\n");
+  writeFileSync(plan.planPath, rendered, "utf-8");
+
+  const issues: any[] = [];
+  await checkEngineHealth(base, issues, []);
+
+  const divergences = issues.filter((issue) => issue.code === "checkbox_db_status_divergence");
+  assert.deepEqual(
+    divergences.map((issue) => issue.unitId),
+    ["M001/S01/T01"],
+    "task drift must be read from the authoritative <tasks> block, not a stray checkbox above it",
+  );
 });
 
 test("checkEngineHealth reads canonical reopen events from worktree bases", async (t) => {

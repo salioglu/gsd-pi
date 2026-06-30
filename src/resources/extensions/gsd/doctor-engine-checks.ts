@@ -1,14 +1,118 @@
-import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { relative } from "node:path";
 
 import type { DoctorIssue } from "./doctor-types.js";
-import { isDbAvailable, _getAdapter } from "./gsd-db.js";
+import { getAllMilestones, getMilestoneSlices, getSliceTasks, isDbAvailable, _getAdapter } from "./gsd-db.js";
 import { isAfter, latestExplicitReopenAt } from "./milestone-reopen-events.js";
-import { resolveGsdPathContract, resolveMilestoneFile } from "./paths.js";
+import { resolveGsdPathContract, resolveMilestoneFile, resolveSliceFile } from "./paths.js";
 import { deriveState } from "./state.js";
+import { isClosedStatus } from "./status-guards.js";
 import { workflowEventLogPath } from "./workflow-event-ledger.js";
 import { readEvents } from "./workflow-events.js";
 import { flushWorkflowProjections } from "./projection-flush.js";
+import { parseRoadmapSlices } from "./roadmap-slices.js";
+import { parsePlan } from "./parsers-legacy.js";
+
+function relativeFile(basePath: string, filePath: string): string {
+  return relative(basePath, filePath).split("\\").join("/");
+}
+
+function reportCheckboxDbStatusDivergence(
+  issues: DoctorIssue[],
+  basePath: string,
+  filePath: string,
+  scope: "slice" | "task",
+  unitId: string,
+  status: string,
+  checkboxDone: boolean,
+): void {
+  const dbDone = isClosedStatus(status);
+  if (checkboxDone === dbDone) return;
+
+  issues.push({
+    severity: "error",
+    code: "checkbox_db_status_divergence",
+    scope,
+    unitId,
+    message: `${scope === "slice" ? "Slice" : "Task"} ${unitId} is ${dbDone ? "closed" : "open"} in the database (status: ${status}) but the markdown checkbox is ${checkboxDone ? "checked" : "unchecked"}.`,
+    file: relativeFile(basePath, filePath),
+    fixable: false,
+  });
+}
+
+function checkProjectionCheckboxDbStatus(basePath: string, milestoneIds: string[], issues: DoctorIssue[]): void {
+  for (const milestoneId of milestoneIds) {
+    const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+    const slices = getMilestoneSlices(milestoneId);
+
+    if (roadmapPath && existsSync(roadmapPath)) {
+      try {
+        const roadmap = readFileSync(roadmapPath, "utf-8");
+        const sliceDoneById = new Map(parseRoadmapSlices(roadmap).map((entry) => [entry.id, entry.done]));
+        for (const slice of slices) {
+          const checkboxDone = sliceDoneById.get(slice.id);
+          if (checkboxDone === undefined) continue;
+          reportCheckboxDbStatusDivergence(
+            issues,
+            basePath,
+            roadmapPath,
+            "slice",
+            `${milestoneId}/${slice.id}`,
+            slice.status,
+            checkboxDone,
+          );
+        }
+      } catch {
+        // Non-fatal — checkbox drift diagnostics must never block doctor.
+      }
+    }
+
+    for (const slice of slices) {
+      const planPath = resolveSliceFile(basePath, milestoneId, slice.id, "PLAN");
+      if (!planPath || !existsSync(planPath)) continue;
+      try {
+        const plan = readFileSync(planPath, "utf-8");
+        // parsePlan reads the authoritative task checkboxes (the flat-phase
+        // <tasks> block / ## Tasks section), so a stray task-style checkbox
+        // line elsewhere in PLAN.md (e.g. a Must-Haves or Verification bullet
+        // above <tasks>) can no longer hide real drift or fake a divergence.
+        const taskDoneById = new Map(parsePlan(plan).tasks.map((entry) => [entry.id, entry.done]));
+        for (const task of getSliceTasks(milestoneId, slice.id)) {
+          const checkboxDone = taskDoneById.get(task.id);
+          if (checkboxDone === undefined) continue;
+          reportCheckboxDbStatusDivergence(
+            issues,
+            basePath,
+            planPath,
+            "task",
+            `${milestoneId}/${slice.id}/${task.id}`,
+            task.status,
+            checkboxDone,
+          );
+        }
+      } catch {
+        // Non-fatal — checkbox drift diagnostics must never block doctor.
+      }
+    }
+  }
+}
+
+function isClearedByMilestoneShellProjectionFlush(
+  basePath: string,
+  issue: DoctorIssue,
+  reRenderedMilestoneIds: Set<string>,
+): boolean {
+  if (issue.code !== "checkbox_db_status_divergence") return false;
+  if (issue.scope !== "slice") return false;
+
+  const milestoneId = issue.unitId.split("/")[0] ?? "";
+  if (!reRenderedMilestoneIds.has(milestoneId)) return false;
+
+  const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+  if (!roadmapPath || !issue.file) return false;
+
+  return issue.file === relativeFile(basePath, roadmapPath);
+}
 
 export async function checkEngineHealth(
   basePath: string,
@@ -256,9 +360,24 @@ export async function checkEngineHealth(
     // Non-fatal — DB constraint checks failed entirely
   }
 
+  // Checkbox-vs-DB divergence detection runs before projection drift auto-fix
+  // so stale re-renders cannot overwrite manually edited markdown first. Runs
+  // inside its own try/catch: getAllMilestones / getMilestoneSlices /
+  // getSliceTasks issue prepared queries that can throw on a corrupt or locked
+  // DB, and like every other DB-touching check here this diagnostic must never
+  // block doctor.
+  try {
+    if (isDbAvailable()) {
+      checkProjectionCheckboxDbStatus(basePath, getAllMilestones().map((milestone) => milestone.id), issues);
+    }
+  } catch {
+    // Non-fatal: checkbox-vs-DB divergence check must never block doctor
+  }
+
   // ── Projection drift detection ──────────────────────────────────────────
   // If the DB is available, check whether markdown projections are stale
   // relative to the event log and re-render them.
+  const reRenderedMilestoneIds: string[] = [];
   try {
     if (isDbAvailable()) {
       const eventLogPath = workflowEventLogPath(basePath);
@@ -273,6 +392,7 @@ export async function checkEngineHealth(
             try {
               await flushWorkflowProjections(basePath, { milestoneId: milestone.id });
               fixesApplied.push(`re-rendered missing projections for ${milestone.id}`);
+              reRenderedMilestoneIds.push(milestone.id);
             } catch {
               // Non-fatal — projection re-render failed
             }
@@ -283,6 +403,7 @@ export async function checkEngineHealth(
             try {
               await flushWorkflowProjections(basePath, { milestoneId: milestone.id });
               fixesApplied.push(`re-rendered stale projections for ${milestone.id}`);
+              reRenderedMilestoneIds.push(milestone.id);
             } catch {
               // Non-fatal — projection re-render failed
             }
@@ -292,5 +413,17 @@ export async function checkEngineHealth(
     }
   } catch {
     // Non-fatal — projection drift check must never block doctor
+  }
+
+  if (reRenderedMilestoneIds.length > 0) {
+    const reRendered = new Set(reRenderedMilestoneIds);
+    for (let i = issues.length - 1; i >= 0; i--) {
+      const issue = issues[i]!;
+      // flushWorkflowProjections re-renders milestone shell projections (not
+      // slice PLAN.md files), so only clear stale ROADMAP checkbox diagnostics.
+      if (isClearedByMilestoneShellProjectionFlush(basePath, issue, reRendered)) {
+        issues.splice(i, 1);
+      }
+    }
   }
 }
