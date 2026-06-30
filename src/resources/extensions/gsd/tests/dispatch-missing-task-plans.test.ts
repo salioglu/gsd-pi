@@ -209,7 +209,7 @@ test("dispatch: missing legacy task plan recovery increments a per-slice retry c
   scaffoldLegacySlicePlan(tmp, "M002", "S03");
 
   const session = {
-    preExecRetryCount: new Map<string, number>(),
+    missingTaskPlanRetryCount: new Map<string, number>(),
   };
   const result = await resolveDispatch(makeContextFor(tmp, "M002", "S03", "T01", session));
 
@@ -218,7 +218,7 @@ test("dispatch: missing legacy task plan recovery increments a per-slice retry c
     `unitType should be plan-slice, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
   assert.ok(result.action === "dispatch" && result.unitId === "M002/S03",
     `unitId should be M002/S03, got: ${result.action === "dispatch" ? result.unitId : "(stop)"}`);
-  assert.equal(session.preExecRetryCount.get("M002/S03"), 1);
+  assert.equal(session.missingTaskPlanRetryCount.get("M002/S03"), 1);
 });
 
 test("dispatch: missing legacy task plan recovery stops when retry counter is exhausted", async (t) => {
@@ -229,7 +229,7 @@ test("dispatch: missing legacy task plan recovery stops when retry counter is ex
   scaffoldLegacySlicePlan(tmp, "M002", "S03");
 
   const session = {
-    preExecRetryCount: new Map<string, number>([["M002/S03", 2]]),
+    missingTaskPlanRetryCount: new Map<string, number>([["M002/S03", 2]]),
   };
   const result = await resolveDispatch(makeContextFor(tmp, "M002", "S03", "T01", session));
 
@@ -238,7 +238,7 @@ test("dispatch: missing legacy task plan recovery stops when retry counter is ex
   assert.equal(result.level, "error");
   assert.match(result.reason, /Missing task-plan recovery failed 2 times for M002\/S03/);
   assert.match(result.reason, /manual intervention required/);
-  assert.equal(session.preExecRetryCount.has("M002/S03"), false);
+  assert.equal(session.missingTaskPlanRetryCount.has("M002/S03"), false);
 });
 
 test("dispatch: present legacy task plan clears missing-plan recovery retry counter", async (t) => {
@@ -250,14 +250,17 @@ test("dispatch: present legacy task plan clears missing-plan recovery retry coun
   scaffoldLegacyTaskPlan(tmp, "M002", "S03", "T01");
 
   const session = {
-    preExecRetryCount: new Map<string, number>([["M002/S03", 1]]),
+    missingTaskPlanRetryCount: new Map<string, number>([["M002/S03", 1]]),
+    preExecRetryCount: new Map<string, number>([["M002/S03", 2]]),
   };
   const result = await resolveDispatch(makeContextFor(tmp, "M002", "S03", "T01", session));
 
   assert.equal(result.action, "dispatch");
   assert.ok(result.action === "dispatch" && result.unitType === "execute-task",
     `unitType should be execute-task, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
-  assert.equal(session.preExecRetryCount.has("M002/S03"), false);
+  assert.equal(session.missingTaskPlanRetryCount.has("M002/S03"), false);
+  assert.equal(session.preExecRetryCount.get("M002/S03"), 2,
+    "pre-exec retry counter must not be cleared when task plan is present");
 });
 
 test("dispatch: session milestone mismatch stops before missing-task-plan recovery", async (t) => {
