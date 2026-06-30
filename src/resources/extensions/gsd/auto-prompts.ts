@@ -17,7 +17,7 @@ import {
   resolveMilestoneFile, resolveSliceFile, resolveSlicePath,
   resolveTasksDir, resolveTaskFiles, resolveTaskFile,
   relMilestoneFile, relSliceFile, relSlicePath, relMilestonePath,
-  resolveGsdRootFile, relGsdRootFile, resolveRuntimeFile,
+  relTaskFile, resolveGsdRootFile, relGsdRootFile, resolveRuntimeFile,
 } from "./paths.js";
 import { resolveInlineLevel, loadEffectiveGSDPreferences } from "./preferences.js";
 import { isContextModeEnabled } from "./preferences-types.js";
@@ -2662,7 +2662,7 @@ export async function buildExecuteTaskPrompt(
 
   const taskPlanPath = resolveTaskFile(base, mid, sid, tid, "PLAN");
   const taskPlanContent = taskPlanPath ? await loadFile(taskPlanPath) : null;
-  const taskPlanRelPath = relSlicePath(base, mid, sid) + `/tasks/${tid}-PLAN.md`;
+  const taskPlanRelPath = relTaskFile(base, mid, sid, tid, "PLAN");
   const taskPlanContext = taskPlanContent
     ? [
       "## Inlined Task Plan (authoritative local execution contract)",
@@ -3901,7 +3901,7 @@ export async function buildReactiveExecutePrompt(
 
     const taskPlanPath = resolveTaskFile(base, mid, sid, tid, "PLAN");
     const taskPlanContent = taskPlanPath ? await loadFile(taskPlanPath) : null;
-    const taskPlanRelPath = `${relSlicePath(base, mid, sid)}/tasks/${tid}-PLAN.md`;
+    const taskPlanRelPath = relTaskFile(base, mid, sid, tid, "PLAN");
     const taskPlanInline = taskPlanContent
       ? [
           "## Inlined Task Plan (authoritative local execution contract)",
