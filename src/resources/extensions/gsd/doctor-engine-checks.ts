@@ -379,9 +379,12 @@ export async function checkEngineHealth(
           }
         }
       }
-      checkProjectionCheckboxDbStatus(basePath, getAllMilestones().map((milestone) => milestone.id), issues);
     }
   } catch {
     // Non-fatal — projection drift check must never block doctor
+  }
+
+  if (isDbAvailable()) {
+    checkProjectionCheckboxDbStatus(basePath, getAllMilestones().map((milestone) => milestone.id), issues);
   }
 }
