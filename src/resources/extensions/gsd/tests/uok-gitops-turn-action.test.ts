@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { GIT_NO_PROMPT_ENV } from "../git-constants.ts";
 import { handleTurnGitActionError, runTurnGitAction } from "../git-service.ts";
+import { _resetLogs, drainLogs } from "../workflow-logger.ts";
 
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, stdio: "pipe", encoding: "utf-8" }).trim();
@@ -107,6 +108,43 @@ workspace:
     assert.equal(result.dirtyRepositories?.frontend, true);
     assert.equal(result.dirtyRepositories?.backend, false);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("uok gitops turn action status-only reports dirty undeclared nested git repositories", () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-uok-gitops-nested-"));
+  try {
+    initRepo(root);
+    mkdirSync(join(root, "nested"), { recursive: true });
+    initRepo(join(root, "nested"));
+    writeFileSync(join(root, ".gitignore"), "nested/\n", "utf-8");
+    run("git add .gitignore", root);
+    run('git commit -m "chore: ignore nested repo"', root);
+
+    writeFileSync(join(root, "nested", "README.md"), "# Dirty nested\n", "utf-8");
+
+    _resetLogs();
+    const result = runTurnGitAction({
+      basePath: root,
+      action: "status-only",
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+    });
+    const warnings = drainLogs();
+
+    assert.equal(result.status, "ok");
+    assert.equal(result.dirty, true);
+    assert.deepEqual(result.dirtyRepositories, {
+      project: false,
+      "nested (undeclared)": true,
+    });
+    assert.ok(
+      warnings.some((entry) => entry.message.includes("undeclared dirty nested git repo nested")),
+      "dirty undeclared nested repo should be logged as a warning",
+    );
+  } finally {
+    _resetLogs();
     rmSync(root, { recursive: true, force: true });
   }
 });

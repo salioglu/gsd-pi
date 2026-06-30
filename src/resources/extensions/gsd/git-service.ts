@@ -12,6 +12,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import type { Dirent } from "node:fs";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { gsdRoot } from "./paths.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
@@ -1269,6 +1270,7 @@ function collectRepositoryDirtyStatus(basePath: string): Record<string, boolean>
   const preferences = loadEffectiveGSDPreferences(basePath)?.preferences;
   const registry = createRepositoryRegistryFromPreferences(basePath, preferences);
   const dirtyByRepository: Record<string, boolean> = {};
+  const registeredRoots = new Set(registry.repositories.map((repo) => resolve(repo.root)));
   for (const repo of registry.repositories) {
     try {
       dirtyByRepository[repo.id] = runGit(repo.root, ["status", "--porcelain"]).length > 0;
@@ -1277,7 +1279,68 @@ function collectRepositoryDirtyStatus(basePath: string): Record<string, boolean>
       dirtyByRepository[repo.id] = nativeHasChanges(repo.root);
     }
   }
+  for (const repoRoot of findUndeclaredNestedGitRepositories(registry.projectRoot, registeredRoots)) {
+    let dirty = false;
+    try {
+      dirty = runGit(repoRoot, ["status", "--porcelain"]).length > 0;
+    } catch {
+      dirty = nativeHasChanges(repoRoot);
+    }
+    if (!dirty) continue;
+
+    const relPath = relative(registry.projectRoot, repoRoot).split(sep).join("/") || repoRoot;
+    const label = `${relPath} (undeclared)`;
+    dirtyByRepository[label] = true;
+    logWarning(
+      "engine",
+      `undeclared dirty nested git repo ${relPath}; declare it under workspace.repositories or commit manually`,
+      { file: "git-service.ts" },
+    );
+  }
   return dirtyByRepository;
+}
+
+const UNDECLARED_NESTED_REPO_SCAN_MAX_DEPTH = 4;
+const UNDECLARED_NESTED_REPO_SKIP_DIRS = new Set([
+  ".git",
+  ".gsd",
+  ".gsd-worktrees",
+  "node_modules",
+  "dist",
+  "dist-test",
+]);
+
+function findUndeclaredNestedGitRepositories(projectRoot: string, registeredRoots: ReadonlySet<string>): string[] {
+  const found: string[] = [];
+
+  function visit(dir: string, depth: number): void {
+    if (depth >= UNDECLARED_NESTED_REPO_SCAN_MAX_DEPTH) return;
+
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (UNDECLARED_NESTED_REPO_SKIP_DIRS.has(entry.name)) continue;
+
+      const child = join(dir, entry.name);
+      const childRoot = resolve(child);
+      const hasGitDir = existsSync(join(child, ".git"));
+      const isRegistered = registeredRoots.has(childRoot);
+      if (hasGitDir && !isRegistered) {
+        found.push(childRoot);
+        continue;
+      }
+      visit(child, depth + 1);
+    }
+  }
+
+  visit(projectRoot, 0);
+  return found;
 }
 
 function runPerRepositoryCommitAction(args: {
