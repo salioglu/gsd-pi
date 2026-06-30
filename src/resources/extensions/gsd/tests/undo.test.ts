@@ -67,6 +67,37 @@ test("handleUndo without --force only warns and leaves completed units intact", 
   }
 });
 
+test("handleUndo execute-task with --force reopens the task row and re-renders plan", async () => {
+  const base = makeTempDir("gsd-undo-execute-task");
+  try {
+    setupTaskFixture(base);
+    mkdirSync(join(base, ".gsd", "activity"), { recursive: true });
+    writeFileSync(
+      join(base, ".gsd", "activity", "001-execute-task-M001-S01-T01.jsonl"),
+      "",
+      "utf-8",
+    );
+
+    const { notifications, ctx } = makeCtx();
+    await handleUndo("--force", ctx, {} as any, base);
+
+    const task = getTask("M001", "S01", "T01");
+    assert.equal(task?.status, "pending");
+
+    const planContent = readFileSync(
+      join(base, ".gsd", "phases", "01-test", "01-01-PLAN.md"),
+      "utf-8",
+    );
+    assert.match(planContent, /\[ \] \*\*T01\*\*:/);
+
+    assert.equal(notifications[0]?.level, "success");
+    assert.match(notifications[0]?.message ?? "", /Unchecked task in PLAN/);
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("uncheckTaskInPlan flips a checked task back to unchecked", () => {
   const base = makeTempDir("gsd-undo-plan");
   try {

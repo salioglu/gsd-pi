@@ -44,7 +44,8 @@ export async function handleUndo(args: string, ctx: ExtensionCommandContext, _pi
 
   // Extract unit type and ID from the most recent activity log filename
   // Format: <seq>-<unitType>-<unitId>.jsonl
-  const match = files[0].match(/^\d+-(.+?)-(.+)\.jsonl$/);
+  // unitType may contain hyphens; unitId starts with M (e.g. M001-S01-T01).
+  const match = files[0].match(/^\d+-([\w-]+?)-(M\d[\w-]*)\.jsonl$/);
   if (!match) {
     ctx.ui.notify("Nothing to undo — could not parse latest activity log.", "warning");
     return;
@@ -100,6 +101,11 @@ export async function handleUndo(args: string, ctx: ExtensionCommandContext, _pi
   if (unitType === "execute-task" && task !== undefined && slice !== undefined) {
     const [mid, sid, tid] = [milestone, slice, task];
     planUpdated = uncheckTaskInPlan(basePath, mid, sid, tid);
+    if (getTask(mid, sid, tid)) {
+      updateTaskStatus(mid, sid, tid, "pending");
+      await renderPlanCheckboxes(basePath, mid, sid);
+      planUpdated = true;
+    }
   }
 
   // 3. Try to revert git commits from activity log
