@@ -621,10 +621,19 @@ test("maybeRerootStepSessionForHighContext re-roots at the hard threshold even w
 
     assert.equal(result.rerooted, true, "92% usage must re-root even when the soft pref is 95%");
     assert.deepEqual(newSessionWorkspaces, [project], "hard context pressure must re-root the command session");
+    const rerootMessage = notifyMessages.find((msg) => msg.includes("Fresh session ready for /gsd next"));
+    assert.ok(rerootMessage, "hard re-root should notify the user");
+    // The re-root was triggered by the 90% hard limit, so the notification must
+    // cite that limit and not the configured 95% soft compaction threshold.
+    assert.match(
+      rerootMessage,
+      /hard threshold: 90%/,
+      "hard re-root notification must cite the 90% hard threshold",
+    );
     assert.equal(
-      notifyMessages.some((msg) => msg.includes("Fresh session ready for /gsd next")),
-      true,
-      "hard re-root should notify the user",
+      rerootMessage.includes("95%"),
+      false,
+      "hard re-root notification must not cite the configured soft compaction threshold",
     );
   } finally {
     process.chdir(previousCwd);
