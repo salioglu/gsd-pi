@@ -76,6 +76,7 @@ import { supportsSourceObservationsForUnit } from "../source-observations.js";
 import { clearPendingAutoStart } from "../pending-auto-start.js";
 import { resolveWorkflowToolBasePath } from "./dynamic-tools.js";
 import { getRequiredWorkflowToolsForUnit } from "../unit-tool-contracts.js";
+import { flushAllManifests } from "../workflow-manifest.js";
 
 let approvalQuestionAbortInFlight = false;
 
@@ -1079,6 +1080,7 @@ export function registerHooks(
     await resetAskUserQuestionsTurnCache();
     const { handleAgentEnd } = await import("./agent-end-recovery.js");
     const agentEndBasePath = contextBasePath(ctx);
+    await flushAllManifests();
     try {
       await handleAgentEnd(pi, event, ctx);
     } finally {
