@@ -35,11 +35,15 @@ import type { EnsureRtkResult } from './rtk.js'
 
 type PiCodingAgentModule = typeof import('@gsd/pi-coding-agent')
 type AgentCoreModule = typeof import('@gsd/agent-core')
-type AgentModesModule = typeof import('@gsd/agent-modes')
+type InteractiveModeModule = typeof import('@gsd/agent-modes/modes/interactive/interactive-mode.js')
+type PrintModeModule = typeof import('@gsd/agent-modes/modes/print-mode.js')
+type RpcModeModule = typeof import('@gsd/agent-modes/modes/rpc/rpc-mode.js')
 
 let piCodingAgentModulePromise: Promise<PiCodingAgentModule> | undefined
 let agentCoreModulePromise: Promise<AgentCoreModule> | undefined
-let agentModesModulePromise: Promise<AgentModesModule> | undefined
+let interactiveModeModulePromise: Promise<InteractiveModeModule> | undefined
+let printModeModulePromise: Promise<PrintModeModule> | undefined
+let rpcModeModulePromise: Promise<RpcModeModule> | undefined
 
 function loadPiCodingAgentModule(): Promise<PiCodingAgentModule> {
   return (piCodingAgentModulePromise ??= import('@gsd/pi-coding-agent'))
@@ -49,8 +53,16 @@ function loadAgentCoreModule(): Promise<AgentCoreModule> {
   return (agentCoreModulePromise ??= import('@gsd/agent-core'))
 }
 
-function loadAgentModesModule(): Promise<AgentModesModule> {
-  return (agentModesModulePromise ??= import('@gsd/agent-modes'))
+function loadInteractiveModeModule(): Promise<InteractiveModeModule> {
+  return (interactiveModeModulePromise ??= import('@gsd/agent-modes/modes/interactive/interactive-mode.js'))
+}
+
+function loadPrintModeModule(): Promise<PrintModeModule> {
+  return (printModeModulePromise ??= import('@gsd/agent-modes/modes/print-mode.js'))
+}
+
+function loadRpcModeModule(): Promise<RpcModeModule> {
+  return (rpcModeModulePromise ??= import('@gsd/agent-modes/modes/rpc/rpc-mode.js'))
 }
 
 // ---------------------------------------------------------------------------
@@ -569,7 +581,6 @@ const {
   SessionManager,
 } = await loadPiCodingAgentModule()
 const { createAgentSession } = await loadAgentCoreModule()
-const { InteractiveMode, runPrintMode, runRpcMode } = await loadAgentModesModule()
 markStartup('loadPiCodingAgent')
 
 // Pi's tool bootstrap can mis-detect already-installed fd/rg on some systems
@@ -727,6 +738,7 @@ if (isPrintMode) {
   const mode = cliFlags.mode || 'text'
 
   if (mode === 'rpc') {
+    const { runRpcMode } = await loadRpcModeModule()
     printStartupTimings()
     await runRpcMode(session)
     process.exit(0)
@@ -754,6 +766,7 @@ if (isPrintMode) {
     await new Promise(() => {})
   }
 
+  const { runPrintMode } = await loadPrintModeModule()
   printStartupTimings()
   await runPrintMode(session, {
     mode: mode as 'text' | 'json',
@@ -905,6 +918,7 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
   printNonTtyErrorAndExit(missing, true)
 }
 
+const { InteractiveMode } = await loadInteractiveModeModule()
 const interactiveMode = new InteractiveMode(session)
 markStartup('InteractiveMode')
 printStartupTimings()
