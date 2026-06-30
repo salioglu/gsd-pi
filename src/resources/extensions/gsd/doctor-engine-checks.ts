@@ -11,17 +11,7 @@ import { workflowEventLogPath } from "./workflow-event-ledger.js";
 import { readEvents } from "./workflow-events.js";
 import { flushWorkflowProjections } from "./projection-flush.js";
 import { parseRoadmapSlices } from "./roadmap-slices.js";
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function projectionCheckboxDone(content: string, unitId: string): boolean | null {
-  const id = escapeRegExp(unitId);
-  const match = content.match(new RegExp(`^\\s*-\\s*\\[([ xX])\\]\\s*\\*\\*${id}(?::|\\*\\*)`, "m"));
-  if (!match) return null;
-  return match[1]!.toLowerCase() === "x";
-}
+import { parsePlan } from "./parsers-legacy.js";
 
 function relativeFile(basePath: string, filePath: string): string {
   return relative(basePath, filePath).split("\\").join("/");
@@ -82,9 +72,14 @@ function checkProjectionCheckboxDbStatus(basePath: string, milestoneIds: string[
       if (!planPath || !existsSync(planPath)) continue;
       try {
         const plan = readFileSync(planPath, "utf-8");
+        // parsePlan reads the authoritative task checkboxes (the flat-phase
+        // <tasks> block / ## Tasks section), so a stray task-style checkbox
+        // line elsewhere in PLAN.md (e.g. a Must-Haves or Verification bullet
+        // above <tasks>) can no longer hide real drift or fake a divergence.
+        const taskDoneById = new Map(parsePlan(plan).tasks.map((entry) => [entry.id, entry.done]));
         for (const task of getSliceTasks(milestoneId, slice.id)) {
-          const checkboxDone = projectionCheckboxDone(plan, task.id);
-          if (checkboxDone === null) continue;
+          const checkboxDone = taskDoneById.get(task.id);
+          if (checkboxDone === undefined) continue;
           reportCheckboxDbStatusDivergence(
             issues,
             basePath,
