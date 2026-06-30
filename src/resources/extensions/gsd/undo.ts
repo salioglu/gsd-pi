@@ -44,8 +44,8 @@ export async function handleUndo(args: string, ctx: ExtensionCommandContext, _pi
 
   // Extract unit type and ID from the most recent activity log filename
   // Format: <seq>-<unitType>-<unitId>.jsonl
-  // unitType may contain hyphens; unitId starts with M (e.g. M001-S01-T01).
-  const match = files[0].match(/^\d+-([\w-]+?)-(M\d[\w-]*)\.jsonl$/);
+  // unitType may contain hyphens; unitId is milestone-shaped (M001-S01-T01) or symbolic (PROJECT).
+  const match = files[0].match(/^\d+-([\w-]+?)-(M\d[\w-]*|[A-Z][\w-]*)\.jsonl$/);
   if (!match) {
     ctx.ui.notify("Nothing to undo — could not parse latest activity log.", "warning");
     return;
