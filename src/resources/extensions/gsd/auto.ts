@@ -97,6 +97,7 @@ import {
   getNewBudgetAlertLevel,
   getBudgetEnforcementAction,
   getContextPauseAction,
+  HARD_CONTEXT_REROOT_THRESHOLD_PERCENT,
   resolveCompactionThresholdPercent,
   shouldRerootStepSessionForContext,
   shouldWarnStepSessionForContext,
@@ -1418,7 +1419,7 @@ export async function maybeRerootStepSessionForHighContext(
   const result = await rerootCommandSession(cmdCtx, workspaceRoot);
   if (result.status === "ok") {
     ctx.ui.notify(
-      `Step complete — context at ${displayPercent}% (threshold: ${thresholdDisplay}%). Fresh session ready for /gsd next.`,
+      `Step complete — context at ${displayPercent}% (hard threshold: ${HARD_CONTEXT_REROOT_THRESHOLD_PERCENT}%). Fresh session ready for /gsd next.`,
       "info",
     );
     return { rerooted: true };
