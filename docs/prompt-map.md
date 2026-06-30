@@ -434,7 +434,8 @@ LLM sees: "load these skill files and follow their rules for this unit"
 | Tool | Persists To |
 |------|------------|
 | `gsd_plan_milestone` | milestones table, slices table |
-| `gsd_plan_slice` | slices table, tasks table |
+| `gsd_plan_slice` | slices table; tasks table only when a non-empty `tasks` payload performs full replacement/update |
+| `gsd_plan_task` | one task planning row; task plan artifact and slice plan projection |
 | `gsd_task_complete` | tasks table, T##-SUMMARY.md |
 | `gsd_slice_complete` | slices table, S##-SUMMARY.md |
 | `gsd_complete_milestone` | milestones table, M##-SUMMARY.md |
