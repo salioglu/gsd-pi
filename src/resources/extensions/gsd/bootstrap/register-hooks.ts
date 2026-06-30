@@ -1081,7 +1081,19 @@ export function registerHooks(
     const { handleAgentEnd } = await import("./agent-end-recovery.js");
     const agentEndBasePath = contextBasePath(ctx);
     try {
-      await flushAllManifests();
+      // The manifest is a non-critical projection (the append-only event log is
+      // the authoritative recovery source), so a flush failure must not skip
+      // agent_end recovery. drainManifestWrites still propagates write failures
+      // to explicit flush callers; here we deliberately log and continue so
+      // handleAgentEnd (and the finally below) always run.
+      try {
+        await flushAllManifests();
+      } catch (err) {
+        safetyLogWarning(
+          "manifest",
+          `flushAllManifests on agent_end failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       await handleAgentEnd(pi, event, ctx);
     } finally {
       activateDeferredApprovalGate(agentEndBasePath);
