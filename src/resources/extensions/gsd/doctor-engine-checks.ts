@@ -365,6 +365,7 @@ export async function checkEngineHealth(
   // ── Projection drift detection ──────────────────────────────────────────
   // If the DB is available, check whether markdown projections are stale
   // relative to the event log and re-render them.
+  const reRenderedMilestoneIds: string[] = [];
   try {
     if (isDbAvailable()) {
       const eventLogPath = workflowEventLogPath(basePath);
@@ -379,6 +380,7 @@ export async function checkEngineHealth(
             try {
               await flushWorkflowProjections(basePath, { milestoneId: milestone.id });
               fixesApplied.push(`re-rendered missing projections for ${milestone.id}`);
+              reRenderedMilestoneIds.push(milestone.id);
             } catch {
               // Non-fatal — projection re-render failed
             }
@@ -389,6 +391,7 @@ export async function checkEngineHealth(
             try {
               await flushWorkflowProjections(basePath, { milestoneId: milestone.id });
               fixesApplied.push(`re-rendered stale projections for ${milestone.id}`);
+              reRenderedMilestoneIds.push(milestone.id);
             } catch {
               // Non-fatal — projection re-render failed
             }
@@ -398,5 +401,17 @@ export async function checkEngineHealth(
     }
   } catch {
     // Non-fatal — projection drift check must never block doctor
+  }
+
+  if (reRenderedMilestoneIds.length > 0) {
+    const reRendered = new Set(reRenderedMilestoneIds);
+    for (let i = issues.length - 1; i >= 0; i--) {
+      const issue = issues[i]!;
+      if (issue.code !== "checkbox_db_status_divergence") continue;
+      const milestoneId = issue.unitId.split("/")[0] ?? "";
+      if (reRendered.has(milestoneId)) {
+        issues.splice(i, 1);
+      }
+    }
   }
 }
