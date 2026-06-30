@@ -1,6 +1,14 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { _getAdapter, closeDatabase, insertMilestone, insertSlice, insertTask, openDatabase } from "../gsd-db.ts";
+import {
+  _getAdapter,
+  closeDatabase,
+  insertArtifact,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  openDatabase,
+} from "../gsd-db.ts";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -254,5 +262,99 @@ test("checkEngineHealth treats explicit reopen as authoritative when dispatch ti
     issues.some((issue) => issue.code === "completed_milestone_reopened"),
     false,
     "explicit reopen should exempt reopened milestone even when completion dispatch timestamps are absent",
+  );
+});
+
+test("checkEngineHealth reports artifact rows whose files are missing on disk", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-missing-artifact-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const gsdDir = join(base, ".gsd");
+  const worktree = join(gsdDir, "worktrees", "M001");
+  mkdirSync(join(worktree, ".gsd", "milestones", "M001"), { recursive: true });
+  writeFileSync(join(worktree, ".git"), "gitdir: ../../../../.git/worktrees/M001\n", "utf-8");
+  writeFileSync(join(worktree, ".gsd", "milestones", "M001", "M001-CONTEXT.md"), "# Context\n", "utf-8");
+
+  openDatabase(join(gsdDir, "gsd.db"));
+  insertArtifact({
+    path: "milestones/M001/M001-CONTEXT.md",
+    artifact_type: "CONTEXT",
+    milestone_id: "M001",
+    slice_id: null,
+    task_id: null,
+    full_content: "# Context\n",
+  });
+  insertArtifact({
+    path: "milestones/M001/M001-MISSING.md",
+    artifact_type: "CONTEXT",
+    milestone_id: "M001",
+    slice_id: null,
+    task_id: null,
+    full_content: "# Missing\n",
+  });
+
+  const issues: any[] = [];
+  await checkEngineHealth(worktree, issues, []);
+
+  assert.equal(
+    issues.some((issue) => issue.code === "artifact_file_missing" && issue.file === "milestones/M001/M001-CONTEXT.md"),
+    false,
+    "worktree-local artifacts should resolve through the projection root",
+  );
+  const missing = issues.find((issue) => issue.code === "artifact_file_missing" && issue.file === "milestones/M001/M001-MISSING.md");
+  assert.ok(missing, "missing artifact rows should be reported");
+  assert.equal(missing.unitId, "M001");
+  assert.equal(missing.fixable, false);
+});
+
+test("checkEngineHealth clears artifact_file_missing after projection re-render recreates the file", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-stale-missing-artifact-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const gsdDir = join(base, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+
+  openDatabase(join(gsdDir, "gsd.db"));
+  insertMilestone({ id: "M001", title: "Foundation", status: "active", planning: { vision: "Ship the foundation." } });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending", risk: "low", depends: [], sequence: 1 });
+  insertArtifact({
+    path: "phases/01-foundation/01-ROADMAP.md",
+    artifact_type: "ROADMAP",
+    milestone_id: "M001",
+    slice_id: null,
+    task_id: null,
+    full_content: "# stale row only\n",
+  });
+  // CONTEXT is not re-rendered by flushWorkflowProjections, so its missing-file
+  // diagnostic must survive the post-re-render cleanup (guards against the
+  // clearing logic over-broadening to artifacts the same run did not recreate).
+  insertArtifact({
+    path: "phases/01-foundation/01-CONTEXT.md",
+    artifact_type: "CONTEXT",
+    milestone_id: "M001",
+    slice_id: null,
+    task_id: null,
+    full_content: "# stale context row only\n",
+  });
+  appendEvent(base, {
+    cmd: "plan-milestone",
+    params: { milestoneId: "M001" },
+    ts: "2999-01-01T00:00:00.000Z",
+    actor: "agent",
+  });
+
+  const issues: any[] = [];
+  const fixes: string[] = [];
+  await checkEngineHealth(base, issues, fixes);
+
+  assert.ok(fixes.includes("re-rendered missing projections for M001"));
+  assert.equal(
+    issues.some((issue) => issue.code === "artifact_file_missing" && issue.file === "phases/01-foundation/01-ROADMAP.md"),
+    false,
+    "doctor should not report a missing artifact that projection repair recreated in the same run",
+  );
+  assert.ok(
+    issues.some((issue) => issue.code === "artifact_file_missing" && issue.file === "phases/01-foundation/01-CONTEXT.md"),
+    "doctor should still report a missing artifact that projection repair did not recreate",
   );
 });

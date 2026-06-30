@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { relative } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 
 import type { DoctorIssue } from "./doctor-types.js";
 import { getAllMilestones, getMilestoneSlices, getSliceTasks, isDbAvailable, _getAdapter } from "./gsd-db.js";
 import { isAfter, latestExplicitReopenAt } from "./milestone-reopen-events.js";
-import { resolveGsdPathContract, resolveMilestoneFile, resolveSliceFile } from "./paths.js";
+import { gsdProjectionRoot, gsdRoot, resolveGsdPathContract, resolveMilestoneFile, resolveSliceFile } from "./paths.js";
 import { deriveState } from "./state.js";
 import { isClosedStatus } from "./status-guards.js";
 import { workflowEventLogPath } from "./workflow-event-ledger.js";
@@ -112,6 +112,28 @@ function isClearedByMilestoneShellProjectionFlush(
   if (!roadmapPath || !issue.file) return false;
 
   return issue.file === relativeFile(basePath, roadmapPath);
+}
+
+function artifactExistsOnDisk(basePath: string, artifactPath: string): boolean {
+  if (isAbsolute(artifactPath)) return existsSync(artifactPath);
+  return [
+    join(gsdProjectionRoot(basePath), artifactPath),
+    join(gsdRoot(basePath), artifactPath),
+  ].some((candidate) => existsSync(candidate));
+}
+
+function artifactUnitId(row: { milestone_id: string | null; slice_id: string | null; task_id: string | null }): string {
+  if (!row.milestone_id) return "project";
+  if (row.slice_id && row.task_id) return `${row.milestone_id}/${row.slice_id}/${row.task_id}`;
+  if (row.slice_id) return `${row.milestone_id}/${row.slice_id}`;
+  return row.milestone_id;
+}
+
+function artifactScope(row: { milestone_id: string | null; slice_id: string | null; task_id: string | null }): DoctorIssue["scope"] {
+  if (row.task_id) return "task";
+  if (row.slice_id) return "slice";
+  if (row.milestone_id) return "milestone";
+  return "project";
 }
 
 export async function checkEngineHealth(
@@ -300,7 +322,41 @@ export async function checkEngineHealth(
         // Non-fatal — completed-milestone reopen check failed
       }
 
-      // f. Completion artifacts disagree with open DB hierarchy rows.
+      // f. Artifact rows reference files that no longer exist on disk.
+      try {
+        const artifactRows = adapter
+          .prepare(
+            `SELECT path, artifact_type, milestone_id, slice_id, task_id
+             FROM artifacts
+             WHERE path != ''
+             ORDER BY path`,
+          )
+          .all() as Array<{
+            path: string;
+            artifact_type: string;
+            milestone_id: string | null;
+            slice_id: string | null;
+            task_id: string | null;
+          }>;
+
+        for (const row of artifactRows) {
+          if (artifactExistsOnDisk(basePath, row.path)) continue;
+          const unitId = artifactUnitId(row);
+          issues.push({
+            severity: "error",
+            code: "artifact_file_missing",
+            scope: artifactScope(row),
+            unitId,
+            message: `Artifact ${row.path} is recorded in the database as ${row.artifact_type || "UNKNOWN"} but no matching file exists on disk`,
+            file: row.path,
+            fixable: false,
+          });
+        }
+      } catch {
+        // Non-fatal — artifact file existence check failed
+      }
+
+      // g. Completion artifacts disagree with open DB hierarchy rows.
       try {
         const rows = adapter
           .prepare(
@@ -329,6 +385,7 @@ export async function checkEngineHealth(
 
         const seen = new Set<string>();
         for (const row of rows) {
+          if (!artifactExistsOnDisk(basePath, row.path)) continue;
           const reopenAt = latestExplicitReopenAt(basePath, row.milestone_id);
           if (!isAfter(row.imported_at, reopenAt)) continue;
           const isSliceSummary = row.slice_id && !row.task_id && row.slice_status && !["complete", "done", "skipped", "closed"].includes(row.slice_status);
@@ -422,6 +479,10 @@ export async function checkEngineHealth(
       // flushWorkflowProjections re-renders milestone shell projections (not
       // slice PLAN.md files), so only clear stale ROADMAP checkbox diagnostics.
       if (isClearedByMilestoneShellProjectionFlush(basePath, issue, reRendered)) {
+        issues.splice(i, 1);
+        continue;
+      }
+      if (issue.code === "artifact_file_missing" && issue.file && artifactExistsOnDisk(basePath, issue.file)) {
         issues.splice(i, 1);
       }
     }
