@@ -163,16 +163,20 @@ export async function handlePlanTask(
     // not as standalone TID-PLAN.md files. Re-render the slice plan so the
     // new/updated task appears in the plan file that gsd-core reads.
     // Guard: resolveTasksDir is null in flat-phase (no tasks/ subdir exists).
+    let slicePlanSynced = false;
     try {
       const tDir = resolveTasksDir(basePath, params.milestoneId, params.sliceId);
       if (!tDir) {
         await renderPlanFromDb(basePath, params.milestoneId, params.sliceId);
+        slicePlanSynced = true;
       }
     } catch (syncErr) {
       logWarning("tool", `plan-task: slice-plan sync failed: ${(syncErr as Error).message}`);
     }
 
-    setSliceSketchFlag(params.milestoneId, params.sliceId, false);
+    if (slicePlanSynced) {
+      setSliceSketchFlag(params.milestoneId, params.sliceId, false);
+    }
 
     invalidateStateCache();
     clearParseCache();
