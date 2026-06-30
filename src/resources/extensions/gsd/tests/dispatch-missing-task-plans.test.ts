@@ -96,6 +96,40 @@ function scaffoldMilestoneContext(basePath: string, mid: string): void {
   ].join("\n"));
 }
 
+function scaffoldLegacyMilestoneContext(basePath: string, mid: string): void {
+  const dir = join(basePath, ".gsd", "milestones", mid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${mid}-CONTEXT.md`), [
+    `# ${mid}: Test Milestone`,
+    "",
+    "Context for legacy dispatch recovery tests.",
+    "",
+  ].join("\n"));
+}
+
+function scaffoldLegacySlicePlan(basePath: string, mid: string, sid: string): void {
+  const dir = join(basePath, ".gsd", "milestones", mid, "slices", sid);
+  mkdirSync(join(dir, "tasks"), { recursive: true });
+  writeFileSync(join(dir, `${sid}-PLAN.md`), [
+    `# ${sid}: Legacy Slice`,
+    "",
+    "## Tasks",
+    "- T01: Do something",
+    "",
+  ].join("\n"));
+}
+
+function scaffoldLegacyTaskPlan(basePath: string, mid: string, sid: string, tid: string): void {
+  const dir = join(basePath, ".gsd", "milestones", mid, "slices", sid, "tasks");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${tid}-PLAN.md`), [
+    `# ${tid}: First Task`,
+    "",
+    "Implement the task.",
+    "",
+  ].join("\n"));
+}
+
 function scaffoldTaskPlan(basePath: string, mid: string, sid: string, tid: string): void {
   // Flat-phase: no per-task plan files. This is a no-op — tasks live as
   // checkboxes inside the slice plan. Kept for backward-compat with tests
@@ -165,6 +199,65 @@ test("dispatch: present task plan proceeds to execute-task normally", async (t) 
     `unitType should be execute-task, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
   assert.ok(result.action === "dispatch" && result.unitId === "M002/S03/T01",
     `unitId should be M002/S03/T01, got: ${result.action === "dispatch" ? result.unitId : "(stop)"}`);
+});
+
+test("dispatch: missing legacy task plan recovery increments a per-slice retry counter", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-1087-retry-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  scaffoldLegacyMilestoneContext(tmp, "M002");
+  scaffoldLegacySlicePlan(tmp, "M002", "S03");
+
+  const session = {
+    preExecRetryCount: new Map<string, number>(),
+  };
+  const result = await resolveDispatch(makeContextFor(tmp, "M002", "S03", "T01", session));
+
+  assert.equal(result.action, "dispatch");
+  assert.ok(result.action === "dispatch" && result.unitType === "plan-slice",
+    `unitType should be plan-slice, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
+  assert.ok(result.action === "dispatch" && result.unitId === "M002/S03",
+    `unitId should be M002/S03, got: ${result.action === "dispatch" ? result.unitId : "(stop)"}`);
+  assert.equal(session.preExecRetryCount.get("M002/S03"), 1);
+});
+
+test("dispatch: missing legacy task plan recovery stops when retry counter is exhausted", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-1087-stop-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  scaffoldLegacyMilestoneContext(tmp, "M002");
+  scaffoldLegacySlicePlan(tmp, "M002", "S03");
+
+  const session = {
+    preExecRetryCount: new Map<string, number>([["M002/S03", 2]]),
+  };
+  const result = await resolveDispatch(makeContextFor(tmp, "M002", "S03", "T01", session));
+
+  assert.equal(result.action, "stop");
+  assert.ok(result.action === "stop");
+  assert.equal(result.level, "error");
+  assert.match(result.reason, /Missing task-plan recovery failed 2 times for M002\/S03/);
+  assert.match(result.reason, /manual intervention required/);
+  assert.equal(session.preExecRetryCount.has("M002/S03"), false);
+});
+
+test("dispatch: present legacy task plan clears missing-plan recovery retry counter", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-1087-clear-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  scaffoldLegacyMilestoneContext(tmp, "M002");
+  scaffoldLegacySlicePlan(tmp, "M002", "S03");
+  scaffoldLegacyTaskPlan(tmp, "M002", "S03", "T01");
+
+  const session = {
+    preExecRetryCount: new Map<string, number>([["M002/S03", 1]]),
+  };
+  const result = await resolveDispatch(makeContextFor(tmp, "M002", "S03", "T01", session));
+
+  assert.equal(result.action, "dispatch");
+  assert.ok(result.action === "dispatch" && result.unitType === "execute-task",
+    `unitType should be execute-task, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
+  assert.equal(session.preExecRetryCount.has("M002/S03"), false);
 });
 
 test("dispatch: session milestone mismatch stops before missing-task-plan recovery", async (t) => {
