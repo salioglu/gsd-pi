@@ -263,6 +263,53 @@ test("dispatch: present legacy task plan clears missing-plan recovery retry coun
     "pre-exec retry counter must not be cleared when task plan is present");
 });
 
+test("dispatch: missing-task-plan recovery loop terminates even when the shared pre-exec key is reset between rounds (#1087)", async (t) => {
+  // The recovery rule re-dispatches plan-slice with unitId "${mid}/${sid}".
+  // That regenerated plan-slice carries the same currentUnit.id, and on a
+  // pre-execution pass the post-unit hook deletes that key from
+  // preExecRetryCount (auto-post-unit.ts). Missing per-task PLAN projection
+  // files do not fail pre-exec checks, so the regenerated plan-slice typically
+  // passes and that delete fires every cycle. If recovery shared
+  // preExecRetryCount, its counter would be wiped to 0 each round and the loop
+  // would never reach the cap. Here we simulate that reset between rounds and
+  // assert the dedicated counter still climbs to MAX and stops.
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-1087-loop-term-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  scaffoldLegacyMilestoneContext(tmp, "M002");
+  scaffoldLegacySlicePlan(tmp, "M002", "S03");
+
+  const session = {
+    missingTaskPlanRetryCount: new Map<string, number>(),
+    preExecRetryCount: new Map<string, number>(),
+  };
+
+  // Round 1: missing task plan → recover (counter 0 → 1).
+  const r1 = await resolveDispatch(makeContextFor(tmp, "M002", "S03", "T01", session));
+  assert.ok(r1.action === "dispatch" && r1.unitType === "plan-slice",
+    `round 1 should re-dispatch plan-slice, got: ${r1.action === "dispatch" ? r1.unitType : "(stop)"}`);
+  assert.equal(session.missingTaskPlanRetryCount.get("M002/S03"), 1);
+
+  // The regenerated plan-slice passes its post-unit pre-exec check, deleting
+  // the shared "${mid}/${sid}" key from preExecRetryCount.
+  session.preExecRetryCount.delete("M002/S03");
+
+  // Round 2: still missing → recover (counter 1 → 2), unaffected by the reset.
+  const r2 = await resolveDispatch(makeContextFor(tmp, "M002", "S03", "T01", session));
+  assert.ok(r2.action === "dispatch" && r2.unitType === "plan-slice",
+    `round 2 should re-dispatch plan-slice, got: ${r2.action === "dispatch" ? r2.unitType : "(stop)"}`);
+  assert.equal(session.missingTaskPlanRetryCount.get("M002/S03"), 2);
+
+  session.preExecRetryCount.delete("M002/S03");
+
+  // Round 3: cap reached → stop. The loop terminates despite the resets.
+  const r3 = await resolveDispatch(makeContextFor(tmp, "M002", "S03", "T01", session));
+  assert.equal(r3.action, "stop");
+  assert.ok(r3.action === "stop" && r3.level === "error");
+  assert.match(r3.reason, /Missing task-plan recovery failed 2 times for M002\/S03/);
+  assert.equal(session.missingTaskPlanRetryCount.has("M002/S03"), false);
+});
+
 test("dispatch: session milestone mismatch stops before missing-task-plan recovery", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-session-milestone-mismatch-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
