@@ -468,7 +468,10 @@ export async function handlePlanSlice(
       deleteArtifactByPath(artifactPath);
     }
 
-    const renderResult = await renderPlanFromDb(basePath, params.milestoneId, params.sliceId);
+    const sliceTasks = getSliceTasks(params.milestoneId, params.sliceId);
+    const renderResult = sliceTasks.length === 0
+      ? { planPath: "", taskPlanPaths: [] as string[] }
+      : await renderPlanFromDb(basePath, params.milestoneId, params.sliceId);
     setSliceSketchFlag(params.milestoneId, params.sliceId, false);
     invalidateStateCache();
     clearParseCache();
