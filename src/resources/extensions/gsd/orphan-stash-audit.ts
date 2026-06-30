@@ -81,7 +81,19 @@ function isAlreadyRestoredUntrackedStatus(basePath: string, stashRef: string, st
   const stashUntrackedPaths = listStashUntrackedPaths(basePath, stashRef);
   if (!stashUntrackedPaths || stashUntrackedPaths.length === 0) return false;
   const stashUntrackedPathSet = new Set(stashUntrackedPaths);
-  return statusEntries.every((entry) => stashUntrackedPathSet.has(entry.path));
+  const workingTreeUntrackedPathSet = new Set(statusEntries.map((entry) => entry.path));
+  // "Already restored" requires the working tree's untracked paths to match the
+  // stash's untracked paths exactly, in BOTH directions:
+  //   1. every current untracked path comes from the stash (no unexplained user
+  //      work that an apply would clobber), AND
+  //   2. every stash untracked path is already present in the working tree.
+  // Without (2), a partial restore (where only some stash files were recovered)
+  // would be misread as fully restored: the audit would no-op without applying
+  // or warning, leaving the remaining pre-merge files missing.
+  return (
+    statusEntries.every((entry) => stashUntrackedPathSet.has(entry.path)) &&
+    stashUntrackedPaths.every((path) => workingTreeUntrackedPathSet.has(path))
+  );
 }
 
 function manualApplyWarning(stashRef: string, milestoneId: string, reason: string): string {

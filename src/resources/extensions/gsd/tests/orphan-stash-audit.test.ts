@@ -196,6 +196,63 @@ describe("auditOrphanedPreflightStashes", () => {
       "second run must NOT warn — files are already restored from first run",
     );
   });
+
+  test("warns instead of silently skipping when only some stash untracked files were restored", () => {
+    // Cursor Bugbot caught: isAlreadyRestoredUntrackedStatus treated a dirty
+    // tree as fully restored when every *current* untracked path appeared in
+    // the stash, without requiring every *stash* untracked path to be present.
+    // A partial restore (only some files recovered) was misread as the
+    // idempotent steady state, so the audit no-oped and the remaining pre-merge
+    // files stayed missing with no warning.
+    writeFileSync(join(repo, "first.txt"), "first\n");
+    writeFileSync(join(repo, "second.txt"), "second\n");
+    const marker = `gsd-preflight-stash:M007:42:1700000000000:partial`;
+    git(repo, "stash", "push", "--include-untracked", "-m", `gsd-preflight-stash [${marker}]`);
+
+    // Both files are stashed away.
+    assert.equal(existsSync(join(repo, "first.txt")), false);
+    assert.equal(existsSync(join(repo, "second.txt")), false);
+
+    // Simulate a partial restore: only first.txt came back; second.txt is still
+    // missing from the working tree.
+    writeFileSync(join(repo, "first.txt"), "first\n");
+
+    const result = auditOrphanedPreflightStashes(repo, () => true);
+
+    // Must NOT be treated as already-restored: second.txt is still missing, so
+    // the audit must surface a manual-recovery warning rather than no-op.
+    assert.equal(result.applied.length, 0);
+    assert.equal(result.warnings.length, 1, "partial restore must warn, not silently no-op");
+    assert.match(result.warnings[0], /not auto-applied/);
+    assert.match(result.warnings[0], /working tree not clean/);
+    assert.match(result.warnings[0], /M007/);
+    assert.match(result.warnings[0], /git stash apply/);
+
+    // The stash entry must remain so the user can recover second.txt manually.
+    const list = git(repo, "stash", "list");
+    assert.match(list, /gsd-preflight-stash:M007:/);
+  });
+
+  test("fully restored multi-file untracked stash stays a silent no-op", () => {
+    // Guards the other direction of the set-equality fix: when EVERY stash
+    // untracked file is present in the working tree, the genuine idempotent
+    // steady state must still be recognized and skipped without warning, even
+    // when the stash captured more than one file.
+    writeFileSync(join(repo, "alpha.txt"), "alpha\n");
+    writeFileSync(join(repo, "beta.txt"), "beta\n");
+    const marker = `gsd-preflight-stash:M008:42:1700000000000:multi`;
+    git(repo, "stash", "push", "--include-untracked", "-m", `gsd-preflight-stash [${marker}]`);
+
+    const first = auditOrphanedPreflightStashes(repo, () => true);
+    assert.equal(first.applied.length, 1, "first run applies both files");
+    assert.equal(first.warnings.length, 0);
+    assert.equal(existsSync(join(repo, "alpha.txt")), true);
+    assert.equal(existsSync(join(repo, "beta.txt")), true);
+
+    const second = auditOrphanedPreflightStashes(repo, () => true);
+    assert.equal(second.applied.length, 0, "second run skips");
+    assert.equal(second.warnings.length, 0, "fully restored multi-file stash must not warn");
+  });
 });
 
 test("_isAlreadyRestoredApplyError detects the git stash apply already-exists error", () => {
