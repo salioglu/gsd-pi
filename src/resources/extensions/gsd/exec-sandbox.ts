@@ -12,7 +12,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
-import { killProcessTree, SIGKILL_GRACE_MS, HARD_DEADLINE_MS } from "@gsd/pi-coding-agent";
+import { getShellConfig, killProcessTree, SIGKILL_GRACE_MS, HARD_DEADLINE_MS } from "@gsd/pi-coding-agent";
 
 export interface ExecSandboxRequest {
   /** Interpreter to use. */
@@ -138,7 +138,12 @@ function clampTimeout(request: ExecSandboxRequest, opts: ExecSandboxOptions): nu
 function resolveCommand(runtime: ExecSandboxRequest["runtime"]): { cmd: string; args: string[] } {
   switch (runtime) {
     case "bash":
-      return { cmd: "bash", args: ["-c"] };
+      try {
+        const { shell, args } = getShellConfig();
+        return { cmd: shell, args };
+      } catch {
+        return { cmd: "bash", args: ["-c"] };
+      }
     case "node":
       return { cmd: process.execPath, args: ["-e"] };
     case "python":
