@@ -1080,8 +1080,8 @@ export function registerHooks(
     await resetAskUserQuestionsTurnCache();
     const { handleAgentEnd } = await import("./agent-end-recovery.js");
     const agentEndBasePath = contextBasePath(ctx);
-    await flushAllManifests();
     try {
+      await flushAllManifests();
       await handleAgentEnd(pi, event, ctx);
     } finally {
       activateDeferredApprovalGate(agentEndBasePath);

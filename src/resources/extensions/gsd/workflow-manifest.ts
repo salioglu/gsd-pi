@@ -427,7 +427,9 @@ function enqueueManifestWrite(basePath: string, json: string): void {
 
   state.latestJson = json;
   if (!state.active) {
-    state.active = drainManifestWrites(key, state);
+    const active = drainManifestWrites(key, state);
+    void active.catch(() => {});
+    state.active = active;
   }
 }
 
