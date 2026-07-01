@@ -27,6 +27,7 @@ export function loadStoredEnvKeys(authStorage: AuthStorage): void {
     ['minimax-cn',    'MINIMAX_CN_API_KEY'],
     ['ollama-cloud',  'OLLAMA_API_KEY'],
     ['custom-openai', 'CUSTOM_OPENAI_API_KEY'],
+    ['cursor-agent',  'CURSOR_API_KEY'],
   ]
   for (const [provider, envVar] of providers) {
     if (!process.env[envVar]) {

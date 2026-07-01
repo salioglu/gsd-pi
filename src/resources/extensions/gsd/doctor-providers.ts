@@ -49,6 +49,7 @@ const CLI_AUTH_PROVIDERS = new Set([
   "claude-code",
   "google-gemini-cli",
   "google-antigravity",
+  "cursor-agent",
 ]);
 
 /**
@@ -57,9 +58,9 @@ const CLI_AUTH_PROVIDERS = new Set([
  * e.g. GitHub Copilot subscriptions can access Claude and GPT models.
  */
 const PROVIDER_ROUTES: Record<string, string[]> = {
-  anthropic: ["github-copilot", "claude-code"],
-  openai: ["github-copilot", "openai-codex"],
-  google: ["google-antigravity", "google-gemini-cli"],
+  anthropic: ["github-copilot", "claude-code", "cursor-agent"],
+  openai: ["github-copilot", "openai-codex", "cursor-agent"],
+  google: ["google-antigravity", "google-gemini-cli", "cursor-agent"],
 };
 
 // ── Model → Provider ID mapping ───────────────────────────────────────────────
@@ -86,6 +87,7 @@ function modelToProviderId(model: string): string | null {
       anthropic: "anthropic",
       openai: "openai",
       "github-copilot": "github-copilot",
+      "cursor-agent": "cursor-agent",
     };
     if (prefixMap[prefix]) return prefixMap[prefix];
     return rawPrefix;
@@ -95,6 +97,7 @@ function modelToProviderId(model: string): string | null {
   if (lower.startsWith("claude"))        return "anthropic";
   if (lower.startsWith("gpt-") || lower.startsWith("o1") || lower.startsWith("o3")) return "openai";
   if (lower.startsWith("gemini"))        return "google";
+  if (lower.startsWith("composer"))      return "cursor-agent";
   if (lower.startsWith("llama") || lower.startsWith("mixtral")) return "groq";
   if (lower.startsWith("grok"))          return "xai";
   if (lower.startsWith("mistral") || lower.startsWith("codestral")) return "mistral";
@@ -160,11 +163,13 @@ const CLI_BINARY_MAP: Record<string, string[]> = {
   "claude-code": ["claude", "claude-code"],
   "google-gemini-cli": ["gemini"],
   "google-antigravity": ["agy"],
+  "cursor-agent": ["cursor-agent"],
 };
 
 const CLI_AUTH_PATH_CHECK_PROVIDERS = new Set([
   "google-gemini-cli",
   "google-antigravity",
+  "cursor-agent",
 ]);
 
 let asyncCliBinaryPathCache: Map<string, boolean> | null = null;
