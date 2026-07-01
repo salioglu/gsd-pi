@@ -281,3 +281,121 @@ test('handlePlanTask rejects non-array targetRepositories', async () => {
     cleanup(base);
   }
 });
+
+test('handlePlanTask rejects empty targetRepositories', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParent();
+    const result = await handlePlanTask({
+      ...validParams(),
+      targetRepositories: [],
+    }, base);
+    assert.ok('error' in result);
+    assert.match(result.error, /validation failed: targetRepositories must include at least one repository id when provided/);
+    assert.equal(getTask('M001', 'S02', 'T02'), null, 'invalid target repositories must not persist');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanTask rejects unknown target repositories', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParent();
+    const result = await handlePlanTask({
+      ...validParams(),
+      targetRepositories: ['frontend'],
+    }, base);
+    assert.ok('error' in result);
+    assert.match(result.error, /validation failed: unknown targetRepositories:/);
+    assert.equal(getTask('M001', 'S02', 'T02'), null, 'unknown target repositories must not persist');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanTask enforces path scope to declared target repositories', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParent();
+    mkdirSync(join(base, 'frontend', 'src'), { recursive: true });
+    mkdirSync(join(base, 'backend', 'src'), { recursive: true });
+    writeFileSync(
+      join(base, '.gsd', 'PREFERENCES.md'),
+      [
+        '---',
+        'workspace:',
+        '  mode: parent',
+        '  repositories:',
+        '    frontend:',
+        '      path: frontend',
+        '    backend:',
+        '      path: backend',
+        '---',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await handlePlanTask({
+      ...validParams(),
+      targetRepositories: ['frontend'],
+      files: [join(base, 'backend', 'src', 'server.ts')],
+      inputs: ['app.js'],
+      expectedOutput: ['app.js'],
+    }, base);
+    assert.ok('error' in result);
+    assert.match(result.error, /validation failed: files contains path outside allowed repository roots/);
+    assert.equal(getTask('M001', 'S02', 'T02'), null, 'invalid scoped paths must not persist');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanTask inherits parent slice target repositories for path scope', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParent();
+    insertSlice({
+      id: 'S02',
+      milestoneId: 'M001',
+      planning: { targetRepositories: ['frontend'] },
+    });
+    mkdirSync(join(base, 'frontend', 'src'), { recursive: true });
+    mkdirSync(join(base, 'backend', 'src'), { recursive: true });
+    writeFileSync(
+      join(base, '.gsd', 'PREFERENCES.md'),
+      [
+        '---',
+        'workspace:',
+        '  mode: parent',
+        '  repositories:',
+        '    frontend:',
+        '      path: frontend',
+        '    backend:',
+        '      path: backend',
+        '---',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const result = await handlePlanTask({
+      ...validParams(),
+      files: [join(base, 'backend', 'src', 'server.ts')],
+      inputs: ['app.js'],
+      expectedOutput: ['app.js'],
+    }, base);
+    assert.ok('error' in result);
+    assert.match(result.error, /validation failed: files contains path outside allowed repository roots/);
+    assert.equal(getTask('M001', 'S02', 'T02'), null, 'slice-scoped invalid paths must not persist');
+  } finally {
+    cleanup(base);
+  }
+});

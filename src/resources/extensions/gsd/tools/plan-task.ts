@@ -12,7 +12,7 @@ import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { validatePathOnlyPlanningFields, validatePlanningPathScope } from "../planning-path-scope.js";
-import { createRepositoryRegistryFromPreferences, type RepositoryRegistry } from "../repository-registry.js";
+import { createRepositoryRegistryFromPreferences, defaultRepositoryTargets, type RepositoryRegistry } from "../repository-registry.js";
 import type { GateId } from "../types.js";
 
 export interface PlanTaskParams {
@@ -62,6 +62,27 @@ function validateReferencedRepositories(
   return `unknown targetRepositories: ${missing.join(", ")}. Declared repositories: ${Array.from(known).join(", ")}`;
 }
 
+function resolveAllowedRootsForPathScope(
+  targetRepositories: string[],
+  registry: RepositoryRegistry,
+): string[] {
+  if (targetRepositories.length === 0) return [registry.projectRoot];
+  const roots = targetRepositories
+    .map((id) => registry.byId.get(id)?.root)
+    .filter((root): root is string => typeof root === "string");
+  return roots.length > 0 ? roots : [registry.projectRoot];
+}
+
+function resolveEffectiveTargetRepositories(
+  taskTargetRepositories: string[] | undefined,
+  sliceTargetRepositories: string[] | undefined,
+  defaultTargets: string[],
+): string[] {
+  if (taskTargetRepositories) return taskTargetRepositories;
+  if (sliceTargetRepositories?.length) return sliceTargetRepositories;
+  return defaultTargets;
+}
+
 function validateParams(params: PlanTaskParams): PlanTaskParams {
   if (!isNonEmptyString(params?.milestoneId)) throw new Error("milestoneId is required");
   if (!isNonEmptyString(params?.sliceId)) throw new Error("sliceId is required");
@@ -109,15 +130,6 @@ export async function handlePlanTask(
     return { error: `validation failed: ${pathOnlyError}` };
   }
 
-  const pathScopeError = validatePlanningPathScope(basePath, [
-    { field: "files", values: params.files },
-    { field: "inputs", values: params.inputs },
-    { field: "expectedOutput", values: params.expectedOutput },
-  ]);
-  if (pathScopeError) {
-    return { error: `validation failed: ${pathScopeError}` };
-  }
-
   let taskGates: GateId[];
   let repositoryRegistry: RepositoryRegistry;
   try {
@@ -129,9 +141,33 @@ export async function handlePlanTask(
     return { error: `validation failed: ${message}` };
   }
 
-  const repoValidationError = validateReferencedRepositories(params.targetRepositories, repositoryRegistry);
+  const defaultTargets = defaultRepositoryTargets(repositoryRegistry);
+  const parentSliceTargets = getSlice(params.milestoneId, params.sliceId)?.target_repositories;
+  const effectiveTargetRepositories = resolveEffectiveTargetRepositories(
+    params.targetRepositories,
+    parentSliceTargets,
+    defaultTargets,
+  );
+  const repoValidationError = validateReferencedRepositories(effectiveTargetRepositories, repositoryRegistry);
   if (repoValidationError) {
     return { error: `validation failed: ${repoValidationError}` };
+  }
+
+  const allowedAbsoluteRoots = resolveAllowedRootsForPathScope(
+    effectiveTargetRepositories,
+    repositoryRegistry,
+  );
+  const pathScopeError = validatePlanningPathScope(
+    basePath,
+    [
+      { field: "files", values: params.files },
+      { field: "inputs", values: params.inputs },
+      { field: "expectedOutput", values: params.expectedOutput },
+    ],
+    allowedAbsoluteRoots,
+  );
+  if (pathScopeError) {
+    return { error: `validation failed: ${pathScopeError}` };
   }
 
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
