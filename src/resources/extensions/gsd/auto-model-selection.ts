@@ -428,11 +428,12 @@ export function resolvePreferredModelConfig(
   if (!isAutoMode) return undefined;
 
   const routingConfig = resolveDynamicRoutingConfig();
-  if (!routingConfig.enabled || !routingConfig.tier_models) return undefined;
+  if (!routingConfig.enabled) return undefined;
 
   // Only an explicit flat-rate opt-out suppresses synthesized routing.
   // `dynamic_routing.enabled: true` is user intent to run routing even when
-  // the start provider is a flat-rate subscription.
+  // the start provider is a flat-rate subscription. Applied ahead of both the
+  // tier-pin and profile-derived synthesis paths so the opt-out is uniform.
   if (
     routingConfig.allow_flat_rate_providers === false &&
     autoModeStartModel &&
@@ -441,13 +442,41 @@ export function resolvePreferredModelConfig(
     return undefined;
   }
 
-  const ceilingModel = routingConfig.tier_models.heavy
-    ?? (autoModeStartModel ? `${autoModeStartModel.provider}/${autoModeStartModel.id}` : undefined);
-  if (!ceilingModel) return undefined;
+  // With explicit `tier_models` pins, synthesize a heavy-tier ceiling that
+  // dynamic routing downgrades from per unit.
+  if (routingConfig.tier_models) {
+    const ceilingModel = routingConfig.tier_models.heavy
+      ?? (autoModeStartModel ? `${autoModeStartModel.provider}/${autoModeStartModel.id}` : undefined);
+    if (!ceilingModel) return undefined;
+
+    return {
+      primary: ceilingModel,
+      fallbacks: [],
+      source: "synthesized",
+    };
+  }
+
+  // No `tier_models` pins: fall back to the token-profile's per-phase model so
+  // profile tier resolution survives. `skipProfileDefaults` is left false here
+  // (unlike the explicit-detection call above) precisely because we WANT the
+  // profile defaults this time — they are the routing ceiling, not a hard
+  // user selection. Labeling the result `synthesized` (not `explicit`) keeps
+  // dynamic routing and fallbacks enabled downstream. Without this branch,
+  // `resolvePreferredModelConfig` returns undefined for profile-only configs
+  // and auto dispatch bleeds the start model onto every unit, silently
+  // discarding the profile (#1115: routing/fallbacks disabled when a
+  // token_profile is set but no tier_models are pinned).
+  const profileConfig = resolveModelWithFallbacksForUnit(
+    unitType,
+    basePath,
+    availableModelIds,
+    preferredModelId,
+    false,
+  );
+  if (!profileConfig) return undefined;
 
   return {
-    primary: ceilingModel,
-    fallbacks: [],
+    ...profileConfig,
     source: "synthesized",
   };
 }
