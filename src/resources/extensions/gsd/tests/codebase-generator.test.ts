@@ -849,3 +849,41 @@ test("workspace-aware: updateCodebaseMap tracks child-repo file additions", () =
     cleanup(base);
   }
 });
+
+test("workspace-aware: workspace-relative exclude patterns filter child-repo files", () => {
+  // Regression guard: exclude patterns like `frontend/` are workspace-relative,
+  // so they must be matched against the rewritten path, not the child-relative one.
+  const base = makeTmpParentWorkspace(["frontend", "backend"]);
+  try {
+    addChildFile(base, "frontend", "src/App.tsx");
+    addChildFile(base, "backend", "src/server.ts");
+
+    const result = generateCodebaseMap(base, { excludePatterns: ["frontend/"] });
+
+    assert.doesNotMatch(result.content, /frontend\/src\/App\.tsx/);
+    assert.match(result.content, /backend\/src\/server\.ts/);
+    assert.equal(result.fileCount, 1);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("workspace-aware: maxFiles cap does not starve child repos for the project repo", () => {
+  // The implicit project repo is enumerated alongside children; the cap must be
+  // applied fairly (round-robin) so a large project repo cannot crowd out children.
+  const base = makeTmpParentWorkspace(["frontend", "backend"]);
+  try {
+    addChildFile(base, "frontend", "a.ts");
+    addChildFile(base, "frontend", "b.ts");
+    addChildFile(base, "backend", "c.ts");
+
+    // Cap at 2 files — with fair distribution both repos should appear.
+    const result = generateCodebaseMap(base, { maxFiles: 2 });
+    const repoSections = (result.content.match(/^## \[.+\]/gm) ?? []).length;
+
+    assert.equal(result.fileCount, 2);
+    assert.ok(repoSections >= 2, "both child repos should be represented under a tight cap");
+  } finally {
+    cleanup(base);
+  }
+});
