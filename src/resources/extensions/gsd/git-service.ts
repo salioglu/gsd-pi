@@ -18,7 +18,7 @@ import { gsdRoot } from "./paths.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { logWarning } from "./workflow-logger.js";
-import { createRepositoryRegistryFromPreferences } from "./repository-registry.js";
+import { createRepositoryRegistryFromPreferences, defaultRepositoryTargets } from "./repository-registry.js";
 import { isGsdGitignored } from "./gitignore.js";
 
 
@@ -1357,7 +1357,7 @@ function runPerRepositoryCommitAction(args: {
 } {
   const preferences = loadEffectiveGSDPreferences(args.basePath)?.preferences;
   const registry = createRepositoryRegistryFromPreferences(args.basePath, preferences);
-  const repoIds = args.targetRepositories?.length ? args.targetRepositories : ["project"];
+  const repoIds = args.targetRepositories?.length ? args.targetRepositories : defaultRepositoryTargets(registry);
   const gitPrefs = preferences?.git ?? {};
   const commitMessages: Record<string, string> = {};
   const commitErrors: Record<string, string> = {};
