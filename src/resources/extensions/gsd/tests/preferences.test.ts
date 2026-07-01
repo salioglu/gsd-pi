@@ -327,6 +327,48 @@ test("workspace.repositories duplicate path error includes both repository ids",
   );
 });
 
+test("workspace.mode parent with no repositories is rejected", () => {
+  const { errors } = validatePreferences({
+    workspace: {
+      mode: "parent",
+    },
+  });
+
+  assert.ok(
+    errors.some((e) =>
+      e.includes('workspace.mode "parent" requires at least one repository under workspace.repositories'),
+    ),
+  );
+});
+
+test("workspace.mode parent with empty repositories map is rejected", () => {
+  const { errors } = validatePreferences({
+    workspace: {
+      mode: "parent",
+      repositories: {},
+    },
+  });
+
+  assert.ok(
+    errors.some((e) =>
+      e.includes('workspace.mode "parent" requires at least one repository under workspace.repositories'),
+    ),
+  );
+});
+
+test("workspace.mode parent with declared repositories is valid", () => {
+  const { errors } = validatePreferences({
+    workspace: {
+      mode: "parent",
+      repositories: {
+        frontend: { path: "frontend" },
+      },
+    },
+  });
+
+  assert.equal(errors.length, 0);
+});
+
 
 test("workspace is a recognized preference key (no unknown warning)", () => {
   const { warnings } = validatePreferences({
