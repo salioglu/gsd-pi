@@ -235,12 +235,7 @@ function enumerateFiles(basePath: string, excludes: string[], maxFiles: number):
  * back to the legacy single-root enumeration and produces byte-identical output.
  */
 function loadWorkspaceRegistry(basePath: string): RepositoryRegistry | null {
-  let registry: RepositoryRegistry;
-  try {
-    registry = createRepositoryRegistryFromPreferences(basePath, loadEffectiveGSDPreferences(basePath)?.preferences);
-  } catch {
-    return null;
-  }
+  const registry = createRepositoryRegistryFromPreferences(basePath, loadEffectiveGSDPreferences(basePath)?.preferences);
   // Parent mode is only meaningful with at least one declared child repo; the
   // implicit "project" repo is always present, so require >1 entry.
   const hasChildRepo = registry.repositories.some((repo) => repo.id !== "project");
