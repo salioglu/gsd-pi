@@ -1445,9 +1445,7 @@ export function runTurnGitAction(args: {
       };
     }
 
-    const primaryMessage =
-      repoCommitResult.commitMessages[args.targetRepositories?.[0] ?? "project"]
-      ?? Object.values(repoCommitResult.commitMessages)[0];
+    const primaryMessage = Object.values(repoCommitResult.commitMessages)[0];
     return {
       action: args.action,
       status: "ok",
