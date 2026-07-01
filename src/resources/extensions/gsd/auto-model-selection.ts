@@ -424,11 +424,11 @@ export function resolvePreferredModelConfig(
   const routingConfig = resolveDynamicRoutingConfig();
   if (!routingConfig.enabled || !routingConfig.tier_models) return undefined;
 
-  // Don't synthesize a routing config for flat-rate providers (#3453).
-  // Users can opt into routing for flat-rate subscriptions (e.g. claude-code)
-  // via dynamic_routing.allow_flat_rate_providers (#4386).
+  // Only an explicit flat-rate opt-out suppresses synthesized routing.
+  // `dynamic_routing.enabled: true` is user intent to run routing even when
+  // the start provider is a flat-rate subscription.
   if (
-    !routingConfig.allow_flat_rate_providers &&
+    routingConfig.allow_flat_rate_providers === false &&
     autoModeStartModel &&
     isFlatRateProvider(autoModeStartModel.provider, autoModeStartModel.flatRateCtx)
   ) {
@@ -647,15 +647,11 @@ export async function selectAndApplyModel(
       }
     }
 
-    // Disable routing for flat-rate providers like GitHub Copilot (#3453).
-    // All models cost the same per request, so downgrading to a cheaper
-    // model provides no cost benefit — it only degrades quality.
+    // Disable routing for flat-rate providers only when the user explicitly
+    // opts out with dynamic_routing.allow_flat_rate_providers: false.
     // Fail-closed: if primary model can't be resolved, fall back to
     // provider-level signals rather than allowing unwanted downgrades.
-    // Opt-in: dynamic_routing.allow_flat_rate_providers skips the bypass so
-    // claude-code subscribers can still get intelligent per-task selection
-    // across their subscription (#4386).
-    if (routingConfig.enabled && !routingConfig.allow_flat_rate_providers) {
+    if (routingConfig.enabled && routingConfig.allow_flat_rate_providers === false) {
       const primaryModel = resolveModelId(modelConfig.primary, routingEligibleModels, ctx.model?.provider);
       if (primaryModel) {
         const primaryFlatRateCtx = buildFlatRateContext(primaryModel.provider, ctx, prefs);
