@@ -887,3 +887,32 @@ test("workspace-aware: maxFiles cap does not starve child repos for the project 
     cleanup(base);
   }
 });
+
+test("workspace-aware: overlapping paths dedupe without falsely reporting truncation", () => {
+  // Regression guard: a path tracked by both the implicit project repo and a child
+  // repo collapses to one workspace-relative entry. Deduplicated duplicates must not
+  // count toward the maxFiles cap, so the map must not be flagged as truncated.
+  const base = join(tmpdir(), `gsd-codebase-parent-${randomUUID()}`);
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  execSync("git init", { cwd: base, stdio: "ignore" });
+  writeFileSync(
+    join(base, ".gsd", "PREFERENCES.md"),
+    `---\nversion: 1\nworkspace:\n  mode: parent\n  repositories:\n    lib:\n      path: lib\n---\n`,
+    "utf-8",
+  );
+  try {
+    // The project repo tracks lib/util.ts before lib becomes its own repo; the child
+    // repo then tracks util.ts, so both resolve to the same workspace path lib/util.ts.
+    addFile(base, "lib/util.ts");
+    execSync("git init", { cwd: join(base, "lib"), stdio: "ignore" });
+    execSync("git add util.ts", { cwd: join(base, "lib"), stdio: "ignore" });
+
+    const result = generateCodebaseMap(base);
+
+    assert.equal(result.fileCount, 1);
+    assert.equal(result.truncated, false);
+    assert.equal((result.content.match(/`lib\/util\.ts`/g) ?? []).length, 1);
+  } finally {
+    cleanup(base);
+  }
+});
