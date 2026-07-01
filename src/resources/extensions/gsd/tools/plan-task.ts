@@ -212,7 +212,7 @@ export async function handlePlanTask(
         expectedOutput: params.expectedOutput,
         observabilityImpact: params.observabilityImpact ?? "",
         fullPlanMd: params.fullPlanMd,
-        targetRepositories: params.targetRepositories,
+        targetRepositories: effectiveTargetRepositories,
       });
       for (const gid of taskGates) {
         insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "task", taskId: params.taskId });
