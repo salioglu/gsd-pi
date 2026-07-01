@@ -73,8 +73,13 @@ export function parseCursorAgentStatus(output: string): boolean | null {
 	return null;
 }
 
+export function isCursorAgentApiKeyValue(value: string | undefined): boolean {
+	const trimmed = value?.trim();
+	return Boolean(trimmed && trimmed !== "cli");
+}
+
 function hasCursorApiKey(): boolean {
-	return Boolean(process.env.CURSOR_API_KEY?.trim());
+	return isCursorAgentApiKeyValue(process.env.CURSOR_API_KEY);
 }
 
 function probeAuth(command: string): boolean | null {
@@ -92,6 +97,12 @@ function probeAuth(command: string): boolean | null {
 	}
 
 	return null;
+}
+
+export function isCursorAgentReadyUncached(): boolean {
+	const command = findWorkingCommand();
+	if (!command) return false;
+	return probeAuth(command) === true;
 }
 
 function refreshCache(): void {

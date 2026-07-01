@@ -1,8 +1,15 @@
 import type { AuthStorage } from '@gsd/pi-coding-agent'
 
-type ApiKeyCredential = {
+export type ApiKeyCredential = {
   type?: string
   key?: string
+}
+
+export function isStoredEnvCredential(cred: ApiKeyCredential): cred is ApiKeyCredential & { type: 'api_key'; key: string } {
+  return cred.type === 'api_key'
+    && typeof cred.key === 'string'
+    && cred.key.length > 0
+    && cred.key !== 'cli'
 }
 
 // ─── Env hydration ────────────────────────────────────────────────────────────
@@ -34,7 +41,7 @@ export function loadStoredEnvKeys(authStorage: AuthStorage): void {
       // Use getCredentialsForProvider to skip empty-key entries at index 0
       // (left by legacy removeProviderToken which used set() with empty key)
       const creds = authStorage.getCredentialsForProvider(provider)
-      const cred = creds.find((c: ApiKeyCredential) => c.type === 'api_key' && typeof c.key === 'string' && c.key.length > 0)
+      const cred = creds.find(isStoredEnvCredential)
       if (cred?.type === 'api_key' && typeof cred.key === 'string') {
         process.env[envVar] = cred.key
       }

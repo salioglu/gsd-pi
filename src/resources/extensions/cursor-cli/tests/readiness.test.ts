@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildCursorAgentSpawnInvocation, getCursorAgentCommandCandidates, parseCursorAgentStatus } from "../readiness.ts";
+import { buildCursorAgentSpawnInvocation, getCursorAgentCommandCandidates, isCursorAgentApiKeyValue, parseCursorAgentStatus } from "../readiness.ts";
 
 test("getCursorAgentCommandCandidates includes Windows shims", () => {
 	assert.deepEqual(getCursorAgentCommandCandidates("win32"), ["cursor-agent.cmd", "cursor-agent.exe", "cursor-agent"]);
@@ -20,4 +20,10 @@ test("parseCursorAgentStatus recognizes auth status output", () => {
 	assert.equal(parseCursorAgentStatus("Authenticated as user@example.com"), true);
 	assert.equal(parseCursorAgentStatus("not authenticated"), false);
 	assert.equal(parseCursorAgentStatus(""), null);
+});
+
+test("isCursorAgentApiKeyValue rejects external CLI sentinel values", () => {
+	assert.equal(isCursorAgentApiKeyValue("cursor-token"), true);
+	assert.equal(isCursorAgentApiKeyValue("cli"), false);
+	assert.equal(isCursorAgentApiKeyValue("  "), false);
 });

@@ -13,12 +13,13 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { AuthStorage } from "@gsd/pi-coding-agent";
 import { getEnvApiKey } from "@gsd/pi-ai";
+import { isCursorAgentReadyUncached } from "../cursor-cli/readiness.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { getAuthPath, PROVIDER_REGISTRY, supportsBrowserOAuth, type ProviderCategory } from "./key-manager.js";
-import { homedir } from "node:os";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -217,6 +218,18 @@ function isCliBinaryInPath(providerId: string): boolean {
   return pathDirs.some(dir => executableNames.some(name => existsSync(join(dir, name))));
 }
 
+function isExternalCliProviderReady(providerId: string): boolean {
+  if (providerId === "cursor-agent") return isCursorAgentReadyUncached();
+  return isCliBinaryInPath(providerId);
+}
+
+function cursorAgentFailureDetail(): string {
+  if (!isCliBinaryInPath("cursor-agent")) {
+    return "Install Cursor Agent and ensure `cursor-agent` is on PATH";
+  }
+  return "Run `cursor-agent login` or set CURSOR_API_KEY";
+}
+
 async function isCliBinaryInPathAsync(providerId: string): Promise<boolean> {
   const executableNames = cliExecutableNames(providerId);
   if (executableNames.length === 0) return false;
@@ -350,6 +363,12 @@ function resolveKeyFromAuthOrEnv(providerId: string): KeyLookup | null {
 }
 
 function resolveKey(providerId: string): KeyLookup {
+  if (providerId === "cursor-agent") {
+    return isExternalCliProviderReady(providerId)
+      ? { found: true, source: "env", backedOff: false }
+      : { found: false, source: "none", backedOff: false };
+  }
+
   const direct = resolveKeyFromAuthOrEnv(providerId);
   if (direct) return direct;
 
@@ -359,7 +378,7 @@ function resolveKey(providerId: string): KeyLookup {
 
   // Cross-provider routes can use a local CLI when it is installed. Explicit
   // external CLI provider selections are handled in checkLlmProviders() below.
-  if (CLI_AUTH_PROVIDERS.has(providerId) && isCliBinaryInPath(providerId)) {
+  if (CLI_AUTH_PROVIDERS.has(providerId) && isExternalCliProviderReady(providerId)) {
     return { found: true, source: "env", backedOff: false };
   }
 
@@ -378,17 +397,22 @@ function checkLlmProviders(): ProviderCheckResult[] {
     if (CLI_AUTH_PROVIDERS.has(providerId)) {
       const info = PROVIDER_REGISTRY.find(p => p.id === providerId);
       const label = info?.label ?? providerId;
-      if (CLI_AUTH_PATH_CHECK_PROVIDERS.has(providerId) && !isCliBinaryInPath(providerId)) {
+      if (CLI_AUTH_PATH_CHECK_PROVIDERS.has(providerId) && !isExternalCliProviderReady(providerId)) {
         const binaries = CLI_BINARY_MAP[providerId]?.map(binary => `\`${binary}\``).join(" or ");
+        const detail = providerId === "cursor-agent"
+          ? cursorAgentFailureDetail()
+          : binaries
+          ? `Install ${label} and ensure ${binaries} is on PATH`
+          : `Install ${label} and ensure its CLI is on PATH`;
         results.push({
           name: providerId,
           label,
           category: "llm",
           status: "error",
-          message: `${label} — CLI not found`,
-          detail: binaries
-            ? `Install ${label} and ensure ${binaries} is on PATH`
-            : `Install ${label} and ensure its CLI is on PATH`,
+          message: providerId === "cursor-agent" && isCliBinaryInPath(providerId)
+            ? `${label} — CLI not authenticated`
+            : `${label} — CLI not found`,
+          detail,
           required: true,
         });
         continue;

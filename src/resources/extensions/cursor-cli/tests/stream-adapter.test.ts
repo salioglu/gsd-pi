@@ -48,7 +48,7 @@ test("buildCursorPrompt preserves system, message, and tool context", () => {
 	assert.match(prompt, /Requested GSD tools: gsd_plan_slice/);
 });
 
-test("parseCursorAgentLine maps text, tool, result, usage, and errors", () => {
+test("parseCursorAgentLine maps text, legacy tool, result, usage, and errors", () => {
 	assert.deepEqual(parseCursorAgentLine('{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}'), {
 		type: "text",
 		text: "hi",
@@ -67,6 +67,77 @@ test("parseCursorAgentLine maps text, tool, result, usage, and errors", () => {
 		usage: { input: 3, output: 4, cacheRead: 0, cacheWrite: 0 },
 	});
 	assert.deepEqual(parseCursorAgentLine('{"type":"error","message":"boom"}'), { type: "error", message: "boom" });
+});
+
+test("parseCursorAgentLine ignores Cursor-owned nested tool events so GSD does not redispatch them", () => {
+	const started = parseCursorAgentLine(
+		'{"type":"tool_call","subtype":"started","call_id":"tool_1","tool_call":{"readToolCall":{"args":{"path":"a.ts"}}}}',
+	);
+
+	assert.deepEqual(started, { type: "ignore" });
+
+	const completed = parseCursorAgentLine(
+		'{"type":"tool_call","subtype":"completed","call_id":"tool_1","tool_call":{"readToolCall":{"args":{"path":"a.ts"}}},"result":{"content":"ok"}}',
+	);
+
+	assert.deepEqual(completed, { type: "ignore" });
+});
+
+test("streamViaCursorAgent does not surface Cursor-owned nested tool events as local tool calls", async () => {
+	const lines = [
+		'{"type":"assistant","message":{"content":[{"type":"text","text":"I will inspect the file."}]}}',
+		'{"type":"tool_call","subtype":"started","call_id":"tool_1","tool_call":{"readToolCall":{"args":{"path":"a.ts"}}}}',
+		'{"type":"tool_call","subtype":"completed","call_id":"tool_1","tool_call":{"readToolCall":{"args":{"path":"a.ts"}}},"result":{"content":"ok"}}',
+		'{"type":"assistant","message":{"content":[{"type":"text","text":"Done."}]}}',
+	];
+	const stream = streamViaCursorAgent(model, context, {
+		_cursorAgentRunnerForTest: async () => ({ stdout: `${lines.join("\n")}\n`, stderr: "", code: 0, signal: null }),
+	});
+
+	const events = [];
+	for await (const event of stream) events.push(event);
+
+	const done = events.find((event) => event.type === "done");
+	assert.ok(done && done.type === "done");
+	assert.ok(
+		!done.message.content.some((block) => block.type === "toolCall"),
+		"Cursor-owned internal tool events must not become local GSD tool calls",
+	);
+	assert.ok(!events.some((event) => event.type === "toolcall_start"));
+});
+
+test("streamViaCursorAgent emits complete stdout lines before cursor-agent exits", async () => {
+	let releaseRunner: (() => void) | undefined;
+	const stream = streamViaCursorAgent(model, context, {
+		_cursorAgentRunnerForTest: async (_plan, _options, onLine) => {
+			onLine('{"type":"assistant","message":{"content":[{"type":"text","text":"Live"}]}}');
+			await new Promise<void>((resolve) => { releaseRunner = resolve; });
+			return { stdout: "", stderr: "", code: 0, signal: null };
+		},
+	});
+
+	const iterator = stream[Symbol.asyncIterator]();
+	const firstDelta = (async () => {
+		for (;;) {
+			const next = await iterator.next();
+			if (next.done) return undefined;
+			if (next.value.type === "text_delta") return next.value;
+		}
+	})();
+
+	const event = await Promise.race([
+		firstDelta,
+		new Promise<undefined>((resolve) => setTimeout(resolve, 100)),
+	]);
+	assert.ok(event, "expected streamed text before runner completed");
+	assert.equal(event.type, "text_delta");
+	assert.equal(event.delta, "Live");
+
+	releaseRunner?.();
+	for (;;) {
+		const next = await iterator.next();
+		if (next.done) break;
+	}
 });
 
 test("streamViaCursorAgent turns NDJSON into assistant events with external tool results", async () => {
