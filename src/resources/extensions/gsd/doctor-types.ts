@@ -84,6 +84,7 @@ export type DoctorIssueCode =
   | "db_orphaned_task"
   | "db_orphaned_slice"
   | "db_done_task_no_summary"
+  | "artifact_file_missing"
   | "artifact_db_status_divergence"
   | "checkbox_db_status_divergence"
   | "completed_milestone_reopened"
