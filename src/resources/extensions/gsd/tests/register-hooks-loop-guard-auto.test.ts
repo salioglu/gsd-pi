@@ -199,6 +199,48 @@ test("register-hooks does not classify normal gsd_uat_exec nonzero exits as harn
   assert.equal(abort, null);
 });
 
+test("register-hooks records exec deadline timeouts as harness aborts", async () => {
+  for (const scenario of [
+    { toolName: "gsd_exec", unitType: "gate-evaluate", unitId: "M001/S01/gates+Q3" },
+    { toolName: "gsd_uat_exec", unitType: "run-uat", unitId: "M001/S01" },
+  ]) {
+    const base = makeRuntimeBase();
+    const startedAt = Date.now();
+    autoSession.reset();
+    resetToolCallLoopGuard();
+    autoSession.active = true;
+    autoSession.basePath = base;
+    autoSession.currentUnit = { type: scenario.unitType, id: scenario.unitId, startedAt };
+
+    try {
+      const { emitToolExecutionEnd } = makeHookHarness();
+      await emitToolExecutionEnd({
+        toolName: scenario.toolName,
+        isError: true,
+        result: {
+          content: [{ type: "text", text: "gsd_exec[exec-timeout] runtime=bash timeout duration=600000ms" }],
+          details: {
+            operation: scenario.toolName,
+            exit_code: null,
+            aborted: false,
+            force_resolved: false,
+            timed_out: true,
+          },
+        },
+      });
+
+      const abort = readUnitHarnessAbort(base, scenario.unitType, scenario.unitId, startedAt);
+      assert.equal(abort?.kind, "tool-error");
+      assert.equal(abort?.toolName, scenario.toolName);
+      assert.match(abort?.reason ?? "", /timeout/);
+    } finally {
+      autoSession.reset();
+      resetToolCallLoopGuard();
+      rmSync(base, { recursive: true, force: true });
+    }
+  }
+});
+
 test("register-hooks preserves retryable harness abort after later successful tools", async (t) => {
   const base = makeRuntimeBase();
   const startedAt = Date.now();
