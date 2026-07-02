@@ -668,7 +668,7 @@ function recordRetryableTurnAbort(event: { abortOrigin?: unknown; messages?: unk
   const stopReason = lastMsg && typeof lastMsg === "object"
     ? (lastMsg as { stopReason?: unknown }).stopReason
     : undefined;
-  if (!origin && stopReason !== "aborted") return;
+  if (stopReason !== "aborted" && stopReason !== "error") return;
 
   const errorMessage = lastMsg && typeof lastMsg === "object"
     ? (lastMsg as { errorMessage?: unknown }).errorMessage
