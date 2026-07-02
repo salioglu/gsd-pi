@@ -4,7 +4,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { _runMilestoneMergeWithStashRestore } from "../auto/closeout.js";
+import {
+  _runMilestoneMergeOnceWithStashRestore,
+  _runMilestoneMergeWithStashRestore,
+} from "../auto/closeout.js";
 import type { IterationContext } from "../auto/types.js";
 import { MergeConflictError } from "../git-service.js";
 import type {
@@ -153,6 +156,14 @@ const PREFLIGHT_UNMERGED: PreflightResult = {
   blockedReason: "unmerged-conflicts",
   conflictedPaths: ["todo.js", "test-todo-cli.js"],
   summary: "Working tree has unresolved Git conflicts before milestone M002 merge.",
+};
+
+const PREFLIGHT_UNMERGED_EVAL_FAILED: PreflightResult = {
+  stashPushed: false,
+  blocked: true,
+  blockedReason: "unmerged-conflicts-eval-failed",
+  conflictedPaths: ["todo.js"],
+  summary: "Unable to fully evaluate unresolved Git conflicts before milestone M002 merge.",
 };
 
 const POP_OK: PostflightResult = {
@@ -344,6 +355,52 @@ test("unmerged conflicts: preflight stops before merge and postflight restore", 
   );
 });
 
+test("unmerged conflict evaluation failure stops as preflight-unmerged-conflicts", async () => {
+  const { ic, log } = buildIc({
+    preflightResult: PREFLIGHT_UNMERGED_EVAL_FAILED,
+    mergeBehavior: "succeed",
+    postflightResult: POP_OK,
+  });
+
+  const result = await _runMilestoneMergeWithStashRestore(ic, "M002");
+
+  assert.deepEqual(result, {
+    action: "break",
+    reason: "preflight-unmerged-conflicts",
+  });
+  assert.equal(
+    log.mergeCalls,
+    0,
+    "failed conflict evaluation must not start milestone merge",
+  );
+  assert.equal(log.postflightCalls, 0, "blocked preflight must not attempt stash restore");
+  assert.equal(log.stopAutoCalls.length, 1);
+  assert.match(
+    log.stopAutoCalls[0] ?? "",
+    /Pre-merge unresolved Git conflicts block milestone M002/,
+  );
+});
+
+test("already-merged milestone skips guarded merge to terminate duplicate closeout loops", async () => {
+  const { ic, log } = buildIc({
+    preflightResult: STASH_PUSHED,
+    mergeBehavior: "succeed",
+    postflightResult: POP_OK,
+  });
+  log.milestoneMergedInPhases = true;
+
+  const result = await _runMilestoneMergeOnceWithStashRestore(ic, "M002");
+
+  assert.equal(result, null);
+  assert.equal(log.preflightCalls, 0, "already-merged guard must not re-trigger preflight");
+  assert.equal(log.mergeCalls, 0, "already-merged guard must not re-trigger merge");
+  assert.equal(
+    log.postflightCalls,
+    0,
+    "already-merged guard must not re-trigger stash restore",
+  );
+});
+
 test("merge succeeds but stash pop needs manual recovery -> postflight-stash-restore-failed break", async () => {
   const { ic, log } = buildIc({
     preflightResult: STASH_PUSHED,
@@ -358,6 +415,11 @@ test("merge succeeds but stash pop needs manual recovery -> postflight-stash-res
     reason: "postflight-stash-restore-failed",
   });
   assert.equal(log.postflightCalls, 1);
+  assert.equal(
+    log.milestoneMergedInPhases,
+    true,
+    "successful merge must set the flag before postflight recovery stops auto-mode",
+  );
   assert.equal(log.stopAutoCalls.length, 1);
   assert.match(
     log.stopAutoCalls[0] ?? "",

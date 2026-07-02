@@ -21,6 +21,8 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
+import type { PreflightResult, PostflightResult } from "./clean-root-preflight.js";
+
 import type { AutoSession } from "./auto/session.js";
 import { debugLog } from "./debug-logger.js";
 import { logWarning } from "./workflow-logger.js";
@@ -239,6 +241,98 @@ export interface StrandedMilestoneAdoptionOptions {
 export type ExitResult =
   | { ok: true; merged: boolean; codeFilesChanged: boolean }
   | { ok: false; reason: "merge-conflict" | "teardown-failed"; cause?: unknown };
+
+export interface GuardedMilestoneMergeDeps {
+  preflightCleanRoot: (
+    basePath: string,
+    milestoneId: string,
+    notify: NotifyCtx["notify"],
+  ) => PreflightResult;
+  postflightPopStash: (
+    basePath: string,
+    milestoneId: string,
+    stashMarker: string | undefined,
+    notify: NotifyCtx["notify"],
+  ) => PostflightResult;
+}
+
+export type GuardedMilestoneMergeResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason:
+        | "preflight-dirty-overlap"
+        | "preflight-unmerged-conflicts"
+        | "merge-conflict"
+        | "merge-failed"
+        | "postflight-stash-restore-failed";
+      cause?: unknown;
+      postflight?: PostflightResult;
+    };
+
+function preflightBlockedMergeReason(
+  blockedReason: PreflightResult["blockedReason"],
+): Extract<GuardedMilestoneMergeResult, { ok: false }>["reason"] {
+  if (blockedReason?.startsWith("unmerged-conflicts")) {
+    return "preflight-unmerged-conflicts";
+  }
+  return "preflight-dirty-overlap";
+}
+
+/**
+ * Run a milestone merge behind the Worktree Lifecycle seam with the root-clean
+ * stash guard that protects user changes around merge.
+ *
+ * The helper owns the invariant ordering (preflight -> lifecycle exit ->
+ * postflight on every attempted merge path) and returns a typed result. Auto
+ * closeout remains responsible for translating that result into loop policy
+ * (pause vs. stop, visible transcript preservation, projection rebuild).
+ */
+export function runGuardedMilestoneMerge(request: {
+  lifecycle: {
+    exitMilestone: (milestoneId: string, opts: { merge: true }, ctx: NotifyCtx) => ExitResult;
+  };
+  deps: GuardedMilestoneMergeDeps;
+  projectRoot: string;
+  milestoneId: string;
+  notify: NotifyCtx["notify"];
+}): GuardedMilestoneMergeResult {
+  const { lifecycle, deps, projectRoot, milestoneId, notify } = request;
+  const preflight = deps.preflightCleanRoot(projectRoot, milestoneId, notify);
+  if (preflight.blocked) {
+    return {
+      ok: false,
+      reason: preflightBlockedMergeReason(preflight.blockedReason),
+    };
+  }
+
+  let mergeError: unknown = null;
+  const exitResult = lifecycle.exitMilestone(milestoneId, { merge: true }, { notify });
+  if (!exitResult.ok) {
+    mergeError = exitResult.cause ?? new Error(`exit ${exitResult.reason}`);
+  }
+
+  let postflight: PostflightResult | undefined;
+  if (preflight.stashPushed) {
+    postflight = deps.postflightPopStash(
+      projectRoot,
+      milestoneId,
+      preflight.stashMarker,
+      notify,
+    );
+  }
+
+  if (mergeError instanceof MergeConflictError) {
+    return { ok: false, reason: "merge-conflict", cause: mergeError, postflight };
+  }
+  if (mergeError) {
+    return { ok: false, reason: "merge-failed", cause: mergeError, postflight };
+  }
+  if (postflight?.needsManualRecovery) {
+    return { ok: false, reason: "postflight-stash-restore-failed", postflight };
+  }
+  return { ok: true };
+}
 
 /**
  * Session-less merge entry context. Per ADR-016 phase 2 / A1 (#5616), the
