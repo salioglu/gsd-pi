@@ -2,9 +2,9 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@g
 import type { Model } from "@gsd/pi-ai";
 import type { GSDState } from "../../types.js";
 import { createRequire } from "node:module";
-import { execFileSync } from "node:child_process";
 
 import { computeProgressScore, formatProgressLine } from "../../progress-score.js";
+import { isRepositoryDirty } from "../../git-service.js";
 import { loadEffectiveGSDPreferences, getGlobalGSDPreferencesPath, getProjectGSDPreferencesPath, availableModelIdsFromRegistry, modelIdsForProfileResolution, resolveProfileAnchorProvider, resolveDisabledModelProvidersFromPreferences } from "../../preferences.js";
 import { createRepositoryRegistryFromPreferences } from "../../repository-registry.js";
 import { ensurePreferencesFile, handlePrefs, handlePrefsMode, handlePrefsWizard, handleLanguage } from "../../commands-prefs-wizard.js";
@@ -696,21 +696,8 @@ function buildWorkspaceRepoStatusBlock(basePath: string): string {
 
   return childRepos
     .map((repo) => {
-      const dirty = isRepoDirty(repo.root);
+      const dirty = isRepositoryDirty(repo.root);
       return `  ${dirty ? "✗" : "✓"} ${repo.id}${repo.role ? ` — ${repo.role}` : ""}${dirty ? " (uncommitted changes)" : " (clean)"}`;
     })
     .join("\n");
-}
-
-function isRepoDirty(root: string): boolean {
-  try {
-    const out = execFileSync("git", ["status", "--porcelain"], {
-      cwd: root,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    });
-    return out.trim().length > 0;
-  } catch {
-    return false;
-  }
 }
