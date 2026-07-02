@@ -589,8 +589,6 @@ class GsdMcpClient:
             except subprocess.TimeoutExpired:
                 exit_code = None
         if exit_code == self._EXIT_BLOCKED:
-            if self._milestone_pending_blocker_id:
-                return
             if not self._milestone_notified_terminal:
                 if self._milestone_notifications is not None:
                     self._milestone_notifications.notify_terminal(

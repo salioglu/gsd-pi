@@ -254,21 +254,23 @@ def test_stream_loop_failure_reports_drained_stderr() -> None:
     )
 
 
-def test_stream_loop_keeps_blocked_exit_non_terminal() -> None:
-    """Exit 10 with a pending interactive blocker is not a terminal exit."""
+def test_stream_loop_releases_blocked_exit_with_pending_blocker() -> None:
+    """Exit 10 after stdout EOF is terminal even with a pending blocker id."""
     client = GsdMcpClient(_config())
     notifications = MagicMock()
     fake_proc = _FakeProc()
     fake_proc.poll.return_value = 10
     fake_proc.stdout.readline.side_effect = [b""]
+    client._milestone_session_id = "milestone-4242"
 
     with patch.object(client, "_milestone_proc", fake_proc):
         with patch.object(client, "_milestone_pending_blocker_id", "sel-1"):
             with patch.object(client, "_milestone_notifications", notifications):
                 client._milestone_stream_loop(fake_proc)
 
-            notifications.notify_terminal.assert_not_called()
-            assert client.milestone_active() is True
+    notifications.notify_terminal.assert_called_once_with("failed", "Planning blocked")
+    assert client.milestone_active() is False
+    assert client.milestone_session_id() is None
 
 
 def test_stream_loop_releases_noninteractive_blocked_exit() -> None:
