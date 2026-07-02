@@ -30,7 +30,7 @@
 - **Recovery decision**: retry/escalate/abort choice after runtime failure.
 - **Runtime persistence**: lock state, transition journal, and any persisted execution state required for safe resume.
 - **DB snapshot persistence**: crash-safe persistence of a full SQLite image exported from `sql.js`, written as a same-directory temporary file and atomically renamed over the live database path.
-- **Worktree Lifecycle**: creation, entry, teardown, and merge of an auto-mode worktree, including `s.basePath` mutation, `process.chdir` discipline, and milestone lease coordination.
+- **Worktree Lifecycle**: creation, entry, teardown, and merge of an auto-mode worktree, including `s.basePath` mutation, `process.chdir` discipline, milestone lease coordination, and guarded milestone-merge preflight/postflight stash ordering.
 - **Worktree State Projection**: directional flow of state files between the project root and the auto-worktree, where one side is authoritative per file class (e.g., project root is authoritative for `completed-units.json` after crash recovery; worktree is authoritative for in-flight artifacts).
 - **Drift**: a state-shape mismatch between DB rows, disk artifacts, and in-memory state that has a known repair. Distinct from a `blocker`, which describes a terminal condition needing human attention or recovery escalation.
 - **Drift catalog**: the discriminated union of drift kinds the State Reconciliation Module recognizes and can repair.
@@ -50,7 +50,7 @@
 - **DB snapshot persistence module**: the deep module that owns `sql.js` snapshot write semantics, including temp-file naming, fsync, cleanup, and rename ordering.
 - **State Reconciliation module**: module that runs `reconcileBeforeDispatch` before any Dispatch decision or worker spawn. Surfaces terminal `blockers: string[]` and machine-actionable `DriftRecord[]`. Owns the drift catalog (detectors and idempotent repairs). Throws `ReconciliationFailedError` to Recovery Classification on persistent or repair-failed drift. See `docs/dev/ADR-017-state-reconciliation-drift-driven.md`.
 - **Worktree Safety module**: module that validates project root, worktree registration, lease ownership, and git health before a source-writing Unit runs.
-- **Worktree Lifecycle module**: module that owns worktree create/enter/teardown/merge verbs, `s.basePath` mutation, and `process.chdir` discipline. Sole owner of these mutations across single-loop and parallel callers.
+- **Worktree Lifecycle module**: module that owns worktree create/enter/teardown/merge verbs, `s.basePath` mutation, `process.chdir` discipline, and guarded milestone-merge preflight/postflight stash ordering. Sole owner of these mutations across single-loop and parallel callers.
 - **Worktree State Projection module**: module that owns the direction-and-rules of state file flow between project root and auto-worktree. Encodes the bug-hardened invariants (additive milestone copy, ASSESSMENT verdict overwrite, completed-units forward-sync, WAL/SHM cleanup) that `syncProjectRootToWorktree` and `syncStateToProjectRoot` carry today.
 - **Worktree Placement module**: module (`worktree-placement.ts`) that owns WHERE a worktree physically lives — the forward direction (project root + name → path). Creation always targets the Canonical Worktree Container; resolution prefers an existing worktree's actual location. The reverse direction (path → project identity) is owned by `worktree-root.ts`'s `findWorktreeSegment`, the single marker-matching seam. See `docs/dev/ADR-031-worktree-placement.md`.
 - **Canonical Worktree Container**: `<projectRoot>/.gsd-worktrees/` — a real directory sibling of `.gsd` that never crosses the external-state symlink, so the working copy stays at the project root. Requires its own `.gitignore` entry (a blanket `.gsd` pattern does not cover it).
@@ -197,7 +197,7 @@ Dispatch remains responsible for selecting the next Unit from reconciled state. 
 
   See `docs/dev/ADR-033-unit-type-registry.md`.
 
-- The merge verb's full contract — including the stash-restore choreography currently wrapped around it at four `auto/phases.ts` call sites — moves inside Worktree Lifecycle's `exitMilestone`, making the "sole owner of merge" statement above true in code. Push and PR creation split out into the **Publication module**, called after a successful milestone merge. Migration order: extract Publication first (done), then absorb the stash choreography, then relocate the merge core out of `auto-worktree.ts`.
+- The merge verb's full contract moves into Worktree Lifecycle. Publication is already split out, and guarded milestone-merge preflight/postflight stash ordering now lives behind the Lifecycle seam as `runGuardedMilestoneMerge`; the remaining step is folding that helper into `exitMilestone` and relocating the merge core out of `auto-worktree.ts`. Push and PR creation stay in the **Publication module**, called after a successful milestone merge.
 
   See `docs/dev/ADR-034-milestone-merge-publication-split.md`.
 

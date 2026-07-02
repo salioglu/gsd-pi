@@ -30,6 +30,8 @@ Milestone completion is safe to retry. If a `complete-milestone` unit is redispa
 
 The auto loop applies the same idempotency at terminal closeout: if another session is already stopping for completion, or the database already shows the milestone closed, the loop exits as complete without replaying merge, desktop notification, cmux notification, or stop side effects.
 
+If post-merge stash restore fails after a successful milestone merge, auto mode records the merge as complete before stopping for manual stash recovery. Resuming auto mode will not replay the completed merge.
+
 `complete-milestone` now also enforces hard closeout prerequisites: each slice must have a UAT assessment with verdict `PASS`, and the latest `milestone-validation` assessment for that milestone must exist with verdict `pass`. If UAT is missing or non-PASS, auto mode stops with guidance to run `/gsd dispatch uat`, request a slice-specific UAT rerun when needed, inspect `/gsd status`, or add remediation slices with `/gsd dispatch reassess`. If milestone validation is `fail`, `partial`, or absent, closeout is blocked until `validate-milestone` records a fresh passing verdict.
 
 ### Planning-Only Milestone Closeout

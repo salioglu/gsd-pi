@@ -339,6 +339,14 @@ In these states GSD does not auto-stash and does not auto-fix; it stops so you c
 - Commit, stash, or discard overlapping local edits outside GSD.
 - Re-run `/gsd auto` after `git status` is clean (or at least free of overlapping/conflicted paths).
 
+### Auto mode stops after merge with postflight stash recovery
+
+**Symptoms:** Auto mode reports `Post-merge stash restore failed for milestone <MID>` or `postflight-stash-restore-failed`.
+
+**What it means:** The milestone merge itself completed, but GSD could not automatically restore the pre-merge stash of local user changes. GSD records the merge as complete before stopping, so resuming auto mode will not rerun the already completed milestone merge.
+
+**Fix:** Inspect `git status` and the named stash, manually recover or drop the stashed local changes, then rerun `/gsd auto`.
+
 ### Pre-dispatch says the milestone integration branch no longer exists
 
 **Symptoms:** Auto mode or `/gsd doctor` reports that a milestone recorded an integration branch that no longer exists in git.

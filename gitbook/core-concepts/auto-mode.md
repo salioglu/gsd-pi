@@ -34,6 +34,8 @@ Milestone completion is safe to retry. If a `complete-milestone` unit is redispa
 
 The auto loop applies the same idempotency at terminal closeout: if another session is already stopping for completion, or the database already shows the milestone closed, the loop exits as complete without replaying merge, desktop notification, cmux notification, or stop side effects.
 
+If post-merge stash restore fails after a successful milestone merge, auto mode records the merge as complete before stopping for manual stash recovery. Resuming auto mode will not replay the completed merge.
+
 ## State Authority
 
 The GSD database is the runtime source of truth for milestones, slices, tasks, requirements, summaries, and completion status. Durable decisions and project knowledge use the same database through the `memories` table: decisions are stored as `architecture` memories, and KNOWLEDGE patterns/lessons are stored as `pattern`/`gotcha` memories.
