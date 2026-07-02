@@ -237,7 +237,7 @@ function isLocalGsdExternalStateJunction(basePath: string, localGsd: string): bo
  * Recover from a failed migration (`.gsd.migrating` exists).
  * Moves `.gsd.migrating` back to `.gsd` if `.gsd` doesn't exist, or removes an
  * orphaned staging directory when `.gsd` is already a verified external state
- * junction with intact current state.
+ * junction, or an intact real directory, with intact current state.
  */
 export function recoverFailedMigration(basePath: string): boolean {
   const localGsd = join(basePath, ".gsd");
@@ -245,8 +245,15 @@ export function recoverFailedMigration(basePath: string): boolean {
 
   if (!existsSync(migratingPath)) return false;
   if (existsSync(localGsd)) {
-    if (!isLocalGsdExternalStateJunction(basePath, localGsd)) return false;
     if (!isCurrentGsdStateIntactForMigratingCleanup(basePath)) return false;
+    if (!isLocalGsdExternalStateJunction(basePath, localGsd)) {
+      try {
+        const stat = lstatSync(localGsd);
+        if (!stat.isDirectory()) return false;
+      } catch {
+        return false;
+      }
+    }
     try {
       rmSync(migratingPath, { recursive: true, force: true });
       return true;
