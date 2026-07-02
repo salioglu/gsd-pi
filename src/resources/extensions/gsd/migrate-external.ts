@@ -9,7 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, cpSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { externalGsdRoot, isInsideWorktree } from "./repo-identity.js";
+import { externalGsdRoot, externalStateAlreadyExistsForProject, isInsideWorktree } from "./repo-identity.js";
 import { getErrorMessage } from "./error-utils.js";
 import { hasGitTrackedGsdFiles } from "./gitignore.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
@@ -83,6 +83,16 @@ export function migrateToExternalState(basePath: string): MigrationResult {
       // Can't read worktrees dir — skip migration to be safe
       return { migrated: false };
     }
+  }
+
+  // If external state already contains project data, this is not a legacy
+  // migration source. It is likely an already-migrated project whose symlink
+  // was replaced by a real directory, so copying would risk data loss.
+  if (externalStateAlreadyExistsForProject(basePath)) {
+    return {
+      migrated: false,
+      error: "External state already exists for this project; leaving local .gsd directory untouched to avoid overwriting authoritative state",
+    };
   }
 
   const externalPath = externalGsdRoot(basePath);
