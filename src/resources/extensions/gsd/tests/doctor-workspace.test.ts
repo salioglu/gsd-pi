@@ -11,12 +11,13 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
 import { runGSDDoctor } from "../doctor.ts";
+import { GIT_NO_PROMPT_ENV } from "../git-constants.ts";
 
 function gitInit(cwd: string): void {
   execFileSync("git", ["init"], { cwd, stdio: "ignore" });
@@ -87,6 +88,82 @@ test("doctor reports no workspace issues when declared child repos are valid", a
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test("doctor workspace git probe uses safe env and canonical toplevel comparison", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX-only git shim regression");
+    return;
+  }
+
+  const originalProcessGitDir = process.env.GIT_DIR;
+  const originalProcessGitWorkTree = process.env.GIT_WORK_TREE;
+  const originalGitEnvPath = GIT_NO_PROMPT_ENV.PATH;
+  const originalGitEnvRealGit = GIT_NO_PROMPT_ENV.GSD_REAL_GIT;
+  const originalGitEnvFakeCwd = GIT_NO_PROMPT_ENV.GSD_FAKE_TOPLEVEL_CWD;
+  const originalGitEnvFakeToplevel = GIT_NO_PROMPT_ENV.GSD_FAKE_TOPLEVEL;
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-ws-safeenv-"));
+
+  t.after(() => {
+    if (originalProcessGitDir === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = originalProcessGitDir;
+    if (originalProcessGitWorkTree === undefined) delete process.env.GIT_WORK_TREE;
+    else process.env.GIT_WORK_TREE = originalProcessGitWorkTree;
+    if (originalGitEnvPath === undefined) delete GIT_NO_PROMPT_ENV.PATH;
+    else GIT_NO_PROMPT_ENV.PATH = originalGitEnvPath;
+    if (originalGitEnvRealGit === undefined) delete GIT_NO_PROMPT_ENV.GSD_REAL_GIT;
+    else GIT_NO_PROMPT_ENV.GSD_REAL_GIT = originalGitEnvRealGit;
+    if (originalGitEnvFakeCwd === undefined) delete GIT_NO_PROMPT_ENV.GSD_FAKE_TOPLEVEL_CWD;
+    else GIT_NO_PROMPT_ENV.GSD_FAKE_TOPLEVEL_CWD = originalGitEnvFakeCwd;
+    if (originalGitEnvFakeToplevel === undefined) delete GIT_NO_PROMPT_ENV.GSD_FAKE_TOPLEVEL;
+    else GIT_NO_PROMPT_ENV.GSD_FAKE_TOPLEVEL = originalGitEnvFakeToplevel;
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  const realChild = join(base, "frontend-real");
+  const linkedChild = join(base, "frontend");
+  mkdirSync(realChild, { recursive: true });
+  gitInit(realChild);
+  symlinkSync(realChild, linkedChild, "dir");
+  writeParentPrefs(base, { frontend: { path: "frontend" } });
+
+  const shimDir = join(base, "bin");
+  mkdirSync(shimDir, { recursive: true });
+  const realGit = execFileSync("which", ["git"], { encoding: "utf-8" }).trim();
+  const shim = join(shimDir, "git");
+  writeFileSync(
+    shim,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "if [ -n \"${GIT_DIR:-}\" ] || [ -n \"${GIT_WORK_TREE:-}\" ]; then",
+      "  echo \"leaked git env\" >&2",
+      "  exit 97",
+      "fi",
+      "if [ \"${1:-}\" = \"rev-parse\" ] && [ \"${2:-}\" = \"--show-toplevel\" ] && [ \"$(pwd -P)\" = \"$GSD_FAKE_TOPLEVEL_CWD\" ]; then",
+      "  printf '%s\\n' \"$GSD_FAKE_TOPLEVEL\"",
+      "  exit 0",
+      "fi",
+      "exec \"$GSD_REAL_GIT\" \"$@\"",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+  chmodSync(shim, 0o755);
+
+  process.env.GIT_DIR = join(base, ".git");
+  process.env.GIT_WORK_TREE = base;
+  GIT_NO_PROMPT_ENV.PATH = `${shimDir}${delimiter}${process.env.PATH ?? ""}`;
+  GIT_NO_PROMPT_ENV.GSD_REAL_GIT = realGit;
+  GIT_NO_PROMPT_ENV.GSD_FAKE_TOPLEVEL_CWD = realChild;
+  GIT_NO_PROMPT_ENV.GSD_FAKE_TOPLEVEL = linkedChild;
+
+  const report = await runGSDDoctor(base);
+  const wsIssues = report.issues.filter(
+    (i) => i.code === "workspace_repo_path_missing" || i.code === "workspace_repo_not_a_repo",
+  );
+  assert.deepEqual(wsIssues, []);
 });
 
 test("doctor workspace probe is a no-op for single-repo (project-mode) projects", async () => {
