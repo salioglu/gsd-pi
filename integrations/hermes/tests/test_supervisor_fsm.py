@@ -378,6 +378,38 @@ def test_supervisor_detects_blocker() -> None:
     assert any("blocker" in t.lower() or "Approve" in t for t in sent)
 
 
+def test_notify_blocker_prefers_title_over_generic_message() -> None:
+    sent: list[str] = []
+
+    def dispatch(_name: str, args: dict) -> None:
+        sent.append(args.get("text", ""))
+
+    notifications = NotificationService(
+        MagicMock(),
+        GsdConfig(),
+        lambda: DeliveryTarget("slack", "channel", "C123"),
+        dispatch=dispatch,
+    )
+
+    notifications.notify_blocker(
+        SessionStatus(
+            status="blocked",
+            pending_blocker={
+                "type": "extension_ui_request",
+                "method": "select",
+                "id": "sel-1",
+                "title": "Choose milestone scope",
+                "message": "Action required",
+                "options": ["A", "B"],
+            },
+        )
+    )
+
+    assert len(sent) == 1
+    assert "GSD blocker: Choose milestone scope" in sent[0]
+    assert "GSD blocker: Action required" not in sent[0]
+
+
 def test_supervisor_terminal_tick_updates_progress_before_stopping() -> None:
     ctx = SupervisorContext(
         session_id="s1",

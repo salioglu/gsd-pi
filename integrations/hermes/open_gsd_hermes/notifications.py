@@ -55,8 +55,8 @@ class NotificationService:
         q = (
             blocker.get("question")
             or blocker.get("prompt")
-            or blocker.get("message")
             or blocker.get("title")
+            or blocker.get("message")
             or "Action required"
         )
         self.send(f"🚧 GSD blocker: {q}\nReply with `/gsd reply <your answer>`", kind="blocker")
