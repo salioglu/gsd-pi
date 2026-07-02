@@ -15,6 +15,7 @@ type Handler = (event: any, ctx?: any) => Promise<any> | any;
 function makeHookHarness(): {
   emitToolCall: (toolName: string, input: Record<string, unknown>) => Promise<any>;
   emitToolExecutionEnd: (event: Record<string, unknown>) => Promise<void>;
+  emitAgentEnd: (event: Record<string, unknown>) => Promise<void>;
 } {
   const handlers = new Map<string, Handler[]>();
   const pi = {
@@ -46,6 +47,11 @@ function makeHookHarness(): {
           toolCallId: `exec-${callId}`,
           ...event,
         }, ctx);
+      }
+    },
+    async emitAgentEnd(event: Record<string, unknown>): Promise<void> {
+      for (const handler of handlers.get("agent_end") ?? []) {
+        await handler(event, ctx);
       }
     },
   };
@@ -208,5 +214,59 @@ test("register-hooks does not record save-tool validation errors as harness abor
   });
 
   const abort = readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt);
+  assert.equal(abort, null);
+});
+
+test("register-hooks does not record pending approval hard-blocks as harness aborts", async (t) => {
+  const base = makeRuntimeBase();
+  const startedAt = Date.now();
+  autoSession.reset();
+  resetToolCallLoopGuard();
+  autoSession.active = true;
+  autoSession.basePath = base;
+  autoSession.currentUnit = { type: "gate-evaluate", id: "M001/S01/gates+Q3", startedAt };
+  t.after(() => {
+    autoSession.reset();
+    resetToolCallLoopGuard();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const { emitToolExecutionEnd } = makeHookHarness();
+  await emitToolExecutionEnd({
+    toolName: "gsd_summary_save",
+    isError: true,
+    result: {
+      content: [{
+        type: "text",
+        text: 'HARD BLOCK: Discussion gate "depth:M001" has not been confirmed by the user.',
+      }],
+    },
+  });
+
+  const abort = readUnitHarnessAbort(base, "gate-evaluate", "M001/S01/gates+Q3", startedAt);
+  assert.equal(abort, null);
+});
+
+test("register-hooks only records agent_end turn aborts for aborted or error stop reasons", async (t) => {
+  const base = makeRuntimeBase();
+  const startedAt = Date.now();
+  autoSession.reset();
+  resetToolCallLoopGuard();
+  autoSession.active = true;
+  autoSession.basePath = base;
+  autoSession.currentUnit = { type: "gate-evaluate", id: "M001/S01/gates+Q3", startedAt };
+  t.after(() => {
+    autoSession.reset();
+    resetToolCallLoopGuard();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const { emitAgentEnd } = makeHookHarness();
+  await emitAgentEnd({
+    abortOrigin: "auto-context",
+    messages: [{ stopReason: "stop" }],
+  });
+
+  const abort = readUnitHarnessAbort(base, "gate-evaluate", "M001/S01/gates+Q3", startedAt);
   assert.equal(abort, null);
 });
