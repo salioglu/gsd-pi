@@ -633,7 +633,7 @@ function resultDetails(result: unknown): Record<string, unknown> {
 function isAbortedExecutionToolResult(toolName: string, result: unknown): boolean {
   if (toolName !== "gsd_exec" && toolName !== "gsd_uat_exec") return false;
   const details = resultDetails(result);
-  return details.aborted === true || details.force_resolved === true;
+  return details.aborted === true || details.force_resolved === true || details.timed_out === true;
 }
 
 function isRetryableHarnessToolError(toolName: string, result: unknown, errorText: string): boolean {
