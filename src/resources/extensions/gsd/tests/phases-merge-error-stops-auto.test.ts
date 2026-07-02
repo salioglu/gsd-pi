@@ -109,14 +109,6 @@ const ic = {
         exitCtx?: { notify: (message: string, level: "info" | "warning" | "error") => void },
       ) {
         const notify = exitCtx?.notify ?? (() => {});
-        const plainExitMilestone = () => {
-          calls.push("merge");
-          return {
-            ok: false as const,
-            reason: "teardown-failed" as const,
-            cause: new Error("remote rejected push"),
-          };
-        };
         const guarded = exitOpts.guardedMerge;
         if (exitOpts.merge && guarded) {
           const preflight = guarded.preflightCleanRoot(guarded.projectRoot, milestoneId, notify);
@@ -128,24 +120,19 @@ const ic = {
                 : "preflight-dirty-overlap",
             };
           }
-          const mergeResult = plainExitMilestone();
-          const postflight = preflight.stashPushed
-            ? guarded.postflightPopStash(guarded.projectRoot, milestoneId, preflight.stashMarker, notify)
-            : undefined;
-          if (!mergeResult.ok) {
-            return {
-              ok: false,
-              reason: mergeResult.reason === "merge-conflict" ? "merge-conflict" : "merge-failed",
-              cause: mergeResult.cause,
-              postflight,
-            };
+          // Inner merge fails with a non-conflict error. The lifecycle still
+          // runs postflight stash restore on the failed-merge path, then maps
+          // the non-conflict failure to "merge-failed" (a MergeConflictError
+          // would instead map to "merge-conflict").
+          calls.push("merge");
+          const cause = new Error("remote rejected push");
+          if (preflight.stashPushed) {
+            guarded.postflightPopStash(guarded.projectRoot, milestoneId, preflight.stashMarker, notify);
           }
-          if (postflight?.needsManualRecovery) {
-            return { ok: false, reason: "postflight-stash-restore-failed", postflight };
-          }
-          return mergeResult;
+          return { ok: false, reason: "merge-failed", cause };
         }
-        return plainExitMilestone();
+        calls.push("merge");
+        return { ok: false, reason: "teardown-failed", cause: new Error("remote rejected push") };
       },
     },
     async stopAuto(_ctx: unknown, _pi: unknown, reason?: string) {
