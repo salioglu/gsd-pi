@@ -22,7 +22,7 @@ import {
   isSessionSwitchAbortGraceActive,
 } from "../auto/resolve.js";
 import { runUnit, shouldDeferUnitFailsafeTimeout } from "../auto/run-unit.js";
-import { scheduleAutoWakeup, _resetAutoWakeupsForTest } from "../auto/schedule-wakeup.js";
+import { consumeAutoWakeup, scheduleAutoWakeup, _resetAutoWakeupsForTest } from "../auto/schedule-wakeup.js";
 import { writeUnitRuntimeRecord, readUnitRuntimeRecord } from "../unit-runtime.js";
 import { autoLoop as rawAutoLoop } from "../auto/loop.js";
 import { runPreDispatch } from "../auto/pre-dispatch.js";
@@ -550,6 +550,62 @@ test("runUnit honors ScheduleWakeup by continuing the same unit session", async 
   assert.equal(result.status, "completed");
   assert.deepEqual(result.event, secondEvent);
   assert.equal(pi.calls.length, 2);
+});
+
+test("runUnit clears scheduled wakeups when the unit is cancelled", async () => {
+  _resetPendingResolve();
+  _resetAutoWakeupsForTest();
+
+  const ctx = {
+    ...makeMockCtx(),
+    ui: {
+      notify: () => {},
+      setStatus: () => {},
+      setWorkingMessage: () => {},
+    },
+    sessionManager: {
+      getEntries: () => [],
+    },
+    modelRegistry: {
+      getProviderAuthMode: () => undefined,
+      isProviderRequestReady: () => true,
+    },
+  } as any;
+  const pi = makeMockPi();
+  const s = makeMockSession();
+
+  const resultPromise = runUnit(
+    ctx,
+    pi,
+    s,
+    "execute-task",
+    "M001/S01/T02",
+    "submit external job",
+  );
+
+  await waitForMicrotasks(() => pi.calls.length === 1, "initial unit dispatch");
+  scheduleAutoWakeup({
+    basePath: s.basePath,
+    unitType: "execute-task",
+    unitId: "M001/S01/T02",
+    delayMs: 0,
+    prompt: "stale prompt from cancelled unit",
+    reason: "poll external job",
+    createdAt: Date.now(),
+  });
+  resolveAgentEndCancelled({
+    message: "Auto-mode paused",
+    category: "aborted",
+    isTransient: true,
+  });
+
+  const result = await resultPromise;
+  assert.equal(result.status, "cancelled");
+  assert.equal(
+    consumeAutoWakeup(s.basePath, "execute-task", "M001/S01/T02"),
+    null,
+    "cancelled units must not leave stale ScheduleWakeup prompts for later retries",
+  );
 });
 
 test("runUnit suppresses the global working-message loader for auto dashboard runs", async () => {

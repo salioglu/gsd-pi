@@ -103,11 +103,12 @@ Writes outside those allowed paths, unsafe bash commands, and subagent dispatch 
 
 ### ScheduleWakeup Continuations
 
-`ScheduleWakeup` is an auto-mode tool for long external waits inside `execute-task` units. It keeps the same unit session alive by scheduling a delayed follow-up prompt instead of ending the unit as incomplete.
+`ScheduleWakeup` schedules a delayed follow-up prompt. In auto mode, it is used for long external waits inside `execute-task` units and keeps the same unit session alive instead of ending the unit as incomplete. Outside auto mode, it waits for the requested delay and then starts a new triggered turn with the supplied wakeup prompt.
 
 - Use it when a task kicked off external work (for example CI, deploy, or async jobs) and needs a later poll.
 - Include a concrete follow-up prompt that says what to check and what artifact to write when done.
 - Re-arm it on each poll turn while the external process is still running.
+- Outside auto mode, use it when you ask GSD to check back or poll later; the wakeup dispatches after the delay, not synchronously.
 
 Auto mode consumes the scheduled wakeup only for the same `basePath + unitType + unitId`, waits the requested delay, and then dispatches the follow-up prompt in the same session. For safety, wakeups are bounded per unit; hitting the cap stops the unit with a timeout-style cancellation.
 
