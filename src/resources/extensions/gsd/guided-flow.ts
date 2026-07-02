@@ -176,7 +176,10 @@ export function verifyExpectedArtifactForScope(
   unitType: string,
   unitId: string,
 ): boolean {
-  if (unitType === "discuss-milestone" && unitId === scope.milestoneId) {
+  if (
+    unitId === scope.milestoneId &&
+    (unitType === "discuss-milestone" || unitType === "plan-milestone")
+  ) {
     const path = resolveExpectedArtifactPathForScope(scope, unitType, unitId);
     return path ? existsSync(path) : false;
   }
