@@ -123,7 +123,10 @@ class GsdMcpClient:
         proc.stdin.flush()
 
     def _read_stdout_chunk(self, deadline: float) -> None:
-        proc = self._ensure_process()
+        proc = self._proc
+        if proc is None or proc.poll() is not None:
+            self._terminate_process()
+            raise McpProtocolError("MCP server closed stdout")
         assert proc.stdout is not None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
