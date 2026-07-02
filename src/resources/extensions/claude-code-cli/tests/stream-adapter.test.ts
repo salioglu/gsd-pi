@@ -662,11 +662,28 @@ describe("stream-adapter — no transcript fabrication (#4102)", () => {
 
 describe("stream-adapter — Claude Code external tool results", () => {
 	test("emits one synthetic completion per tool when SDK sends consecutive user result messages (#1153)", async () => {
+		// Capture synthetic completions through onExternalToolResult, which the
+		// adapter invokes exactly once per tool at emission time. Filtering the
+		// collected toolcall_end events afterwards is unreliable here: the streaming
+		// toolcall_end (content_block_stop) and the synthetic completion reference
+		// the SAME tool-call block, and attachExternalResultsToToolBlocks mutates
+		// that block later, so a post-hoc `event.toolCall.externalResult` check also
+		// matches the earlier streaming ends and double-counts each tool.
+		const syntheticCompletions: Array<{ id: string; text: string | undefined }> = [];
 		const stream = streamViaClaudeCode(
 			{ id: "claude-sonnet-4-6" } as any,
 			{ messages: [{ role: "user", content: "Read and grep." } as Message] },
 			{
 				_skipWorkflowMcpPreflightForTest: true,
+				onExternalToolResult(event: {
+					toolCall: { id: string };
+					result: { content?: Array<{ text?: string }> };
+				}) {
+					syntheticCompletions.push({
+						id: event.toolCall.id,
+						text: event.result.content?.[0]?.text,
+					});
+				},
 				async *_sdkQueryForTest() {
 					yield {
 						type: "stream_event",
@@ -786,21 +803,19 @@ describe("stream-adapter — Claude Code external tool results", () => {
 			} as any,
 		);
 
+		// Drain the stream so the adapter processes every SDK message and fires
+		// onExternalToolResult for each synthetic completion.
 		const events: any[] = [];
 		for await (const event of stream) {
 			events.push(event);
 		}
 
-		const syntheticCompletions = events.filter(
-			(event) => event.type === "toolcall_end" && event.toolCall?.externalResult,
-		);
-
 		assert.deepEqual(
-			syntheticCompletions.map((event) => event.toolCall.id),
+			syntheticCompletions.map((completion) => completion.id),
 			["tool-read-1", "tool-grep-1"],
 		);
 		assert.deepEqual(
-			syntheticCompletions.map((event) => event.toolCall.externalResult.content[0]?.text),
+			syntheticCompletions.map((completion) => completion.text),
 			["read result", "grep result"],
 		);
 	});
