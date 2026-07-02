@@ -77,6 +77,7 @@ import { clearPendingAutoStart } from "../pending-auto-start.js";
 import { resolveWorkflowToolBasePath } from "./dynamic-tools.js";
 import { getRequiredWorkflowToolsForUnit } from "../unit-tool-contracts.js";
 import { flushAllManifests } from "../workflow-manifest.js";
+import { recordUnitHarnessAbort } from "../unit-runtime.js";
 
 let approvalQuestionAbortInFlight = false;
 
@@ -1315,6 +1316,21 @@ export function registerHooks(
     // ── Loop guard: block repeated identical tool calls ──
     const loopCheck = checkToolCallLoop(toolName, event.input as Record<string, unknown>);
     if (loopCheck.block) {
+      const dash = getAutoRuntimeSnapshot();
+      if (dash.active && dash.basePath && dash.currentUnit) {
+        recordUnitHarnessAbort(
+          dash.basePath,
+          dash.currentUnit.type,
+          dash.currentUnit.id,
+          dash.currentUnit.startedAt,
+          {
+            kind: "tool-loop-guard",
+            reason: loopCheck.reason ?? "Tool-call loop guard blocked a repeated tool call.",
+            toolName,
+            count: loopCheck.count,
+          },
+        );
+      }
       return { block: true, reason: formatLoopGuardBlockReason(loopCheck.reason) };
     }
 
