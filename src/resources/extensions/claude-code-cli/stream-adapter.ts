@@ -2199,6 +2199,8 @@ interface SdkAttemptMessageState {
 	builder: PartialMessageBuilder | null;
 	intermediateToolBlocks: AssistantMessage["content"];
 	toolResultsById: Map<string, ExternalToolResultPayload>;
+	toolCompletionTargetsById: Map<string, { partial: AssistantMessage; contentIndex: number }>;
+	emittedExternalToolResultIds: Set<string>;
 }
 
 function createSdkAttemptMessageState(): SdkAttemptMessageState {
@@ -2206,6 +2208,8 @@ function createSdkAttemptMessageState(): SdkAttemptMessageState {
 		builder: null,
 		intermediateToolBlocks: [],
 		toolResultsById: new Map<string, ExternalToolResultPayload>(),
+		toolCompletionTargetsById: new Map<string, { partial: AssistantMessage; contentIndex: number }>(),
+		emittedExternalToolResultIds: new Set<string>(),
 	};
 }
 
@@ -2341,7 +2345,13 @@ async function pumpSdkMessages(
 
 			sdkAttemptLoop:
 			for (let readinessAttempt = 0; ; readinessAttempt++) {
-				let { builder, intermediateToolBlocks, toolResultsById } = createSdkAttemptMessageState();
+				let {
+					builder,
+					intermediateToolBlocks,
+					toolResultsById,
+					toolCompletionTargetsById,
+					emittedExternalToolResultIds,
+				} = createSdkAttemptMessageState();
 				const controller = new AbortController();
 				const forwardAbort = (): void => controller.abort();
 				if (options?.signal) {
@@ -2475,7 +2485,7 @@ async function pumpSdkMessages(
 						case "user": {
 							// Capture content from the completed turn before resetting
 							if (builder) {
-								for (const block of builder.message.content) {
+								for (const [contentIndex, block] of builder.message.content.entries()) {
 									if (block.type === "text" && block.text) {
 										lastTextContent = block.text;
 									} else if (block.type === "thinking" && block.thinking) {
@@ -2483,6 +2493,10 @@ async function pumpSdkMessages(
 									} else if (block.type === "toolCall" || block.type === "serverToolUse") {
 										// Collect tool blocks for externalToolExecution rendering
 										intermediateToolBlocks.push(block);
+										toolCompletionTargetsById.set(block.id, {
+											partial: builder.message,
+											contentIndex,
+										});
 									}
 								}
 							}
@@ -2497,59 +2511,63 @@ async function pumpSdkMessages(
 							// Push a synthetic toolcall_end for each tool call from this turn
 							// so the TUI can render tool results in real-time during the SDK
 							// session instead of waiting until the entire session completes.
-							if (builder) {
-								for (const block of builder.message.content) {
-									const extResult = (block as ToolCallWithExternalResult).externalResult;
-									if (!extResult) continue;
-									const contentIndex = builder.message.content.indexOf(block);
-									if (contentIndex < 0) continue;
-									const suppressDuplicateUnavailable = shouldSuppressDuplicateToolUnavailableBlock(
-										block,
-										builder.message.content,
-									);
-									// Push synthetic completion events with result attached so the
-									// chat-controller can update pending ToolExecutionComponents.
-									if (block.type === "toolCall") {
-										if (suppressDuplicateUnavailable) {
-											delete (block as ToolCallWithExternalResult).externalResult;
-											stream.push({
-												type: "toolcall_end",
-												contentIndex,
-												toolCall: block,
-												partial: builder.message,
-											});
-											(block as ToolCallWithExternalResult).externalResult = extResult;
-											continue;
-										}
-										try {
-											await onExternalToolResult?.({
-												toolCall: block,
-												result: extResult,
-											});
-										} catch (error) {
-											console.warn("[claude-code] onExternalToolResult callback failed:", error);
-										}
+							for (const block of intermediateToolBlocks) {
+								if (block.type !== "toolCall" && block.type !== "serverToolUse") continue;
+								if (emittedExternalToolResultIds.has(block.id)) continue;
+								const target = toolCompletionTargetsById.get(block.id);
+								if (!target) continue;
+
+								const extResult = (block as ToolCallWithExternalResult).externalResult;
+								if (!extResult) continue;
+								const suppressDuplicateUnavailable = shouldSuppressDuplicateToolUnavailableBlock(
+									block,
+									target.partial.content,
+								);
+								// Push synthetic completion events with result attached so the
+								// chat-controller can update pending ToolExecutionComponents.
+								if (block.type === "toolCall") {
+									if (suppressDuplicateUnavailable) {
+										delete (block as ToolCallWithExternalResult).externalResult;
 										stream.push({
 											type: "toolcall_end",
-											contentIndex,
+											contentIndex: target.contentIndex,
 											toolCall: block,
-											partial: builder.message,
+											partial: target.partial,
 										});
-									} else if (block.type === "serverToolUse") {
-										try {
-											await onExternalToolResult?.({
-												toolCall: serverToolUseToToolCallLike(block),
-												result: extResult,
-											});
-										} catch (error) {
-											console.warn("[claude-code] onExternalToolResult callback failed:", error);
-										}
-										stream.push({
-											type: "server_tool_use",
-											contentIndex,
-											partial: builder.message,
-										});
+										(block as ToolCallWithExternalResult).externalResult = extResult;
+										emittedExternalToolResultIds.add(block.id);
+										continue;
 									}
+									try {
+										await onExternalToolResult?.({
+											toolCall: block,
+											result: extResult,
+										});
+									} catch (error) {
+										console.warn("[claude-code] onExternalToolResult callback failed:", error);
+									}
+									stream.push({
+										type: "toolcall_end",
+										contentIndex: target.contentIndex,
+										toolCall: block,
+										partial: target.partial,
+									});
+									emittedExternalToolResultIds.add(block.id);
+								} else if (block.type === "serverToolUse") {
+									try {
+										await onExternalToolResult?.({
+											toolCall: serverToolUseToToolCallLike(block),
+											result: extResult,
+										});
+									} catch (error) {
+										console.warn("[claude-code] onExternalToolResult callback failed:", error);
+									}
+									stream.push({
+										type: "server_tool_use",
+										contentIndex: target.contentIndex,
+										partial: target.partial,
+									});
+									emittedExternalToolResultIds.add(block.id);
 								}
 							}
 

@@ -661,6 +661,165 @@ describe("stream-adapter — no transcript fabrication (#4102)", () => {
 });
 
 describe("stream-adapter — Claude Code external tool results", () => {
+	test("emits one synthetic completion per tool when SDK sends consecutive user result messages (#1153)", async () => {
+		// Capture synthetic completions through onExternalToolResult, which the
+		// adapter invokes exactly once per tool at emission time. Filtering the
+		// collected toolcall_end events afterwards is unreliable here: the streaming
+		// toolcall_end (content_block_stop) and the synthetic completion reference
+		// the SAME tool-call block, and attachExternalResultsToToolBlocks mutates
+		// that block later, so a post-hoc `event.toolCall.externalResult` check also
+		// matches the earlier streaming ends and double-counts each tool.
+		const syntheticCompletions: Array<{ id: string; text: string | undefined }> = [];
+		const stream = streamViaClaudeCode(
+			{ id: "claude-sonnet-4-6" } as any,
+			{ messages: [{ role: "user", content: "Read and grep." } as Message] },
+			{
+				_skipWorkflowMcpPreflightForTest: true,
+				onExternalToolResult(event: {
+					toolCall: { id: string };
+					result: { content?: Array<{ text?: string }> };
+				}) {
+					syntheticCompletions.push({
+						id: event.toolCall.id,
+						text: event.result.content?.[0]?.text,
+					});
+				},
+				async *_sdkQueryForTest() {
+					yield {
+						type: "stream_event",
+						event: { type: "message_start", message: { model: "claude-sonnet-4-6" } },
+						parent_tool_use_id: null,
+						uuid: "partial-1",
+						session_id: "session-1",
+					};
+					yield {
+						type: "stream_event",
+						event: {
+							type: "content_block_start",
+							index: 0,
+							content_block: { type: "tool_use", id: "tool-read-1", name: "Read", input: {} },
+						},
+						parent_tool_use_id: null,
+						uuid: "partial-1",
+						session_id: "session-1",
+					};
+					yield {
+						type: "stream_event",
+						event: {
+							type: "content_block_delta",
+							index: 0,
+							delta: { type: "input_json_delta", partial_json: "{\"file_path\":\"a.txt\"}" },
+						},
+						parent_tool_use_id: null,
+						uuid: "partial-1",
+						session_id: "session-1",
+					};
+					yield {
+						type: "stream_event",
+						event: { type: "content_block_stop", index: 0 },
+						parent_tool_use_id: null,
+						uuid: "partial-1",
+						session_id: "session-1",
+					};
+					yield {
+						type: "stream_event",
+						event: {
+							type: "content_block_start",
+							index: 1,
+							content_block: { type: "tool_use", id: "tool-grep-1", name: "Grep", input: {} },
+						},
+						parent_tool_use_id: null,
+						uuid: "partial-1",
+						session_id: "session-1",
+					};
+					yield {
+						type: "stream_event",
+						event: {
+							type: "content_block_delta",
+							index: 1,
+							delta: { type: "input_json_delta", partial_json: "{\"pattern\":\"needle\"}" },
+						},
+						parent_tool_use_id: null,
+						uuid: "partial-1",
+						session_id: "session-1",
+					};
+					yield {
+						type: "stream_event",
+						event: { type: "content_block_stop", index: 1 },
+						parent_tool_use_id: null,
+						uuid: "partial-1",
+						session_id: "session-1",
+					};
+					yield {
+						type: "user",
+						uuid: "user-result-1",
+						session_id: "session-1",
+						parent_tool_use_id: "tool-read-1",
+						message: {
+							role: "user",
+							content: [{
+								type: "tool_result",
+								tool_use_id: "tool-read-1",
+								content: "read result",
+								is_error: false,
+							}],
+						},
+					};
+					yield {
+						type: "user",
+						uuid: "user-result-2",
+						session_id: "session-1",
+						parent_tool_use_id: "tool-grep-1",
+						message: {
+							role: "user",
+							content: [{
+								type: "tool_result",
+								tool_use_id: "tool-grep-1",
+								content: "grep result",
+								is_error: false,
+							}],
+						},
+					};
+					yield {
+						type: "result",
+						subtype: "success",
+						uuid: "result-1",
+						session_id: "session-1",
+						duration_ms: 1,
+						duration_api_ms: 1,
+						is_error: false,
+						num_turns: 1,
+						result: "done",
+						stop_reason: "end_turn",
+						total_cost_usd: 0,
+						usage: {
+							input_tokens: 0,
+							output_tokens: 0,
+							cache_read_input_tokens: 0,
+							cache_creation_input_tokens: 0,
+						},
+					};
+				},
+			} as any,
+		);
+
+		// Drain the stream so the adapter processes every SDK message and fires
+		// onExternalToolResult for each synthetic completion.
+		const events: any[] = [];
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		assert.deepEqual(
+			syntheticCompletions.map((completion) => completion.id),
+			["tool-read-1", "tool-grep-1"],
+		);
+		assert.deepEqual(
+			syntheticCompletions.map((completion) => completion.text),
+			["read result", "grep result"],
+		);
+	});
+
 	test("serverToolUseToToolCallLike preserves object input for extension tool_result routing", () => {
 		const toolCall = serverToolUseToToolCallLike({
 			id: "srv-1",
