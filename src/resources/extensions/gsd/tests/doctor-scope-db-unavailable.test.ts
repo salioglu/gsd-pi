@@ -628,7 +628,7 @@ test("checkEngineHealth marks valid task artifact DB divergence fixable and repa
   assert.match(task?.full_summary_md ?? "", /# T01: Done/);
 });
 
-test("checkEngineHealth keeps failure summaries non-fixable", async (t) => {
+test("checkEngineHealth keeps failed and negated-pass summaries non-fixable", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-doctor-artifact-db-failure-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
 
@@ -639,26 +639,35 @@ test("checkEngineHealth keeps failure summaries non-fixable", async (t) => {
   openDatabase(join(gsdDir, "gsd.db"));
   insertMilestone({ id: "M001", title: "Foundation", status: "active" });
   insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active", risk: "low", depends: [], sequence: 1 });
-  insertTask({ id: "T02", milestoneId: "M001", sliceId: "S01", title: "Task", status: "pending", sequence: 1 });
+  const nonPassingResults = [
+    ["T02", "failed"],
+    ["T03", "not passed"],
+    ["T04", "not passing"],
+  ] as const;
+  for (const [taskId, verificationResult] of nonPassingResults) {
+    insertTask({ id: taskId, milestoneId: "M001", sliceId: "S01", title: "Task", status: "pending", sequence: 1 });
 
-  const relSummaryPath = "milestones/M001/slices/S01/tasks/T02-SUMMARY.md";
-  const summary = taskSummary("T02", "failed");
-  writeFileSync(join(gsdDir, relSummaryPath), summary, "utf-8");
-  insertArtifact({
-    path: relSummaryPath,
-    artifact_type: "SUMMARY",
-    milestone_id: "M001",
-    slice_id: "S01",
-    task_id: "T02",
-    full_content: summary,
-  });
+    const relSummaryPath = `milestones/M001/slices/S01/tasks/${taskId}-SUMMARY.md`;
+    const summary = taskSummary(taskId, verificationResult);
+    writeFileSync(join(gsdDir, relSummaryPath), summary, "utf-8");
+    insertArtifact({
+      path: relSummaryPath,
+      artifact_type: "SUMMARY",
+      milestone_id: "M001",
+      slice_id: "S01",
+      task_id: taskId,
+      full_content: summary,
+    });
+  }
 
   const issues: any[] = [];
   await checkEngineHealth(base, issues, []);
 
-  const divergence = issues.find((issue) => issue.code === "artifact_db_status_divergence" && issue.unitId === "M001/S01/T02");
-  assert.ok(divergence, "doctor should still report failure-summary drift");
-  assert.equal(divergence.fixable, false);
+  for (const [taskId] of nonPassingResults) {
+    const divergence = issues.find((issue) => issue.code === "artifact_db_status_divergence" && issue.unitId === `M001/S01/${taskId}`);
+    assert.ok(divergence, "doctor should still report non-passing summary drift");
+    assert.equal(divergence.fixable, false);
+  }
 });
 
 test("checkEngineHealth reports missing CONTEXT and RESEARCH artifacts as user-content warnings", async (t) => {
