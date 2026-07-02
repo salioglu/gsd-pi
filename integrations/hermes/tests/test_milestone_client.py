@@ -347,6 +347,21 @@ def test_cancel_milestone_when_no_proc_is_a_noop() -> None:
     client.cancel_milestone()
 
 
+def test_close_terminates_active_milestone_subprocess() -> None:
+    """close() must tear down the owned milestone subprocess as well as MCP."""
+    client = GsdMcpClient(_config())
+    fake_proc = _FakeProc()
+
+    with (
+        patch.object(client, "_terminate_process"),
+        patch.object(client, "_milestone_proc", fake_proc),
+    ):
+        client.close()
+
+    fake_proc.terminate.assert_called_once()
+    assert client.milestone_active() is False
+
+
 def test_respond_to_milestone_blocker_writes_extension_ui_response_to_stdin() -> None:
     """The reply must write the supervised-mode stdin JSONL protocol."""
     client = GsdMcpClient(_config())
