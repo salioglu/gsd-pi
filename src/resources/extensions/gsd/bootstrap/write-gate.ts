@@ -1199,6 +1199,7 @@ function warnMissingControlledDispatchAgentClasses(unitType: string, mode: strin
 const PLANNING_SAFE_TOOLS = new Set([
   "read", "grep", "find", "ls", "glob",
   "ask_user_questions",
+  "memory_query",
   "search-the-web", "resolve_library", "get_library_docs", "fetch_page",
   "search_and_read",
 ]);

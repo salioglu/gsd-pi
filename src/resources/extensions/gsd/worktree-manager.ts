@@ -236,11 +236,13 @@ function inspectUncommittedWorktreeState(wtPath: string): { dirty: boolean; stat
     ).trimEnd();
     return { dirty: status.length > 0, status };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     logWarning(
       "worktree",
-      `dirty worktree inspection failed for ${wtPath}: ${err instanceof Error ? err.message : String(err)}`,
+      `dirty worktree inspection failed for ${wtPath}: ${message}`,
     );
-    return { dirty: false, status: "" };
+    // Fail closed: unknown state must quarantine rather than force-remove.
+    return { dirty: true, status: `git status failed: ${message}` };
   }
 }
 
