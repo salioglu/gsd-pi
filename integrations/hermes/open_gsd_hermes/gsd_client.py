@@ -580,7 +580,8 @@ class GsdMcpClient:
         if self._milestone_proc is not proc:
             return
         if self._milestone_notified_terminal:
-            self._clear_milestone_state()
+            if proc.poll() is not None:
+                self._clear_milestone_state()
             return
         exit_code = proc.poll()
         if exit_code is None:
@@ -624,7 +625,8 @@ class GsdMcpClient:
         if self._milestone_on_terminal is not None:
             self._milestone_on_terminal(status)
         self._milestone_notified_terminal = True
-        self._clear_milestone_state()
+        if exit_code is not None:
+            self._clear_milestone_state()
 
     def _drain_milestone_stderr(self, proc: subprocess.Popen[bytes]) -> None:
         """Drain stderr so a full pipe cannot stall the child process."""
