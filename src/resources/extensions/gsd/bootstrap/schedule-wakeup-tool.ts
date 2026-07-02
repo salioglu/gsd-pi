@@ -6,22 +6,64 @@ import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 
 import { getAutoRuntimeSnapshot } from "../auto-runtime-state.js";
 import { scheduleAutoWakeup } from "../auto/schedule-wakeup.js";
+import { logWarning } from "../workflow-logger.js";
 import { resolveCtxCwd } from "./dynamic-tools.js";
 
 const MAX_WAKEUP_DELAY_SECONDS = 24 * 60 * 60;
+const INTERACTIVE_WAKEUP_CUSTOM_TYPE = "gsd-schedule-wakeup";
+
+function scheduleInteractiveWakeup(
+  pi: ExtensionAPI,
+  delaySeconds: number,
+  prompt: string,
+  reason: string,
+): void {
+  const handle = setTimeout(() => {
+    try {
+      void Promise.resolve(pi.sendMessage(
+        {
+          customType: INTERACTIVE_WAKEUP_CUSTOM_TYPE,
+          content: prompt,
+          display: true,
+          details: { delaySeconds, reason },
+        },
+        { triggerTurn: true },
+      )).catch((error) => {
+        logWarning(
+          "bootstrap",
+          `ScheduleWakeup interactive dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    } catch (error) {
+      logWarning(
+        "bootstrap",
+        `ScheduleWakeup interactive dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }, delaySeconds * 1000);
+  if (
+    typeof handle === "object" &&
+    handle !== null &&
+    "unref" in handle &&
+    typeof handle.unref === "function"
+  ) {
+    handle.unref();
+  }
+}
 
 export function registerScheduleWakeupTool(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "ScheduleWakeup",
     label: "Schedule Wakeup",
     description:
-      "In GSD auto-mode, pause the current unit and continue the same session after a delay. " +
-      "Use this for long external processes that need polling without ending the unit as no-artifact.",
-    promptSnippet: "Schedule a same-session auto-mode wakeup after a delay.",
+      "Schedule a delayed continuation turn. In GSD auto-mode, continue the current unit in the same session; " +
+      "outside auto-mode, start a new triggered turn with the supplied wakeup prompt.",
+    promptSnippet: "Schedule a wakeup prompt after a delay.",
     promptGuidelines: [
       "Use ScheduleWakeup at the end of an execute-task turn when waiting for a long external process.",
       "Include a prompt that says exactly what external state to check next and what artifact to write when done.",
       "Re-arm ScheduleWakeup on each polling turn if the external process is still running.",
+      "Outside auto-mode, use ScheduleWakeup when the user asks you to check back or poll later.",
     ],
     parameters: Type.Object({
       delaySeconds: Type.Number({
@@ -40,27 +82,31 @@ export function registerScheduleWakeupTool(pi: ExtensionAPI): void {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const dash = getAutoRuntimeSnapshot();
       const currentUnit = dash.currentUnit;
-      const basePath = dash.basePath || resolveCtxCwd(ctx);
-
-      if (!dash.active || !currentUnit) {
-        return {
-          content: [{ type: "text", text: "ScheduleWakeup is only available during an active GSD auto-mode unit." }],
-          details: { operation: "schedule_wakeup", error: "auto_mode_inactive" },
-          isError: true,
-        };
-      }
-
       const delaySeconds = Math.max(
         1,
         Math.min(MAX_WAKEUP_DELAY_SECONDS, Math.floor(params.delaySeconds)),
       );
+      const reason = params.reason ?? "";
+
+      if (!dash.active || !currentUnit) {
+        scheduleInteractiveWakeup(pi, delaySeconds, params.prompt, reason);
+        return {
+          content: [{
+            type: "text",
+            text: `Wakeup scheduled for ${delaySeconds}s. GSD will start a new turn with the wakeup prompt.`,
+          }],
+          details: { operation: "schedule_wakeup", delaySeconds, mode: "interactive" },
+        };
+      }
+
+      const basePath = dash.basePath || resolveCtxCwd(ctx);
       scheduleAutoWakeup({
         basePath,
         unitType: currentUnit.type,
         unitId: currentUnit.id,
         delayMs: delaySeconds * 1000,
         prompt: params.prompt,
-        reason: params.reason ?? "",
+        reason,
         createdAt: Date.now(),
       });
 
