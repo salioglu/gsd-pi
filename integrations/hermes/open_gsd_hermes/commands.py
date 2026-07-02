@@ -58,6 +58,7 @@ class GsdCommandRouter:
             "auto": self._cmd_auto,
             "cancel": self._cmd_cancel,
             "reply": self._cmd_reply,
+            "new-milestone": self._cmd_new_milestone,
             "help": self._cmd_help,
         }
         handler = handlers.get(sub, self._cmd_help)
@@ -69,6 +70,7 @@ class GsdCommandRouter:
             "- `/gsd bind <path>` — bind this chat to a project\n"
             "- `/gsd status` — show progress snapshot\n"
             "- `/gsd auto` — start auto mode (MCP)\n"
+            "- `/gsd new-milestone <spec>` — create a milestone (then `/gsd auto`)\n"
             "- `/gsd cancel` — cancel running session\n"
             "- `/gsd reply <text>` — resolve blocker"
         )
@@ -112,6 +114,15 @@ class GsdCommandRouter:
             return f"GSD status unavailable: {e}"
 
     async def _cmd_auto(self, _rest: list[str]) -> str:
+        # Symmetric co-run guard (issue #1162): refuse if a milestone run is
+        # in progress. The MCP server's "Session already active" rejection
+        # does NOT fire for a milestone subprocess (it's not registered and
+        # writes no auto.lock during planning), so this local gate is the
+        # only thing preventing an unsafe co-run.
+        if self._client.milestone_active():
+            return (
+                "Milestone creation is in progress. Run `/gsd cancel` first."
+            )
         try:
             project_dir = resolve_project_dir(
                 self._config, self._binding_ctx()
@@ -140,6 +151,18 @@ class GsdCommandRouter:
 
     async def _cmd_cancel(self, _rest: list[str]) -> str:
         ctx = self._get_supervisor_ctx()
+        # Milestone subprocess is locally owned (issue #1162); route to the
+        # local SIGTERM path instead of MCP cancel, which cannot see it.
+        if self._client.milestone_active():
+            self._client.cancel_milestone()
+            ctx.session_id = None
+            ctx.state = SupervisorState.CANCELLED
+            ctx.notified_terminal = True
+            self._set_supervisor_ctx(ctx)
+            self._supervisor.stop()
+            if self._notifications is not None:
+                self._notifications.notify_terminal("cancelled")
+            return "Cancel requested."
         try:
             try:
                 if ctx.session_id and ctx.project_dir:
@@ -175,6 +198,15 @@ class GsdCommandRouter:
         if not rest:
             return "Usage: `/gsd reply <your answer>`"
         text = " ".join(rest)
+        # Milestone planning blocker (issue #1162): the subprocess is locally
+        # owned, so its blocker replies must go to its stdin, not MCP
+        # gsd_resolve_blocker (which can't see our session).
+        if self._client.milestone_active() and self._client.milestone_pending_blocker_id():
+            try:
+                self._client.respond_to_milestone_blocker(text)
+            except Exception as e:
+                return f"Could not send blocker response: {e}"
+            return "Blocker response sent."
         ctx = self._get_supervisor_ctx()
         if not ctx.session_id:
             return "No active GSD session. Run `/gsd auto` first."
@@ -184,3 +216,78 @@ class GsdCommandRouter:
         except Exception as e:
             return f"Could not send blocker response: {e}"
         return "Blocker response sent."
+
+    async def _cmd_new_milestone(self, rest: list[str]) -> str:
+        """Create a milestone via `gsd headless --supervised new-milestone`.
+
+        Planning-only: the plugin spawns the subprocess, owns its lifecycle,
+        and notifies on blocker/terminal events. Execution stays with
+        `/gsd auto`. See integrations/hermes/docs/issue-1162-grilling.md.
+        """
+        if not rest:
+            return (
+                "Usage: `/gsd new-milestone <spec>` "
+                "(or `--file <path>`)"
+            )
+        # --auto is intentionally rejected (Q5): execution is /gsd auto's job.
+        if "--auto" in rest:
+            return (
+                "Execution isn't chained from `/gsd new-milestone`. "
+                "Create the milestone, then run `/gsd auto`."
+            )
+        # Co-run guard (Q2): refuse if an auto session is RUNNING/BLOCKED.
+        ctx = self._get_supervisor_ctx()
+        if ctx.state in (SupervisorState.RUNNING, SupervisorState.BLOCKED):
+            return (
+                "GSD auto is running. Run `/gsd cancel` first."
+            )
+        # Resolve the bound project.
+        try:
+            project_dir = resolve_project_dir(
+                self._config, self._binding_ctx()
+            )
+        except BindingError as e:
+            return str(e)
+
+        # Input shape (Q6): bare positional → context_text, `--file <path>`
+        # → context_file.
+        context_text: str | None = None
+        context_file: str | None = None
+        if rest[0] == "--file":
+            if len(rest) < 2:
+                return "Usage: `/gsd new-milestone --file <path>`"
+            context_file = rest[1]
+        else:
+            context_text = " ".join(rest)
+
+        # Spawn the supervised subprocess; create_milestone blocks until the
+        # init_result event yields a sessionId, then continues the stream
+        # reader in the background.
+        try:
+            session_id = self._client.create_milestone(
+                project_dir,
+                context_text=context_text,
+                context_file=context_file,
+                notifications=self._notifications,
+            )
+        except ValueError:
+            return "Usage: `/gsd new-milestone <spec>` (or `--file <path>`)"
+        except Exception as e:
+            return f"Could not start milestone creation: {e}"
+
+        # Record the active milestone run so /gsd status, /gsd cancel, and the
+        # co-run gate (in _cmd_auto) see it. The supervisor poll loop is NOT
+        # used (the stream reader drives notifications); we only carry state.
+        self._supervisor.stop()
+        ctx.session_id = session_id
+        ctx.project_dir = project_dir
+        ctx.state = SupervisorState.RUNNING
+        ctx.last_progress = None
+        ctx.last_status = None
+        ctx.pending_blocker_id = None
+        ctx.notified_terminal = False
+        self._set_supervisor_ctx(ctx)
+        return (
+            f"🚀 Milestone creation started (session `{session_id}`). "
+            "I'll notify you when it's ready; run `/gsd auto` to execute."
+        )

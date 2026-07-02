@@ -42,6 +42,15 @@ class GsdMcpClient:
         self._request_id = 0
         self._cache: dict[str, _CacheEntry] = {}
         self._version_checked = False
+        # Milestone subprocess state (issue #1162). The plugin owns the
+        # `gsd headless --supervised new-milestone` process directly, so the
+        # MCP session manager cannot see or reach it. This client is the sole
+        # owner of its lifecycle (cancel, blocker replies, terminal events).
+        self._milestone_proc: subprocess.Popen[bytes] | None = None
+        self._milestone_session_id: str | None = None
+        self._milestone_pending_blocker_id: str | None = None
+        self._milestone_notifications: Any = None  # NotificationService | None
+        self._milestone_thread: threading.Thread | None = None
 
     def _env(self) -> dict[str, str]:
         env = os.environ.copy()
@@ -371,5 +380,218 @@ class GsdMcpClient:
             project_dir=project_dir,
         )
 
+    # ------------------------------------------------------------------
+    # Milestone creation (issue #1162)
+    #
+    # The plugin spawns `gsd headless --supervised new-milestone` directly
+    # and owns the subprocess. The MCP session manager cannot see it (it
+    # only knows sessions it started via gsd_execute), and there is no
+    # auto.lock pid backstop during the planning phase. So this client is
+    # the sole owner of the subprocess's lifecycle: cancel (SIGTERM),
+    # blocker replies (stdin), and transition/terminal notifications
+    # (stdout stream). See integrations/hermes/docs/issue-1162-grilling.md.
+    # ------------------------------------------------------------------
+
+    # Stop-notice vocabulary mirrored from src/resources/extensions/gsd/stop-notice.ts.
+    # Keep both sides in lockstep; the canonical prefixes the headless event
+    # loop emits in notify messages. Terminal detection is handled by process
+    # exit (the stream reader emits notify_terminal on stdout EOF), so only the
+    # blocked-notice classifier is needed here.
+    _PAUSED_NOTICE_PREFIXES = ("auto-mode paused", "step-mode paused")
+
+    def _is_blocked_notice(self, message: str) -> bool:
+        """Mirror of stop-notice.ts isBlockedNoticeMessage (lowercased input)."""
+        if "blocked:" in message:
+            return True
+        if any(message.startswith(p) for p in self._PAUSED_NOTICE_PREFIXES):
+            if "idempotent advance: unit already active" not in message:
+                return True
+        return (
+            "resolve manually and re-run /gsd auto" in message
+            or "resolve conflicts manually and run /gsd auto to resume" in message
+            or "resolve and run /gsd auto to resume" in message
+        )
+
+    def create_milestone(
+        self,
+        project_dir: str,
+        *,
+        context_text: str | None = None,
+        context_file: str | None = None,
+        notifications: Any = None,
+    ) -> str:
+        """Spawn `gsd headless --supervised new-milestone` and return the sessionId.
+
+        The subprocess is started detached; a background thread reads its
+        stream-json stdout, captures init_result.sessionId, and drives the
+        supplied NotificationService on blocker/terminal events. The caller
+        receives the sessionId once the init_result event arrives.
+
+        Raises ValueError if neither (or both) of context_text/context_file
+        is supplied.
+        """
+        if bool(context_text) == bool(context_file):
+            raise ValueError(
+                "Provide exactly one milestone spec: context_text or context_file"
+            )
+        self.ensure_version()
+
+        args: list[str] = [
+            self._config.cli_path,
+            "headless",
+            "--supervised",
+            "--output-format",
+            "stream-json",
+        ]
+        if context_text:
+            args += ["--context-text", context_text]
+        else:
+            assert context_file is not None
+            args += ["--context", context_file]
+        args.append("new-milestone")
+
+        proc = subprocess.Popen(  # noqa: S603 - args list, not shell
+            args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=project_dir,
+            env=self._env(),
+        )
+        self._milestone_proc = proc
+        self._milestone_session_id = None
+        self._milestone_pending_blocker_id = None
+        self._milestone_notifications = notifications
+
+        # Read init_result synchronously so the caller gets the sessionId
+        # before the ack returns. The stream loop then continues in the
+        # background for blocker/terminal events.
+        assert proc.stdout is not None
+        session_id = self._read_init_result(proc)
+        self._milestone_session_id = session_id
+
+        self._milestone_thread = threading.Thread(
+            target=self._milestone_stream_loop,
+            args=(proc,),
+            daemon=True,
+        )
+        self._milestone_thread.start()
+        return session_id
+
+    def _read_init_result(self, proc: subprocess.Popen[bytes]) -> str:
+        """Block reading stdout lines until init_result yields a sessionId."""
+        assert proc.stdout is not None
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                raise McpProtocolError(
+                    "new-milestone subprocess closed stdout before init_result"
+                )
+            try:
+                event = json.loads(line.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if event.get("type") == "init_result":
+                sid = event.get("sessionId")
+                if not sid:
+                    raise McpProtocolError("init_result arrived without sessionId")
+                return str(sid)
+
+    def _milestone_stream_loop(self, proc: subprocess.Popen[bytes]) -> None:
+        """Background reader: capture blocker/terminal events and notify.
+
+        Best-effort. On stream loss we surface FAILED via notify_terminal so
+        the user can `/gsd cancel` to clean up (no watchdog; the cancel
+        escape hatch is the safety net).
+        """
+        assert proc.stdout is not None
+        try:
+            while True:
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                try:
+                    event = json.loads(line.decode("utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                self._handle_milestone_event(event)
+        except Exception:
+            pass
+        # Stream ended — emit a terminal notification if we never saw one.
+        if self._milestone_notifications is not None:
+            self._milestone_notifications.notify_terminal("stream-ended")
+
+    def _handle_milestone_event(self, event: dict[str, Any]) -> None:
+        etype = event.get("type")
+        if etype == "init_result":
+            sid = event.get("sessionId")
+            if sid:
+                self._milestone_session_id = str(sid)
+            return
+        if etype != "extension_ui_request":
+            return
+        message = str(event.get("message") or "").lower()
+        event_id = str(event.get("id") or "")
+        if self._is_blocked_notice(message):
+            self._milestone_pending_blocker_id = event_id or None
+            if self._milestone_notifications is not None:
+                self._milestone_notifications.notify_blocker(
+                    SessionStatus(
+                        status="blocked",
+                        pending_blocker=event,
+                        session_id=self._milestone_session_id,
+                    )
+                )
+
+    def cancel_milestone(self) -> None:
+        """SIGTERM the held milestone subprocess and clear state."""
+        proc = self._milestone_proc
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        self._clear_milestone_state()
+
+    def _clear_milestone_state(self) -> None:
+        self._milestone_proc = None
+        self._milestone_session_id = None
+        self._milestone_pending_blocker_id = None
+
+    def respond_to_milestone_blocker(self, response: str) -> None:
+        """Write an extension_ui_response to the milestone subprocess stdin.
+
+        Uses the supervised-mode JSONL protocol (see startSupervisedStdinReader
+        in src/headless-ui.ts): {"type":"extension_ui_response","id":...,"value":...}.
+        """
+        proc = self._milestone_proc
+        blocker_id = self._milestone_pending_blocker_id
+        if proc is None or not blocker_id:
+            raise RuntimeError(
+                "No pending blocker for the active milestone session."
+            )
+        assert proc.stdin is not None
+        payload = json.dumps(
+            {"type": "extension_ui_response", "id": blocker_id, "value": response}
+        ).encode("utf-8")
+        try:
+            proc.stdin.write(payload + b"\n")
+            proc.stdin.flush()
+        except Exception:
+            pass
+        self._milestone_pending_blocker_id = None
+
+    def milestone_active(self) -> bool:
+        return self._milestone_proc is not None
+
+    def milestone_session_id(self) -> str | None:
+        return self._milestone_session_id
+
+    def milestone_pending_blocker_id(self) -> str | None:
+        return self._milestone_pending_blocker_id
+
     def close(self) -> None:
         self._terminate_process()
+        if self._milestone_proc is not None:
+            self.cancel_milestone()
