@@ -710,7 +710,12 @@ class GsdMcpClient:
             proc.terminate()
         except Exception:
             pass
-        self._clear_milestone_state()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            return
+        if self._milestone_proc is proc:
+            self._clear_milestone_state()
 
     def _release_milestone_proc(self) -> None:
         self._milestone_proc = None
@@ -793,7 +798,13 @@ class GsdMcpClient:
         self._milestone_pending_blocker_method = None
 
     def milestone_active(self) -> bool:
-        return self._milestone_proc is not None
+        proc = self._milestone_proc
+        if proc is None:
+            return False
+        if proc.poll() is None:
+            return True
+        self._clear_milestone_state()
+        return False
 
     def milestone_session_id(self) -> str | None:
         return self._milestone_session_id
