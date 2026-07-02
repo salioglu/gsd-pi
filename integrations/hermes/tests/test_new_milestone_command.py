@@ -225,6 +225,22 @@ def test_reply_routes_to_milestone_blocker_when_milestone_pending(
     assert "sent" in result.lower()
 
 
+def test_reply_does_not_fall_through_to_mcp_when_milestone_active_no_blocker(
+    project: Path,
+) -> None:
+    """Active milestone without a pending blocker must not hit MCP resolve_blocker."""
+    router, client = _make_router(
+        project_dir=str(project),
+        milestone_active=True,
+        milestone_blocker_id=None,
+    )
+    router._get_supervisor_ctx().session_id = "milestone-1"  # type: ignore[attr-defined]
+    result = run(router, "reply some answer")
+    client.respond_to_milestone_blocker.assert_not_called()
+    client.resolve_blocker.assert_not_called()
+    assert "no pending blocker" in result.lower()
+
+
 def test_reply_falls_back_to_mcp_when_no_milestone(project: Path) -> None:
     """No milestone proc → existing MCP resolve_blocker path (needs a session)."""
     router, client = _make_router(

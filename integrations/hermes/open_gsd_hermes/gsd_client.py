@@ -400,6 +400,9 @@ class GsdMcpClient:
     # exit (the stream reader emits notify_terminal on stdout EOF), so only the
     # blocked-notice classifier is needed here.
     _PAUSED_NOTICE_PREFIXES = ("auto-mode paused", "step-mode paused")
+    _FIRE_AND_FORGET_UI_METHODS = frozenset(
+        {"notify", "setStatus", "setWidget", "setTitle", "set_editor_text"}
+    )
     _EXIT_BLOCKED = 10
 
     def _is_blocked_notice(self, message: str) -> bool:
@@ -415,6 +418,16 @@ class GsdMcpClient:
             or "resolve and run /gsd auto to resume" in message
         )
 
+    def _is_milestone_blocker_event(self, event: dict[str, Any]) -> bool:
+        """True for blocked notices and supervised interactive UI requests."""
+        method = str(event.get("method") or "")
+        if method in self._FIRE_AND_FORGET_UI_METHODS:
+            if method != "notify":
+                return False
+            message = str(event.get("message") or "").lower()
+            return self._is_blocked_notice(message)
+        return True
+
     def create_milestone(
         self,
         project_dir: str,
@@ -424,12 +437,12 @@ class GsdMcpClient:
         notifications: Any = None,
         on_terminal: Callable[[str], None] | None = None,
     ) -> str:
-        """Spawn `gsd headless --supervised new-milestone` and return the sessionId.
+        """Spawn `gsd headless --supervised new-milestone` and return a session id.
 
         The subprocess is started detached; a background thread reads its
-        stream-json stdout, captures init_result.sessionId, and drives the
-        supplied NotificationService on blocker/terminal events. The caller
-        receives the sessionId once the init_result event arrives.
+        stream-json stdout and drives the supplied NotificationService on
+        blocker/terminal events. Returns a local session id immediately
+        (headless does not emit init_result on stdout).
 
         Raises ValueError if neither (or both) of context_text/context_file
         is supplied.
@@ -476,20 +489,10 @@ class GsdMcpClient:
             daemon=True,
         ).start()
 
-        # Read init_result synchronously so the caller gets the sessionId
-        # before the ack returns. The stream loop then continues in the
-        # background for blocker/terminal events.
-        assert proc.stdout is not None
-        try:
-            session_id = self._read_init_result(proc)
-        except Exception:
-            try:
-                proc.terminate()
-                proc.wait(timeout=5)
-            except Exception:
-                pass
-            self._clear_milestone_state()
-            raise
+        # Headless stream-json does not emit init_result on stdout (init is an
+        # internal RPC handshake). Use a local session id for ack/status only;
+        # milestone lifecycle is keyed on the held subprocess, not MCP.
+        session_id = f"milestone-{proc.pid}"
         self._milestone_session_id = session_id
 
         self._milestone_thread = threading.Thread(
@@ -499,25 +502,6 @@ class GsdMcpClient:
         )
         self._milestone_thread.start()
         return session_id
-
-    def _read_init_result(self, proc: subprocess.Popen[bytes]) -> str:
-        """Block reading stdout lines until init_result yields a sessionId."""
-        assert proc.stdout is not None
-        while True:
-            line = proc.stdout.readline()
-            if not line:
-                raise McpProtocolError(
-                    "new-milestone subprocess closed stdout before init_result"
-                )
-            try:
-                event = json.loads(line.decode("utf-8"))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            if event.get("type") == "init_result":
-                sid = event.get("sessionId")
-                if not sid:
-                    raise McpProtocolError("init_result arrived without sessionId")
-                return str(sid)
 
     def _milestone_stream_loop(self, proc: subprocess.Popen[bytes]) -> None:
         """Background reader: capture blocker/terminal events and notify.
@@ -589,18 +573,18 @@ class GsdMcpClient:
             return
         if etype != "extension_ui_request":
             return
-        message = str(event.get("message") or "").lower()
+        if not self._is_milestone_blocker_event(event):
+            return
         event_id = str(event.get("id") or "")
-        if self._is_blocked_notice(message):
-            self._milestone_pending_blocker_id = event_id or None
-            if self._milestone_notifications is not None:
-                self._milestone_notifications.notify_blocker(
-                    SessionStatus(
-                        status="blocked",
-                        pending_blocker=event,
-                        session_id=self._milestone_session_id,
-                    )
+        self._milestone_pending_blocker_id = event_id or None
+        if self._milestone_notifications is not None:
+            self._milestone_notifications.notify_blocker(
+                SessionStatus(
+                    status="blocked",
+                    pending_blocker=event,
+                    session_id=self._milestone_session_id,
                 )
+            )
 
     def cancel_milestone(self) -> None:
         """SIGTERM the held milestone subprocess and clear state."""

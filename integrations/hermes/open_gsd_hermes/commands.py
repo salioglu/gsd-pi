@@ -202,7 +202,9 @@ class GsdCommandRouter:
         # Milestone planning blocker (issue #1162): the subprocess is locally
         # owned, so its blocker replies must go to its stdin, not MCP
         # gsd_resolve_blocker (which can't see our session).
-        if self._client.milestone_active() and self._client.milestone_pending_blocker_id():
+        if self._client.milestone_active():
+            if not self._client.milestone_pending_blocker_id():
+                return "No pending blocker for the active milestone session."
             try:
                 self._client.respond_to_milestone_blocker(text)
             except Exception as e:

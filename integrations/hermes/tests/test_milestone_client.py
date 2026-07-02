@@ -2,8 +2,7 @@
 
 These tests pin the A1 design from issue #1162's grilling:
 - create_milestone spawns `gsd headless --supervised new-milestone`
-- a background stream-reader captures init_result.sessionId and drives
-  NotificationService on blocker/terminal events
+- a background stream-reader drives NotificationService on blocker/terminal events
 - cancel_milestone SIGTERMs the held subprocess
 - respond_to_milestone_blocker writes an extension_ui_response to stdin
 """
@@ -57,11 +56,8 @@ def test_create_milestone_builds_supervised_new_milestone_command_with_context_t
 
     with patch.object(client, "ensure_version"):
         with patch("subprocess.Popen", side_effect=fake_popen):
-            # Stub the init_result sync read + background loop so the test
-            # focuses solely on the constructed command line.
-            with patch.object(client, "_read_init_result", return_value="S-1"):
-                with patch.object(client, "_milestone_stream_loop"):
-                    client.create_milestone("/proj", context_text="Build a REST API")
+            with patch.object(client, "_milestone_stream_loop"):
+                client.create_milestone("/proj", context_text="Build a REST API")
 
     args = captured["args"]
     assert args[0] == "/usr/local/bin/gsd"
@@ -86,9 +82,8 @@ def test_create_milestone_builds_command_with_context_file() -> None:
 
     with patch.object(client, "ensure_version"):
         with patch("subprocess.Popen", side_effect=fake_popen):
-            with patch.object(client, "_read_init_result", return_value="S-1"):
-                with patch.object(client, "_milestone_stream_loop"):
-                    client.create_milestone("/proj", context_file="/path/to/spec.md")
+            with patch.object(client, "_milestone_stream_loop"):
+                client.create_milestone("/proj", context_file="/path/to/spec.md")
 
     args = captured["args"]
     assert "--context" in args
@@ -118,6 +113,19 @@ def test_create_milestone_rejects_both_context_text_and_file() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_create_milestone_returns_local_session_id_from_pid() -> None:
+    """create_milestone returns a local session id without waiting for init_result."""
+    client = GsdMcpClient(_config())
+    fake_proc = _FakeProc()
+
+    with patch.object(client, "ensure_version"):
+        with patch("subprocess.Popen", return_value=fake_proc):
+            with patch.object(client, "_milestone_stream_loop"):
+                session_id = client.create_milestone("/proj", context_text="spec")
+
+    assert session_id == "milestone-4242"
+
+
 def test_stream_loop_captures_session_id_from_init_result() -> None:
     """The reader must pull sessionId out of the init_result stream event."""
     client = GsdMcpClient(_config())
@@ -132,6 +140,31 @@ def test_stream_loop_captures_session_id_from_init_result() -> None:
         client._milestone_stream_loop(fake_proc)
 
     assert client.milestone_session_id() == "S-789"
+
+
+def test_stream_loop_notifies_blocker_on_supervised_select_request() -> None:
+    """Supervised planning prompts (select/input/confirm) must fire notify_blocker."""
+    client = GsdMcpClient(_config())
+    notifications = MagicMock()
+    fake_proc = _FakeProc()
+    blocker_event = {
+        "type": "extension_ui_request",
+        "method": "select",
+        "id": "sel-1",
+        "title": "Choose milestone scope",
+        "options": ["A", "B"],
+    }
+    fake_proc.stdout.readline.side_effect = [
+        (json.dumps(blocker_event) + "\n").encode(),
+        b"",
+    ]
+
+    with patch.object(client, "_milestone_proc", fake_proc):
+        with patch.object(client, "_milestone_notifications", notifications):
+            client._milestone_stream_loop(fake_proc)
+
+    notifications.notify_blocker.assert_called_once()
+    assert client.milestone_pending_blocker_id() == "sel-1"
 
 
 def test_stream_loop_notifies_blocker_on_extension_ui_request() -> None:
