@@ -2312,7 +2312,7 @@ export function buildWorktreeLifecycleDeps(): WorktreeLifecycleDeps {
   //   C4 (#5627) — GitServiceImpl constructor → gitServiceFactory
   //
   // Final WorktreeLifecycleDeps shape: 3 fields (gitServiceFactory,
-  // worktreeProjection, mergeMilestoneToMain transaction runner). Down from 18 at slice-7
+  // worktreeProjection, mergeMilestone transaction runner). Down from 18 at slice-7
   // closure.
   return {
     gitServiceFactory: (basePath: string) => {
@@ -2321,7 +2321,7 @@ export function buildWorktreeLifecycleDeps(): WorktreeLifecycleDeps {
       return new GitServiceImpl(basePath, gitConfig);
     },
     worktreeProjection: new WorktreeStateProjection(),
-    mergeMilestoneToMain: createMilestoneMergeTransaction(mergeMilestoneToMain),
+    mergeMilestone: createMilestoneMergeTransaction(mergeMilestoneToMain),
   };
 }
 
