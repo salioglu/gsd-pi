@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
 import { migrateToExternalState, recoverFailedMigration } from "../migrate-external.ts";
+import { externalGsdRoot } from "../repo-identity.ts";
 
 function run(command: string, cwd: string): string {
   return execSync(command, {
@@ -160,6 +161,64 @@ describe("migrateToExternalState rename fallback (#1179)", () => {
     } finally {
       fs.renameSync = originalRenameSync;
       syncBuiltinESMExports();
+      if (previousStateDir === undefined) {
+        delete process.env.GSD_STATE_DIR;
+      } else {
+        process.env.GSD_STATE_DIR = previousStateDir;
+      }
+      if (previousProjectId === undefined) {
+        delete process.env.GSD_PROJECT_ID;
+      } else {
+        process.env.GSD_PROJECT_ID = previousProjectId;
+      }
+      rmSync(base, { recursive: true, force: true });
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("migrateToExternalState already-migrated external state guard (#1178)", () => {
+  test("skips migration when external state already exists for a real local .gsd directory", () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "gsd-migrate-already-external-")));
+    const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-state-already-external-")));
+    const previousStateDir = process.env.GSD_STATE_DIR;
+    const previousProjectId = process.env.GSD_PROJECT_ID;
+    process.env.GSD_STATE_DIR = stateDir;
+
+    try {
+      run("git init -b main", base);
+      run('git config user.name "Test"', base);
+      run('git config user.email "test@example.com"', base);
+      writeFileSync(join(base, "README.md"), "# Test\n", "utf-8");
+      run("git add README.md", base);
+      run('git commit -m "init"', base);
+
+      const externalPath = externalGsdRoot(base);
+      const identity = externalPath.split(/[\\/]/).pop();
+      assert.ok(identity, "external state path must include an identity segment");
+      mkdirSync(externalPath, { recursive: true });
+      writeFileSync(join(base, ".gsd-id"), `${identity}\n`, "utf-8");
+      writeFileSync(join(externalPath, "gsd.db"), "newer external state\n", "utf-8");
+
+      mkdirSync(join(base, ".gsd"), { recursive: true });
+      writeFileSync(join(base, ".gsd", "gsd.db"), "stale local state\n", "utf-8");
+
+      const result = migrateToExternalState(base);
+
+      assert.equal(result.migrated, false, "already-migrated project must not re-run migration");
+      assert.match(result.error ?? "", /external state already exists/i);
+      assert.equal(
+        readFileSync(join(externalPath, "gsd.db"), "utf-8"),
+        "newer external state\n",
+        "newer external gsd.db must not be overwritten by stale local state",
+      );
+      assert.equal(
+        readFileSync(join(base, ".gsd", "gsd.db"), "utf-8"),
+        "stale local state\n",
+        "local real .gsd directory should be left for explicit recovery",
+      );
+      assert.ok(!existsSync(join(base, ".gsd.migrating")), "migration staging dir must not be created");
+    } finally {
       if (previousStateDir === undefined) {
         delete process.env.GSD_STATE_DIR;
       } else {
