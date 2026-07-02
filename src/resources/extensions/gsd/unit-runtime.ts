@@ -167,9 +167,7 @@ export function writeUnitRuntimeRecord(
       lastRecoveryReason: updates.lastRecoveryReason ?? prev?.lastRecoveryReason,
       harnessAbort: updatesHarnessAbort
         ? updates.harnessAbort
-        : (updates.phase === "recovered"
-          ? undefined
-          : (sameRun ? prev?.harnessAbort : undefined)),
+        : (sameRun ? prev?.harnessAbort : undefined),
     };
     atomicWriteSync(path, JSON.stringify(next, null, 2) + "\n", "utf-8");
     return next;
