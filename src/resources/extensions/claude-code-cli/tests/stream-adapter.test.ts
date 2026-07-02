@@ -904,6 +904,19 @@ describe("stream-adapter — Claude Code external tool results", () => {
 					});
 					assert.equal(customOpened, true, "interview overlay should be open before the tool result arrives");
 
+					// The adapter only assembles tool-call blocks after a
+					// message_start has created the partial-message builder. Real
+					// SDK streams always emit it before a tool_use content block;
+					// without it the timed_out result is never matched to the
+					// in-flight ask_user_questions block, so the interview would
+					// never be closed.
+					yield {
+						type: "stream_event",
+						event: { type: "message_start", message: { model: "claude-sonnet-4-6" } },
+						parent_tool_use_id: null,
+						uuid: "partial-1",
+						session_id: "session-1",
+					};
 					yield {
 						type: "stream_event",
 						event: {
