@@ -342,6 +342,11 @@ export interface McpToolExtra {
   sendNotification?: (notification: unknown) => void | Promise<void>;
 }
 
+interface ElicitRequestOptions {
+  timeout?: number;
+  signal?: AbortSignal;
+}
+
 interface McpServerInstance {
   tool(
     name: string,
@@ -352,7 +357,7 @@ interface McpServerInstance {
   server: {
     elicitInput(
       params: AskUserQuestionsElicitRequest | ElicitRequestFormParams,
-      options?: unknown,
+      options?: ElicitRequestOptions,
     ): Promise<AskUserQuestionsElicitResult>;
   };
   connect(transport: unknown): Promise<void>;
@@ -602,7 +607,10 @@ export function buildAskUserQuestionsRoundResult(
 }
 
 interface AskUserQuestionsHandlerDeps {
-  elicitInput(params: AskUserQuestionsElicitRequest): Promise<AskUserQuestionsElicitResult>;
+  elicitInput(
+    params: AskUserQuestionsElicitRequest,
+    options?: ElicitRequestOptions,
+  ): Promise<AskUserQuestionsElicitResult>;
   isRemoteConfigured(): boolean;
   tryRemoteQuestions(questions: AskUserQuestion[], signal?: AbortSignal): Promise<RemoteToolResult | null>;
   writeGate?: AskUserQuestionsWriteGateModule | null;
@@ -704,9 +712,9 @@ async function recordAskUserQuestionsGateResult(
  * Detect an elicitation-side timeout error so the handler returns a clean
  * "timed_out" result rather than a raw error the model will retry.
  *
- * The Claude Agent SDK enforces its own ~60s elicitation timeout
- * (`MCP error -32001: Request timed out`); `withElicitTimeout` enforces a
- * longer 10-minute timeout (`… timed out after … minutes`). Both surface as
+ * The MCP SDK surfaces request deadline expiry as
+ * (`MCP error -32001: Request timed out`); `withElicitTimeout` also enforces
+ * the 10-minute user window (`… timed out after … minutes`). Both surface as
  * elicitation fallback errors that should never become a raw `errorContent`
  * response — without recognition they re-throw, skip
  * `recordAskUserQuestionsGateResult`, leave the depth-verification gate
@@ -770,8 +778,13 @@ export async function askUserQuestionsHandler(
     let localElicitTimedOut = false;
     try {
       const elicitation = await withElicitTimeout(
-        deps.elicitInput(buildAskUserQuestionsElicitRequest(questions)),
+        deps.elicitInput(buildAskUserQuestionsElicitRequest(questions), {
+          timeout: ELICIT_TIMEOUT_MS,
+          ...(extra?.signal ? { signal: extra.signal } : {}),
+        }),
         'ask_user_questions',
+        undefined,
+        extra?.signal,
       );
       if (elicitation.action === 'accept' && elicitation.content) {
         const structured: AskUserQuestionsStructuredContent = {
@@ -1255,7 +1268,7 @@ export async function createMcpServer(
     async (args: Record<string, unknown>, extra?: McpToolExtra) => {
       const { questions } = args as unknown as AskUserQuestionsParams;
       return askUserQuestionsHandler(questions, extra, {
-        elicitInput: (params) => server.server.elicitInput(params),
+        elicitInput: (params, options) => server.server.elicitInput(params, options),
         isRemoteConfigured,
         tryRemoteQuestions,
       });

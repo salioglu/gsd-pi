@@ -772,6 +772,44 @@ describe('createMcpServer tool registration', () => {
     assert.ok(typeof server.close === 'function');
   });
 
+  it('ask_user_questions passes the declared elicitation timeout and signal to the MCP SDK request', async () => {
+    const { server } = await createMcpServer(sm);
+    const askTool = (server as any)._registeredTools?.ask_user_questions;
+    assert.ok(askTool, 'ask_user_questions should be registered');
+
+    const questions = [
+      {
+        id: 'depth_verification_M001',
+        header: 'Depth Check',
+        question: 'Did I capture the depth right?',
+        options: [
+          { label: 'Yes, you got it (Recommended)', description: 'Continue with the current summary.' },
+          { label: 'Not quite', description: 'I need to clarify the depth further.' },
+        ],
+      },
+    ];
+    const signal = new AbortController().signal;
+    let receivedParams: unknown;
+    let receivedOptions: unknown;
+
+    server.server.elicitInput = async (params, options) => {
+      receivedParams = params;
+      receivedOptions = options;
+      return {
+        action: 'accept',
+        content: {
+          depth_verification_M001: 'Yes, you got it (Recommended)',
+        },
+      };
+    };
+
+    const result = await askTool.handler({ questions }, { signal });
+
+    assert.equal('isError' in result && result.isError, false);
+    assert.deepEqual(receivedParams, buildAskUserQuestionsElicitRequest(questions));
+    assert.deepEqual(receivedOptions, { timeout: 600000, signal });
+  });
+
   it('advertises workflow aliases by default for external MCP clients', async () => {
     const previous = process.env.GSD_MCP_HIDE_ALIASES;
     delete process.env.GSD_MCP_HIDE_ALIASES;
@@ -1194,7 +1232,7 @@ describe('createMcpServer tool registration', () => {
       },
     ];
     let remoteCalls = 0;
-    const signal = AbortSignal.abort();
+    const signal = new AbortController().signal;
 
     const result = await askUserQuestionsHandler(questions, { signal }, {
       async elicitInput() {
@@ -1493,7 +1531,7 @@ describe('createMcpServer tool registration', () => {
 
     const result = await askUserQuestionsHandler(questions, undefined, {
       async elicitInput() {
-        // The Claude Agent SDK's internal ~60s timeout surfaces as this error.
+        // MCP SDK request deadline expiry surfaces as this error.
         throw new Error('MCP error -32001: Request timed out');
       },
       isRemoteConfigured() {
@@ -1583,7 +1621,7 @@ describe('createMcpServer tool registration', () => {
 // ---------------------------------------------------------------------------
 
 describe('isLocalElicitTimeoutError', () => {
-  it('recognizes the Claude Agent SDK -32001 timeout', () => {
+  it('recognizes the MCP SDK -32001 timeout', () => {
     assert.equal(
       isLocalElicitTimeoutError(new Error('MCP error -32001: Request timed out')),
       true,
