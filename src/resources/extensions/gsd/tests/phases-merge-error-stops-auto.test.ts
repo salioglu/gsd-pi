@@ -82,13 +82,70 @@ const ic = {
       return { ok: true, needsManualRecovery: false };
     },
     lifecycle: {
-      exitMilestone() {
-        calls.push("merge");
-        return {
-          ok: false,
-          reason: "teardown-failed",
-          cause: new Error("remote rejected push"),
+      // Mirror WorktreeLifecycle.exitMilestone's guarded-merge branch
+      // (preflight -> inner merge -> postflight). Since #1169 the closeout
+      // routes the guard through the lifecycle verb, so a non-conflict inner
+      // failure ("teardown-failed") is mapped to "merge-failed" here rather
+      // than by the caller.
+      exitMilestone(
+        milestoneId: string,
+        exitOpts: {
+          merge: boolean;
+          guardedMerge?: {
+            projectRoot: string;
+            preflightCleanRoot: (
+              basePath: string,
+              milestoneId: string,
+              notify: (message: string, level: "info" | "warning" | "error") => void,
+            ) => { blocked?: boolean; blockedReason?: string; stashPushed: boolean; stashMarker?: string };
+            postflightPopStash: (
+              basePath: string,
+              milestoneId: string,
+              stashMarker: string | undefined,
+              notify: (message: string, level: "info" | "warning" | "error") => void,
+            ) => { needsManualRecovery?: boolean };
+          };
+        },
+        exitCtx?: { notify: (message: string, level: "info" | "warning" | "error") => void },
+      ) {
+        const notify = exitCtx?.notify ?? (() => {});
+        const plainExitMilestone = () => {
+          calls.push("merge");
+          return {
+            ok: false as const,
+            reason: "teardown-failed" as const,
+            cause: new Error("remote rejected push"),
+          };
         };
+        const guarded = exitOpts.guardedMerge;
+        if (exitOpts.merge && guarded) {
+          const preflight = guarded.preflightCleanRoot(guarded.projectRoot, milestoneId, notify);
+          if (preflight.blocked) {
+            return {
+              ok: false,
+              reason: preflight.blockedReason?.startsWith("unmerged-conflicts")
+                ? "preflight-unmerged-conflicts"
+                : "preflight-dirty-overlap",
+            };
+          }
+          const mergeResult = plainExitMilestone();
+          const postflight = preflight.stashPushed
+            ? guarded.postflightPopStash(guarded.projectRoot, milestoneId, preflight.stashMarker, notify)
+            : undefined;
+          if (!mergeResult.ok) {
+            return {
+              ok: false,
+              reason: mergeResult.reason === "merge-conflict" ? "merge-conflict" : "merge-failed",
+              cause: mergeResult.cause,
+              postflight,
+            };
+          }
+          if (postflight?.needsManualRecovery) {
+            return { ok: false, reason: "postflight-stash-restore-failed", postflight };
+          }
+          return mergeResult;
+        }
+        return plainExitMilestone();
       },
     },
     async stopAuto(_ctx: unknown, _pi: unknown, reason?: string) {
