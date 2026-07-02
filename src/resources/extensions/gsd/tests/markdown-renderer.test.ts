@@ -46,6 +46,7 @@ import {
   parseSummary,
   parseTaskPlanFile,
   clearParseCache,
+  extractSection,
 } from '../files.ts';
 import { clearPathCache, _clearGsdRootCache } from '../paths.ts';
 import { invalidateStateCache } from '../state.ts';
