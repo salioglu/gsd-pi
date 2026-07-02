@@ -163,7 +163,7 @@ Diagnostics record the file path, scope (global/project), severity (error/warnin
   - **Deprecated:** `merge_to_main` — no longer valid; milestone-level merge is always used. Remove this setting.
 
 - `workspace`: configures multi-repository parent workspaces. Keys:
-  - `mode`: `"project"` (default single-repo behavior) or `"parent"` (one `.gsd` controlling child repos).
+  - `mode`: `"project"` (default single-repo behavior) or `"parent"` (one `.gsd` controlling child repos). In `"parent"` mode at least one child repository must be declared under `repositories`, otherwise the setting is rejected at validation time.
   - `repositories`: object map of repository IDs to config.
     - Repository ID format: `^[A-Za-z0-9][A-Za-z0-9._-]*$`.
     - Reserved ID: `project` is implicit and always maps to the project root; user-defined `workspace.repositories.project` is rejected.
@@ -197,6 +197,8 @@ workspace:
 ```
 
 This config sets a parent workspace with two child repositories. The implicit `project` repository is always created for the project root and cannot be user-defined.
+
+In `"parent"` mode, slice/task `targetRepositories` default to the declared child repositories (here `frontend` and `backend`) rather than the root `project` repo. In `"project"` mode (the default), `targetRepositories` defaults to `["project"]`.
 
 - `unique_milestone_ids`: boolean — when `true`, generates milestone IDs in `M{seq}-{rand6}` format (e.g. `M001-eh88as`) instead of plain sequential `M001`. Prevents ID collisions in team workflows where multiple contributors create milestones concurrently. Both formats coexist — existing `M001`-style milestones remain valid. Default: `false`.
 

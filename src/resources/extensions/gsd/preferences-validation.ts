@@ -1495,6 +1495,16 @@ export function validatePreferences(preferences: GSDPreferences): {
     } else {
       errors.push("workspace must be an object");
     }
+
+    // parent mode is behavioral: it must coordinate at least one declared
+    // child repository. Without one it is indistinguishable from project
+    // mode, so reject it explicitly rather than silently degrading.
+    if (validated.workspace?.mode === "parent") {
+      const childRepoCount = validated.workspace.repositories ? Object.keys(validated.workspace.repositories).length : 0;
+      if (childRepoCount === 0) {
+        errors.push('workspace.mode "parent" requires at least one repository under workspace.repositories');
+      }
+    }
   }
 
   // ─── Enhanced Verification ──────────────────────────────────────────────────

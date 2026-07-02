@@ -470,12 +470,12 @@ workspace:
       path: backend
 ```
 
-- `workspace.mode`: `project` (single-repo default) or `parent` (multi-repo workspace rooted at the current project).
+- `workspace.mode`: `project` (single-repo default) or `parent` (multi-repo workspace rooted at the current project). In `parent` mode, at least one repository must be declared under `workspace.repositories` or the setting is rejected.
 - `workspace.repositories.<id>.path`: required repository path (relative or absolute).
 - `workspace.repositories.<id>.role`: optional label used for planning/reporting context.
 - `workspace.repositories.<id>.verification`: optional default verification commands for that repository.
 - `workspace.repositories.<id>.commit_policy`: optional per-repository auto-commit policy (`auto` or `skip`).
-- Omitted slice/task `targetRepositories` default to `["project"]`.
+- Omitted slice/task `targetRepositories` default to `["project"]` in `project` mode, and to the declared child repository IDs in `parent` mode.
 
 ### `reactive_execution`
 
@@ -632,11 +632,11 @@ workspace:
       commit_policy: skip
 ```
 
-`project` is always available as an implicit repository ID pointing at the project root. If plan/task `targetRepositories` is omitted, GSD defaults to `["project"]`.
+`project` is always available as an implicit repository ID pointing at the project root. If plan/task `targetRepositories` is omitted, GSD defaults to `["project"]` in `project` mode, and to the declared child repository IDs in `parent` mode.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `workspace.mode` | `"project" \| "parent"` | `"project"` | Workspace operating mode. Use `parent` to declare and resolve child repositories. |
+| `workspace.mode` | `"project" \| "parent"` | `"project"` | Workspace operating mode. Use `parent` to declare and resolve child repositories; requires at least one entry under `workspace.repositories`. |
 | `workspace.repositories` | object | `{}` | Mapping of repository IDs to repository config. |
 | `workspace.repositories.<id>.path` | string | required | Child repository path, resolved relative to project root. Must stay inside the project root. |
 | `workspace.repositories.<id>.role` | string | optional | Human-oriented label used by prompts/reporting. |
@@ -648,6 +648,7 @@ Validation rules:
 - Repository IDs must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`.
 - Repository paths are normalized and must be unique (case-insensitive).
 - Paths resolving outside the project root are rejected.
+- `workspace.mode: "parent"` requires at least one repository under `workspace.repositories`; otherwise it is rejected (a parent workspace with no child repos is indistinguishable from `project` mode).
 - Unknown keys under `workspace` and each repository entry are ignored with warnings.
 
 ### URL Blocking (`fetch_page`)
@@ -841,7 +842,7 @@ workspace:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mode` | string | `project` | Workspace mode. `parent` enables multi-repo registry behavior. |
+| `mode` | string | `project` | Workspace mode. `parent` enables multi-repo registry behavior and requires at least one entry under `repositories`. |
 | `repositories` | object | `{}` | Map of repository ids to repository config objects. |
 | `repositories.<id>.path` | string | required | Repository root path. Relative paths resolve from project root and must stay inside project root. |
 | `repositories.<id>.role` | string | (none) | Optional human-oriented label for prompts/reporting. |
@@ -851,7 +852,7 @@ workspace:
 **Path-scope behavior:**
 - During planning (`plan-slice`/`replan-slice`), file paths are validated against the selected `targetRepositories`.
 - Absolute and relative paths are both checked; paths that resolve outside declared repository roots are rejected.
-- If no explicit `targetRepositories` are provided, planning defaults to `["project"]`.
+- If no explicit `targetRepositories` are provided, planning defaults to `["project"]` in `project` mode, and to the declared child repository IDs in `parent` mode.
 
 ### `notifications`
 
