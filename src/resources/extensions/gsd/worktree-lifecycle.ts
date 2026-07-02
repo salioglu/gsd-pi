@@ -155,11 +155,11 @@ export interface WorktreeLifecycleDeps {
   /**
    * Milestone Merge Transaction Module runner.
    *
-   * The field name is preserved for existing test fixtures, but production
-   * wiring now supplies the named transaction wrapper rather than the raw
-   * squash-merge primitive directly.
+   * The field name describes the lifecycle seam; production wiring supplies
+   * the named transaction wrapper rather than the raw legacy
+   * auto-worktree primitive directly.
    */
-  mergeMilestoneToMain: MilestoneMergeTransactionRunner;
+  mergeMilestone: MilestoneMergeTransactionRunner;
 
   // ADR-016 phase 2 / C1 + C2 + C3 + C4 inlined the following fields as
   // direct imports — leaf primitives that did not vary across callers:
@@ -1147,7 +1147,7 @@ function _mergeWorktreeModeImpl(
       };
     }
 
-    const mergeResult = deps.mergeMilestoneToMain(
+    const mergeResult = deps.mergeMilestone(
       originalBasePath,
       milestoneId,
       roadmapResolution.content,
@@ -1314,7 +1314,7 @@ function _mergeBranchModeImpl(
       };
     }
 
-    const mergeResult = deps.mergeMilestoneToMain(
+    const mergeResult = deps.mergeMilestone(
       worktreeBasePath,
       milestoneId,
       roadmapResolution.content,
