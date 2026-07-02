@@ -109,9 +109,11 @@ def test_new_milestone_bare_text_passes_context_text(project: Path) -> None:
 
 def test_new_milestone_file_flag_passes_context_file(project: Path) -> None:
     router, client = _make_router(project_dir=str(project))
-    run(router, "new-milestone --file /abs/spec.md")
+    spec = project / "spec.md"
+    spec.write_text("milestone spec", encoding="utf-8")
+    run(router, f"new-milestone --file {spec}")
     kwargs = client.create_milestone.call_args.kwargs
-    assert kwargs.get("context_file") == "/abs/spec.md"
+    assert kwargs.get("context_file") == str(spec)
     assert kwargs.get("context_text") is None
 
 

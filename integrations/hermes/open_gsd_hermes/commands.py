@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 from typing import Any, Callable
 
@@ -241,6 +242,10 @@ class GsdCommandRouter:
             return (
                 "GSD auto is running. Run `/gsd cancel` first."
             )
+        if self._client.milestone_active():
+            return (
+                "Milestone creation is in progress. Run `/gsd cancel` first."
+            )
         # Resolve the bound project.
         try:
             project_dir = resolve_project_dir(
@@ -257,8 +262,24 @@ class GsdCommandRouter:
             if len(rest) < 2:
                 return "Usage: `/gsd new-milestone --file <path>`"
             context_file = rest[1]
+            if not os.path.isfile(context_file):
+                return f"Context file not found: `{context_file}`"
+            if not os.access(context_file, os.R_OK):
+                return f"Context file is not readable: `{context_file}`"
         else:
             context_text = " ".join(rest)
+
+        def _on_milestone_terminal(status: str) -> None:
+            milestone_ctx = self._get_supervisor_ctx()
+            normalized = status.lower()
+            if normalized in ("complete", "completed", "done"):
+                milestone_ctx.state = SupervisorState.COMPLETE
+            elif normalized == "cancelled":
+                milestone_ctx.state = SupervisorState.CANCELLED
+            else:
+                milestone_ctx.state = SupervisorState.FAILED
+            milestone_ctx.notified_terminal = True
+            self._set_supervisor_ctx(milestone_ctx)
 
         # Spawn the supervised subprocess; create_milestone blocks until the
         # init_result event yields a sessionId, then continues the stream
@@ -269,6 +290,7 @@ class GsdCommandRouter:
                 context_text=context_text,
                 context_file=context_file,
                 notifications=self._notifications,
+                on_terminal=_on_milestone_terminal,
             )
         except ValueError:
             return "Usage: `/gsd new-milestone <spec>` (or `--file <path>`)"

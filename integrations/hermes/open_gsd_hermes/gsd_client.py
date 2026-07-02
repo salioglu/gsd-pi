@@ -8,7 +8,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from packaging import version
 
@@ -50,6 +50,8 @@ class GsdMcpClient:
         self._milestone_session_id: str | None = None
         self._milestone_pending_blocker_id: str | None = None
         self._milestone_notifications: Any = None  # NotificationService | None
+        self._milestone_on_terminal: Callable[[str], None] | None = None
+        self._milestone_notified_terminal: bool = False
         self._milestone_thread: threading.Thread | None = None
 
     def _env(self) -> dict[str, str]:
@@ -419,6 +421,7 @@ class GsdMcpClient:
         context_text: str | None = None,
         context_file: str | None = None,
         notifications: Any = None,
+        on_terminal: Callable[[str], None] | None = None,
     ) -> str:
         """Spawn `gsd headless --supervised new-milestone` and return the sessionId.
 
@@ -458,16 +461,26 @@ class GsdMcpClient:
             cwd=project_dir,
             env=self._env(),
         )
-        self._milestone_proc = proc
         self._milestone_session_id = None
         self._milestone_pending_blocker_id = None
         self._milestone_notifications = notifications
+        self._milestone_on_terminal = on_terminal
+        self._milestone_notified_terminal = False
 
         # Read init_result synchronously so the caller gets the sessionId
         # before the ack returns. The stream loop then continues in the
         # background for blocker/terminal events.
         assert proc.stdout is not None
-        session_id = self._read_init_result(proc)
+        try:
+            session_id = self._read_init_result(proc)
+        except Exception:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            raise
+        self._milestone_proc = proc
         self._milestone_session_id = session_id
 
         self._milestone_thread = threading.Thread(
@@ -517,9 +530,34 @@ class GsdMcpClient:
                 self._handle_milestone_event(event)
         except Exception:
             pass
-        # Stream ended — emit a terminal notification if we never saw one.
+        if self._milestone_notified_terminal:
+            self._release_milestone_proc()
+            return
+        exit_code = proc.poll()
+        if exit_code is None:
+            try:
+                exit_code = proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                exit_code = None
+        if exit_code == 0:
+            status = "complete"
+            error: str | None = None
+        elif exit_code is not None:
+            status = "failed"
+            err_bytes = proc.stderr.read() if proc.stderr is not None else b""
+            error = (
+                err_bytes.decode("utf-8", errors="replace").strip()
+                or f"exit code {exit_code}"
+            )
+        else:
+            status = "failed"
+            error = "stream lost — run /gsd cancel"
         if self._milestone_notifications is not None:
-            self._milestone_notifications.notify_terminal("stream-ended")
+            self._milestone_notifications.notify_terminal(status, error)
+        if self._milestone_on_terminal is not None:
+            self._milestone_on_terminal(status)
+        self._milestone_notified_terminal = True
+        self._release_milestone_proc()
 
     def _handle_milestone_event(self, event: dict[str, Any]) -> None:
         etype = event.get("type")
@@ -548,14 +586,20 @@ class GsdMcpClient:
         proc = self._milestone_proc
         if proc is None:
             return
+        self._milestone_notified_terminal = True
         try:
             proc.terminate()
         except Exception:
             pass
         self._clear_milestone_state()
 
-    def _clear_milestone_state(self) -> None:
+    def _release_milestone_proc(self) -> None:
         self._milestone_proc = None
+        self._milestone_notifications = None
+        self._milestone_on_terminal = None
+
+    def _clear_milestone_state(self) -> None:
+        self._release_milestone_proc()
         self._milestone_session_id = None
         self._milestone_pending_blocker_id = None
 
