@@ -12,13 +12,21 @@ import { resolveCtxCwd } from "./dynamic-tools.js";
 const MAX_WAKEUP_DELAY_SECONDS = 24 * 60 * 60;
 const INTERACTIVE_WAKEUP_CUSTOM_TYPE = "gsd-schedule-wakeup";
 
+let pendingInteractiveWakeupHandle: ReturnType<typeof setTimeout> | null = null;
+
 function scheduleInteractiveWakeup(
   pi: ExtensionAPI,
   delaySeconds: number,
   prompt: string,
   reason: string,
 ): void {
+  if (pendingInteractiveWakeupHandle !== null) {
+    clearTimeout(pendingInteractiveWakeupHandle);
+    pendingInteractiveWakeupHandle = null;
+  }
+
   const handle = setTimeout(() => {
+    pendingInteractiveWakeupHandle = null;
     try {
       void Promise.resolve(pi.sendMessage(
         {
@@ -41,6 +49,7 @@ function scheduleInteractiveWakeup(
       );
     }
   }, delaySeconds * 1000);
+  pendingInteractiveWakeupHandle = handle;
   if (
     typeof handle === "object" &&
     handle !== null &&
