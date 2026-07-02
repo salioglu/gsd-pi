@@ -202,7 +202,7 @@ function expectedMilestonesArtifactPath(row: ArtifactRow): string | null {
   const artifactType = normalizedArtifactType(row.artifact_type);
   if (!artifactType) return null;
   if (row.slice_id && row.task_id) {
-    return `milestones/${row.milestone_id}/slices/${row.slice_id}/tasks/${row.task_id}/${row.task_id}-${artifactType}.md`;
+    return `milestones/${row.milestone_id}/slices/${row.slice_id}/tasks/${row.task_id}-${artifactType}.md`;
   }
   if (row.slice_id) {
     return `milestones/${row.milestone_id}/slices/${row.slice_id}/${row.slice_id}-${artifactType}.md`;
@@ -452,7 +452,7 @@ export async function checkEngineHealth(
           if (artifactExistsOnDisk(basePath, row.path)) continue;
           const unitId = artifactUnitId(row);
           const issuePath = artifactPathRelativeToGsd(row.path);
-          if (options?.repair && row.path.startsWith("phases/") && hasPresentMilestonesReplacement(basePath, row, artifactRows)) {
+          if (options?.repair && issuePath.startsWith("phases/") && hasPresentMilestonesReplacement(basePath, row, artifactRows)) {
             adapter.prepare("DELETE FROM artifacts WHERE path = :path").run({ ":path": row.path });
             fixesApplied.push(`pruned stale flat-phase artifact row ${row.path}`);
             continue;
@@ -478,7 +478,7 @@ export async function checkEngineHealth(
             unitId,
             message: `Artifact ${issuePath} is recorded in the database as ${row.artifact_type || "UNKNOWN"} but no matching file exists on disk`,
             file: issuePath,
-            fixable: row.path.startsWith("phases/") && hasPresentMilestonesReplacement(basePath, row, artifactRows),
+            fixable: issuePath.startsWith("phases/") && hasPresentMilestonesReplacement(basePath, row, artifactRows),
           });
         }
       } catch {
