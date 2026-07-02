@@ -356,6 +356,15 @@ export function verifyExpectedArtifact(
       try {
         let taskIds: string[] | null = null;
         let dbPrimary = false;
+        const planContent = readFileSync(absPath, "utf-8");
+        let parsedTaskIds: string[] | null = null;
+        const getParsedTaskIds = (): string[] => {
+          if (parsedTaskIds) return parsedTaskIds;
+          parsedTaskIds = parseLegacyPlan(planContent).tasks.map((t: { id: string }) => t.id);
+          return parsedTaskIds;
+        };
+        const hasEmbeddedTaskEntries =
+          /<tasks>[\s\S]*?<\/tasks>/i.test(planContent) && getParsedTaskIds().length > 0;
         if (isDbAvailable()) {
           const refreshed = refreshWorkflowDatabaseFromDisk();
           if (refreshed) {
@@ -368,18 +377,17 @@ export function verifyExpectedArtifact(
         }
 
         if (!taskIds) {
-          const planContent = readFileSync(absPath, "utf-8");
           const hasCheckboxTask = /^\s*- \[[xX ]\] \*\*T\d+/m.test(planContent);
           const hasHeadingTask = /^\s*#{2,4}\s+T\d+\s*(?:--|—|:)/m.test(planContent);
           if (!hasCheckboxTask && !hasHeadingTask) {
             logWarning("recovery", `verify-fail ${unitType} ${unitId}: plan has no task checkbox/heading (len=${planContent.length}) at ${absPath}`);
             return false;
           }
-          const plan = parseLegacyPlan(planContent);
-          if (plan.tasks.length > 0) taskIds = plan.tasks.map((t: { id: string }) => t.id);
+          const parsedIds = getParsedTaskIds();
+          if (parsedIds.length > 0) taskIds = parsedIds;
         }
 
-        if (taskIds && taskIds.length > 0) {
+        if (taskIds && taskIds.length > 0 && !hasEmbeddedTaskEntries) {
           const tasksDir = join(dirname(absPath), "tasks");
           if (existsSync(tasksDir)) {
             for (const tid of taskIds) {

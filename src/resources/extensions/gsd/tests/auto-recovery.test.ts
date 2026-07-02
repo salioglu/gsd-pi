@@ -838,6 +838,29 @@ test("verifyExpectedArtifact plan-slice fails when a task plan file is missing (
   }
 });
 
+test("verifyExpectedArtifact accepts flat-phase plan-slice with embedded tasks and no task plan files", () => {
+  const base = join(tmpdir(), `gsd-test-${randomUUID()}`);
+  try {
+    const phaseDir = join(base, ".gsd", "phases", "01-test");
+    mkdirSync(join(phaseDir, "tasks"), { recursive: true });
+    writeFileSync(join(phaseDir, "01-01-PLAN.md"), [
+      "# S01: Test Slice",
+      "",
+      "<tasks>",
+      "- [ ] **T01**: Implement feature _(1h)_",
+      "  - Files: `src/index.ts`",
+      "  - Verify: pnpm test",
+      "- [ ] **T02**: Write tests _(1h)_",
+      "</tasks>",
+    ].join("\n"));
+
+    const result = verifyExpectedArtifact("plan-slice", "M001/S01", base);
+    assert.equal(result, true, "flat-phase embedded tasks should not require tasks/T##-PLAN.md files");
+  } finally {
+    cleanup(base);
+  }
+});
+
 test("verifyExpectedArtifact plan-slice fails for plan with no tasks (#699)", () => {
   const base = makeTmpBase();
   try {
