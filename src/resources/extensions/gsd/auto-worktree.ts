@@ -1245,8 +1245,9 @@ export function teardownAutoWorktree(
     // 3. Remove the worktree unless this exit path explicitly preserves it
     //    (slice-parallel dispatch stops the parent loop but keeps the parent
     //    milestone worktree for restart/re-entry).
+    let worktreeRemoved = preserveWorktree;
     if (!preserveWorktree) {
-      removeWorktree(originalBasePath, milestoneId, {
+      worktreeRemoved = removeWorktree(originalBasePath, milestoneId, {
         branch,
         deleteBranch: !preserveBranch,
       });
@@ -1256,7 +1257,7 @@ export function teardownAutoWorktree(
     // On Windows, bash-based cleanup can silently fail when paths contain
     // backslashes (#1436), leaving ~1 GB+ orphaned directories.
     const wtDir = worktreePath(originalBasePath, milestoneId);
-    if (!preserveWorktree && existsSync(wtDir)) {
+    if (!preserveWorktree && worktreeRemoved && existsSync(wtDir)) {
       logWarning(
         "reconcile",
         `Worktree directory still exists after teardown: ${wtDir}. ` +

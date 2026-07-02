@@ -837,7 +837,7 @@ export function removeWorktree(
   basePath: string,
   name: string,
   opts: { deleteBranch?: boolean; force?: boolean; branch?: string } = {},
-): void {
+): boolean {
   basePath = normalizeBasePathForWorktreeOps(basePath);
 
   let wtPath = worktreePath(basePath, name);
@@ -899,7 +899,7 @@ export function removeWorktree(
     if (deleteBranchAfterRemoval) {
       deleteBranchIfPresent(basePath, branch, "nativeBranchDelete failed");
     }
-    return;
+    return true;
   }
 
   if (force && resolvedPathSafe) {
@@ -913,13 +913,13 @@ export function removeWorktree(
         dirtyState.status,
       );
       if (!quarantinePath) {
-        return;
+        return false;
       }
 
       deleteBranchAfterRemoval = false;
       if (!existsSync(resolvedWtPath)) {
         nativeWorktreePrune(basePath);
-        return;
+        return true;
       }
     }
   }
@@ -1056,6 +1056,7 @@ export function removeWorktree(
   if (deleteBranchAfterRemoval) {
     deleteBranchIfPresent(basePath, branch, "final branch delete failed");
   }
+  return true;
 }
 
 /**
