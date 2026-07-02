@@ -235,11 +235,18 @@ function enumerateFiles(basePath: string, excludes: string[], maxFiles: number):
  * back to the legacy single-root enumeration and produces byte-identical output.
  */
 function loadWorkspaceRegistry(basePath: string): RepositoryRegistry | null {
-  const registry = createRepositoryRegistryFromPreferences(basePath, loadEffectiveGSDPreferences(basePath)?.preferences);
+  const preferences = loadEffectiveGSDPreferences(basePath)?.preferences;
+  const workspace = preferences?.workspace;
+  const mode = workspace?.mode ?? "project";
   // Parent mode is only meaningful with at least one declared child repo; the
-  // implicit "project" repo is always present, so require >1 entry.
-  const hasChildRepo = registry.repositories.some((repo) => repo.id !== "project");
-  return registry.mode === "parent" && hasChildRepo ? registry : null;
+  // implicit "project" repo is always present, so require a declared non-project id.
+  const hasDeclaredChildRepo = workspace?.repositories
+    ? Object.keys(workspace.repositories).some((id) => id !== "project")
+    : false;
+  if (mode !== "parent" || !hasDeclaredChildRepo) {
+    return null;
+  }
+  return createRepositoryRegistryFromPreferences(basePath, preferences);
 }
 
 /** Stable key fragment for workspace-aware enumeration inputs (mode + declared repos). */
