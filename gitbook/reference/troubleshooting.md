@@ -145,6 +145,12 @@ Auto mode was paused, stopped, or crashed mid-milestone, and the work is still o
 
 **Prevent recurrence:** If your milestones are large or sessions are frequently interrupted, consider setting `git.collapse_cadence: "slice"` in preferences — validated slices merge to main immediately, shrinking the orphan window from milestone-size to slice-size. See [Git & Worktrees](../configuration/git-settings.md#collapse-cadence).
 
+### Forced worktree removal created a quarantine
+
+When `/gsd worktree remove <MID> --force` finds uncommitted files, GSD preserves them under `.gsd/quarantine/worktrees/<name>-<timestamp>/` instead of deleting them. The quarantine contains a `.gsd-quarantine.json` file with the original worktree path, branch, timestamp, and `git status --porcelain` output.
+
+**Fix:** Inspect the quarantined files and copy or merge anything you still need. The milestone branch is preserved, so you can also recover from the branch if needed. Delete the quarantine directory only after you have confirmed there is nothing else to salvage.
+
 ### Milestone entry blocked by degraded worktree isolation
 
 Auto mode fails milestone entry with an isolation-degraded warning, often after a previous worktree cleanup or create problem on Windows.
