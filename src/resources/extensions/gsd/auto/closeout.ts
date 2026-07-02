@@ -11,7 +11,6 @@ import type { GSDState } from "../types.js";
 import type { IterationContext } from "./types.js";
 import type { PostflightResult, PreflightResult } from "../clean-root-preflight.js";
 import { MergeConflictError } from "../git-service.js";
-import { runGuardedMilestoneMerge } from "../worktree-lifecycle.js";
 import { findUnmergedCompletedMilestones } from "../unmerged-milestone-guard.js";
 import { getIsolationMode } from "../preferences.js";
 import { isDbAvailable, getMilestone } from "../gsd-db.js";
@@ -80,13 +79,14 @@ export async function restorePreflightStashOrStop(
 }
 
 /**
- * Run a milestone merge surrounded by preflight stash + always-on postflight
- * pop. The previous code popped the stash only after a successful merge, which
- * leaked `gsd-preflight-stash:M00x:*` entries whenever `mergeAndExit` threw —
- * leaving the user's pre-merge working tree silently stashed away after a
- * merge-conflict or other merge error. This helper restores the stash on
- * every exit path, then surfaces the merge or stash failure (in priority
- * order) as the loop's stop reason.
+ * Run a milestone merge through Worktree Lifecycle's guarded merge option,
+ * which surrounds the inner merge with preflight stash + always-on postflight
+ * pop. The previous closeout code popped the stash only after a successful
+ * merge, which leaked `gsd-preflight-stash:M00x:*` entries whenever
+ * `mergeAndExit` threw — leaving the user's pre-merge working tree silently
+ * stashed away after a merge-conflict or other merge error. Lifecycle now
+ * restores the stash on every attempted merge path, then this adapter surfaces
+ * the merge or stash failure (in priority order) as the loop's stop reason.
  *
  * Returns a `break` action when auto-mode must stop, or `null` when the merge
  * succeeded and the stash (if any) was restored cleanly.
@@ -99,16 +99,18 @@ export async function _runMilestoneMergeWithStashRestore(
   const { ctx, pi, s, deps } = ic;
 
   const projectRoot = s.originalBasePath || s.basePath;
-  const mergeResult = runGuardedMilestoneMerge({
-    lifecycle: deps.lifecycle,
-    deps: {
-      preflightCleanRoot: deps.preflightCleanRoot,
-      postflightPopStash: deps.postflightPopStash,
-    },
-    projectRoot,
+  const mergeResult = deps.lifecycle.exitMilestone(
     milestoneId,
-    notify: ctx.ui.notify.bind(ctx.ui),
-  });
+    {
+      merge: true,
+      guardedMerge: {
+        projectRoot,
+        preflightCleanRoot: deps.preflightCleanRoot,
+        postflightPopStash: deps.postflightPopStash,
+      },
+    },
+    ctx.ui,
+  );
 
   if (mergeResult.ok) {
     await markMilestoneMergedAndRebuild(s);

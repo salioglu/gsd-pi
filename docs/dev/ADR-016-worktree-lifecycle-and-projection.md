@@ -34,7 +34,12 @@ interface WorktreeLifecycle {
   enterMilestone(milestoneId: string, ctx: NotifyCtx): EnterResult;
   exitMilestone(
     milestoneId: string,
-    opts: { merge: boolean },
+    opts: {
+      merge: boolean;
+      preserveBranch?: boolean;
+      preserveWorktree?: boolean;
+      guardedMerge?: GuardedMilestoneMergeOptions;
+    },
     ctx: NotifyCtx,
   ): ExitResult;
   degradeToBranchMode(milestoneId: string, ctx: NotifyCtx): void;
@@ -49,7 +54,33 @@ type EnterResult =
 
 type ExitResult =
   | { ok: true; merged: boolean; codeFilesChanged: boolean }
-  | { ok: false; reason: "merge-conflict" | "teardown-failed"; cause?: unknown };
+  | {
+      ok: false;
+      reason:
+        | "merge-conflict"
+        | "teardown-failed"
+        | "preflight-dirty-overlap"
+        | "preflight-unmerged-conflicts"
+        | "merge-failed"
+        | "postflight-stash-restore-failed";
+      cause?: unknown;
+      postflight?: PostflightResult;
+    };
+
+interface GuardedMilestoneMergeOptions {
+  projectRoot: string;
+  preflightCleanRoot(
+    basePath: string,
+    milestoneId: string,
+    notify: NotifyCtx["notify"],
+  ): PreflightResult;
+  postflightPopStash(
+    basePath: string,
+    milestoneId: string,
+    stashMarker: string | undefined,
+    notify: NotifyCtx["notify"],
+  ): PostflightResult;
+}
 ```
 
 Constructor takes a small dep set (notify, leaseStore, gitServiceFactory, journal, telemetry). The 28-field `WorktreeResolverDeps` is retired.
@@ -75,7 +106,7 @@ Lifecycle calls Projection. Projection has no Lifecycle dependency. Lifecycle in
 - `Projection.projectRootToWorktree(scope)` from `enterMilestone` after a successful create or enter, before any Unit dispatches.
 - `Projection.finalizeProjectionForMerge(scope)` from `exitMilestone` after a successful merge, before teardown.
 
-Lifecycle entry/exit paths (`enterMilestone` and `exitMilestone`) construct the `MilestoneScope` from the active `milestoneId` and session root state before invoking `Projection.projectRootToWorktree(scope)` or `Projection.finalizeProjectionForMerge(scope)`; callers do not pass a pre-built `s.scope` into Lifecycle.
+Lifecycle entry/exit paths (`enterMilestone` and `exitMilestone`) construct the `MilestoneScope` from the active `milestoneId` and session root state before invoking `Projection.projectRootToWorktree(scope)` or `Projection.finalizeProjectionForMerge(scope)`; callers do not pass a pre-built `s.scope` into Lifecycle. When callers pass `merge: true` with `guardedMerge`, `exitMilestone` also owns the root-clean merge guard: preflight runs before the merge attempt, postflight stash restore runs after every attempted merge path, and guard failures are returned through the same `ExitResult` union.
 
 `Projection.projectWorktreeToRoot(scope)` is called by callers outside Lifecycle (post-unit pipeline; pre-merge sync paths). Lifecycle does not own that verb's invocation.
 

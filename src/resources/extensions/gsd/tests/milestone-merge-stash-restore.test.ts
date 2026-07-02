@@ -61,6 +61,30 @@ function buildIc(opts: {
     },
   };
 
+  const plainExitMilestone = (exitOpts: { merge: boolean }) => {
+    log.mergeCalls += 1;
+    if (opts.mergeBehavior === "succeed") {
+      return { ok: true, merged: exitOpts.merge, codeFilesChanged: false } as const;
+    }
+    try {
+      opts.mergeBehavior();
+      return { ok: true, merged: exitOpts.merge, codeFilesChanged: false } as const;
+    } catch (err) {
+      // Mirror Lifecycle's typed-result wrapping of MergeConflictError
+      // and other thrown values per worktree-lifecycle.exitMilestone.
+      const isMergeConflict =
+        err !== null &&
+        typeof err === "object" &&
+        err !== undefined &&
+        (err as { name?: string }).name === "MergeConflictError";
+      return {
+        ok: false,
+        reason: isMergeConflict ? "merge-conflict" : "teardown-failed",
+        cause: err,
+      } as const;
+    }
+  };
+
   const deps = {
     preflightCleanRoot: () => {
       log.preflightCalls += 1;
@@ -79,28 +103,72 @@ function buildIc(opts: {
       },
     },
     lifecycle: {
-      exitMilestone: (_mid: string, exitOpts: { merge: boolean }) => {
-        log.mergeCalls += 1;
-        if (opts.mergeBehavior === "succeed") {
-          return { ok: true, merged: exitOpts.merge, codeFilesChanged: false };
+      exitMilestone: (
+        _mid: string,
+        exitOpts: {
+          merge: boolean;
+          guardedMerge?: {
+            projectRoot: string;
+            preflightCleanRoot: (
+              basePath: string,
+              milestoneId: string,
+              notify: (message: string, level: "info" | "warning" | "error") => void,
+            ) => PreflightResult;
+            postflightPopStash: (
+              basePath: string,
+              milestoneId: string,
+              stashMarker: string | undefined,
+              notify: (message: string, level: "info" | "warning" | "error") => void,
+            ) => PostflightResult;
+          };
+        },
+        exitCtx?: { notify: (message: string, level: "info" | "warning" | "error") => void },
+      ) => {
+        const notify = exitCtx?.notify ?? (() => {});
+        const guarded = exitOpts.guardedMerge;
+        if (exitOpts.merge && guarded) {
+          const preflight = guarded.preflightCleanRoot(guarded.projectRoot, _mid, notify);
+          if (preflight.blocked) {
+            return {
+              ok: false,
+              reason: preflight.blockedReason?.startsWith("unmerged-conflicts")
+                ? "preflight-unmerged-conflicts"
+                : "preflight-dirty-overlap",
+            } as const;
+          }
+
+          const mergeResult = plainExitMilestone({ merge: true });
+          const postflight = preflight.stashPushed
+            ? guarded.postflightPopStash(
+                guarded.projectRoot,
+                _mid,
+                preflight.stashMarker,
+                notify,
+              )
+            : undefined;
+
+          if (!mergeResult.ok) {
+            if (mergeResult.reason === "merge-conflict") {
+              return { ...mergeResult, postflight } as const;
+            }
+            return {
+              ok: false,
+              reason: "merge-failed",
+              cause: mergeResult.cause,
+              postflight,
+            } as const;
+          }
+          if (postflight?.needsManualRecovery) {
+            return {
+              ok: false,
+              reason: "postflight-stash-restore-failed",
+              postflight,
+            } as const;
+          }
+          return mergeResult;
         }
-        try {
-          opts.mergeBehavior();
-          return { ok: true, merged: exitOpts.merge, codeFilesChanged: false };
-        } catch (err) {
-          // Mirror Lifecycle's typed-result wrapping of MergeConflictError
-          // and other thrown values per worktree-lifecycle.exitMilestone.
-          const isMergeConflict =
-            err !== null &&
-            typeof err === "object" &&
-            err !== undefined &&
-            (err as { name?: string }).name === "MergeConflictError";
-          return {
-            ok: false,
-            reason: isMergeConflict ? "merge-conflict" : "teardown-failed",
-            cause: err,
-          } as const;
-        }
+
+        return plainExitMilestone(exitOpts);
       },
     },
     stopAuto: async (

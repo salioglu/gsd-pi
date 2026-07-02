@@ -25,9 +25,10 @@ an 875-line function that owns, in one implementation:
 
 Above it, the auto closeout adapter still translates merge outcomes into loop
 policy, but the stash-restore choreography itself now enters the Worktree
-Lifecycle module through `runGuardedMilestoneMerge`. The helper owns the
-preflight → `exitMilestone` → postflight ordering, including the invariant that
-a successful local merge is recorded before a postflight stash recovery stop.
+Lifecycle module through the `exitMilestone(..., { merge: true, guardedMerge })` interface.
+The lifecycle verb owns the preflight → merge → postflight ordering, including
+the invariant that a successful local merge is recorded before a postflight
+stash recovery stop.
 
 ### Two distinct concerns fused
 
@@ -44,12 +45,11 @@ ADR-032) can publish without dragging the merge machinery along.
 ### 1. The merge verb's full contract moves inside Worktree Lifecycle
 
 The Worktree Lifecycle module absorbs the stash-restore choreography that the
-auto closeout path used to carry inline. During migration this is exposed as
-`runGuardedMilestoneMerge`, a lifecycle helper around `exitMilestone({ merge:
-true })` that owns preflight dirty/conflict checks, always-attempted postflight
-stash restore after an attempted merge, and typed merge/postflight results. The
-remaining end-state is still to fold that helper into the `exitMilestone` verb
-and move the merge implementation (dirty-commit, squash, conflict
+auto closeout path used to carry inline. The guarded path now enters through
+`exitMilestone(..., { merge: true, guardedMerge })`, so the merge verb owns preflight
+dirty/conflict checks, always-attempted postflight stash restore after an
+attempted merge, and typed merge/postflight results. The remaining end-state is
+to move the merge implementation (dirty-commit, squash, conflict
 classification) out of `auto-worktree.ts`, making the CONTEXT.md ownership
 statement true.
 
@@ -96,10 +96,9 @@ network/credential stubs; publication tests stop needing merge fixtures.
   same seam auto mode uses — `auto_push`/`auto_pr` stop being auto-only
   preferences in practice.
 - **Migration order:** extract Publication first (mechanical tail-split, low
-  blast radius), move the stash choreography behind the Lifecycle seam (first
-  via `runGuardedMilestoneMerge`, then folded into `exitMilestone`), then
-  relocate the merge core. Each step is independently shippable and
-  behaviour-neutral.
+  blast radius), move the stash choreography behind the Lifecycle seam, fold it
+  into `exitMilestone`, then relocate the merge core. Each step is
+  independently shippable and behaviour-neutral.
 
 ## Implementation status (2026-06-10)
 
@@ -111,11 +110,13 @@ remote git fixtures (`tests/publication.test.ts`) — push, suppression under
 auto-PR, nothing-to-commit short-circuit, missing remote.
 
 **Shipped 2026-07-02:** the stash guard moved behind the Worktree Lifecycle
-seam as `runGuardedMilestoneMerge`. Auto closeout now consumes its typed
-result instead of owning the merge transaction ordering directly, and marks the
-milestone merge complete before stopping for postflight stash recovery so a
-resume does not re-run an already completed merge.
+seam. Auto closeout first consumed it through the internal
+`runGuardedMilestoneMerge` helper, then the guard was folded into the
+`exitMilestone(..., { merge: true, guardedMerge })` interface. Auto closeout now consumes
+the lifecycle verb's typed result instead of owning the merge transaction
+ordering directly, and marks the milestone merge complete before stopping for
+postflight stash recovery so a resume does not re-run an already completed
+merge.
 
-**Remaining:** fold `runGuardedMilestoneMerge` into `exitMilestone` and
-relocate the merge core out of `auto-worktree.ts` into the Worktree Lifecycle
-module.
+**Remaining:** relocate the merge core out of `auto-worktree.ts` into the
+Worktree Lifecycle module.
