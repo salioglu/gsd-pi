@@ -176,6 +176,13 @@ export function verifyExpectedArtifactForScope(
   unitType: string,
   unitId: string,
 ): boolean {
+  if (
+    (unitType === "discuss-milestone" || unitType === "plan-milestone") &&
+    unitId === scope.milestoneId
+  ) {
+    const path = resolveExpectedArtifactPathForScope(scope, unitType, unitId);
+    return path ? existsSync(path) : false;
+  }
   return verifyExpectedArtifact(unitType, unitId, scope.workspace.projectRoot);
 }
 
@@ -188,6 +195,10 @@ export function resolveExpectedArtifactPathForScope(
   unitType: string,
   unitId: string,
 ): string | null {
+  if (unitId === scope.milestoneId) {
+    if (unitType === "discuss-milestone") return scope.contextFile();
+    if (unitType === "plan-milestone") return scope.roadmapFile();
+  }
   return resolveExpectedArtifactPath(unitType, unitId, scope.workspace.projectRoot);
 }
 
