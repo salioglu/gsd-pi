@@ -240,7 +240,18 @@ export interface StrandedMilestoneAdoptionOptions {
 
 export type ExitResult =
   | { ok: true; merged: boolean; codeFilesChanged: boolean }
-  | { ok: false; reason: "merge-conflict" | "teardown-failed"; cause?: unknown };
+  | {
+      ok: false;
+      reason:
+        | "merge-conflict"
+        | "teardown-failed"
+        | "preflight-dirty-overlap"
+        | "preflight-unmerged-conflicts"
+        | "merge-failed"
+        | "postflight-stash-restore-failed";
+      cause?: unknown;
+      postflight?: PostflightResult;
+    };
 
 export interface GuardedMilestoneMergeDeps {
   preflightCleanRoot: (
@@ -256,23 +267,15 @@ export interface GuardedMilestoneMergeDeps {
   ) => PostflightResult;
 }
 
-export type GuardedMilestoneMergeResult =
-  | { ok: true }
-  | {
-      ok: false;
-      reason:
-        | "preflight-dirty-overlap"
-        | "preflight-unmerged-conflicts"
-        | "merge-conflict"
-        | "merge-failed"
-        | "postflight-stash-restore-failed";
-      cause?: unknown;
-      postflight?: PostflightResult;
-    };
+export interface GuardedMilestoneMergeOptions extends GuardedMilestoneMergeDeps {
+  projectRoot: string;
+}
+
+type GuardedMilestoneMergeResult = ExitResult;
 
 function preflightBlockedMergeReason(
   blockedReason: PreflightResult["blockedReason"],
-): Extract<GuardedMilestoneMergeResult, { ok: false }>["reason"] {
+): Extract<ExitResult, { ok: false }>["reason"] {
   if (blockedReason?.startsWith("unmerged-conflicts")) {
     return "preflight-unmerged-conflicts";
   }
@@ -288,17 +291,14 @@ function preflightBlockedMergeReason(
  * closeout remains responsible for translating that result into loop policy
  * (pause vs. stop, visible transcript preservation, projection rebuild).
  */
-export function runGuardedMilestoneMerge(request: {
-  lifecycle: {
-    exitMilestone: (milestoneId: string, opts: { merge: true }, ctx: NotifyCtx) => ExitResult;
-  };
-  deps: GuardedMilestoneMergeDeps;
-  projectRoot: string;
+function runGuardedMilestoneMerge(request: {
+  merge: () => ExitResult;
+  guard: GuardedMilestoneMergeOptions;
   milestoneId: string;
   notify: NotifyCtx["notify"];
 }): GuardedMilestoneMergeResult {
-  const { lifecycle, deps, projectRoot, milestoneId, notify } = request;
-  const preflight = deps.preflightCleanRoot(projectRoot, milestoneId, notify);
+  const { merge, guard, milestoneId, notify } = request;
+  const preflight = guard.preflightCleanRoot(guard.projectRoot, milestoneId, notify);
   if (preflight.blocked) {
     return {
       ok: false,
@@ -307,15 +307,15 @@ export function runGuardedMilestoneMerge(request: {
   }
 
   let mergeError: unknown = null;
-  const exitResult = lifecycle.exitMilestone(milestoneId, { merge: true }, { notify });
+  const exitResult = merge();
   if (!exitResult.ok) {
     mergeError = exitResult.cause ?? new Error(`exit ${exitResult.reason}`);
   }
 
   let postflight: PostflightResult | undefined;
   if (preflight.stashPushed) {
-    postflight = deps.postflightPopStash(
-      projectRoot,
+    postflight = guard.postflightPopStash(
+      guard.projectRoot,
       milestoneId,
       preflight.stashMarker,
       notify,
@@ -331,7 +331,7 @@ export function runGuardedMilestoneMerge(request: {
   if (postflight?.needsManualRecovery) {
     return { ok: false, reason: "postflight-stash-restore-failed", postflight };
   }
-  return { ok: true };
+  return exitResult;
 }
 
 /**
@@ -1547,9 +1547,23 @@ export class WorktreeLifecycle {
    */
   exitMilestone(
     milestoneId: string,
-    opts: { merge: boolean; preserveBranch?: boolean; preserveWorktree?: boolean },
+    opts: {
+      merge: boolean;
+      preserveBranch?: boolean;
+      preserveWorktree?: boolean;
+      guardedMerge?: GuardedMilestoneMergeOptions;
+    },
     ctx: NotifyCtx,
   ): ExitResult {
+    if (opts.merge && opts.guardedMerge) {
+      return runGuardedMilestoneMerge({
+        merge: () => this.exitMilestone(milestoneId, { merge: true }, ctx),
+        guard: opts.guardedMerge,
+        milestoneId,
+        notify: ctx.notify,
+      });
+    }
+
     if (opts.merge) {
       try {
         const merged = this._mergeAndExit(milestoneId, ctx);

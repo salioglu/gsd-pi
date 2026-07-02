@@ -11,7 +11,6 @@ import type { GSDState } from "../types.js";
 import type { IterationContext } from "./types.js";
 import type { PostflightResult, PreflightResult } from "../clean-root-preflight.js";
 import { MergeConflictError } from "../git-service.js";
-import { runGuardedMilestoneMerge } from "../worktree-lifecycle.js";
 import { findUnmergedCompletedMilestones } from "../unmerged-milestone-guard.js";
 import { getIsolationMode } from "../preferences.js";
 import { isDbAvailable, getMilestone } from "../gsd-db.js";
@@ -99,16 +98,18 @@ export async function _runMilestoneMergeWithStashRestore(
   const { ctx, pi, s, deps } = ic;
 
   const projectRoot = s.originalBasePath || s.basePath;
-  const mergeResult = runGuardedMilestoneMerge({
-    lifecycle: deps.lifecycle,
-    deps: {
-      preflightCleanRoot: deps.preflightCleanRoot,
-      postflightPopStash: deps.postflightPopStash,
-    },
-    projectRoot,
+  const mergeResult = deps.lifecycle.exitMilestone(
     milestoneId,
-    notify: ctx.ui.notify.bind(ctx.ui),
-  });
+    {
+      merge: true,
+      guardedMerge: {
+        projectRoot,
+        preflightCleanRoot: deps.preflightCleanRoot,
+        postflightPopStash: deps.postflightPopStash,
+      },
+    },
+    ctx.ui,
+  );
 
   if (mergeResult.ok) {
     await markMilestoneMergedAndRebuild(s);

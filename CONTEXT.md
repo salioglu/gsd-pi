@@ -197,7 +197,7 @@ Dispatch remains responsible for selecting the next Unit from reconciled state. 
 
   See `docs/dev/ADR-033-unit-type-registry.md`.
 
-- The merge verb's full contract moves into Worktree Lifecycle. Publication is already split out, and guarded milestone-merge preflight/postflight stash ordering now lives behind the Lifecycle seam as `runGuardedMilestoneMerge`; the remaining step is folding that helper into `exitMilestone` and relocating the merge core out of `auto-worktree.ts`. Push and PR creation stay in the **Publication module**, called after a successful milestone merge.
+- The merge verb's full contract moves into Worktree Lifecycle. Publication is already split out, and guarded milestone-merge preflight/postflight stash ordering now enters through the `exitMilestone(..., { guardedMerge })` interface. The remaining step is relocating the merge core out of `auto-worktree.ts`. Push and PR creation stay in the **Publication module**, called after a successful milestone merge.
 
   See `docs/dev/ADR-034-milestone-merge-publication-split.md`.
 
