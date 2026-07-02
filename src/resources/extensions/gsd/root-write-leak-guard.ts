@@ -88,7 +88,7 @@ export function detectRootWriteLeak(input: {
   const leaked: RootDirtyEntry[] = [];
   for (const entry of after.values()) {
     const prior = input.before?.get(entry.path);
-    if (!prior) {
+    if (!prior || prior.fingerprint !== entry.fingerprint) {
       leaked.push(entry);
     }
   }

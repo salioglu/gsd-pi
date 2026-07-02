@@ -190,6 +190,13 @@ function isPassingVerificationResult(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return false;
   if (/\b(fail(?:ed|ing)?|error|blocked|mixed|untested)\b/.test(normalized)) return false;
+  if (
+    /\b(?:not|never|no|didn't|did\s+not|cannot|can't|won't|couldn't)\s+(?:\w+\s+){0,3}?(?:pass(?:ed|ing)?|success(?:ful)?|succeeded)\b/.test(
+      normalized,
+    )
+  ) {
+    return false;
+  }
   return /\b(pass(?:ed|ing)?|success(?:ful)?|succeeded)\b/.test(normalized) || normalized === "all-pass";
 }
 
