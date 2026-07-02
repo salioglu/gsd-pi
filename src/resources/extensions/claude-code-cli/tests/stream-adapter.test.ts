@@ -109,6 +109,51 @@ function setWorkflowMcpEnv(
 }
 
 // ---------------------------------------------------------------------------
+// Shared MCP elicitation fixture — a representative ask_user_questions
+// elicitation request. Used both by the external-tool-results interview
+// lifecycle tests and by the MCP elicitation bridge tests, so it lives at
+// module scope.
+// ---------------------------------------------------------------------------
+
+const askUserQuestionsRequest = {
+	serverName: "gsd-workflow",
+	message: "Please answer the following question(s).",
+	mode: "form" as const,
+	requestedSchema: {
+		type: "object" as const,
+		properties: {
+			storage_scope: {
+				type: "string",
+				title: "Storage",
+				description: "Does this app need to sync across devices?",
+				oneOf: [
+					{ const: "Local-only (Recommended)", title: "Local-only (Recommended)" },
+					{ const: "Cloud-synced", title: "Cloud-synced" },
+					{ const: "None of the above", title: "None of the above" },
+				],
+			},
+			storage_scope__note: {
+				type: "string",
+				title: "Storage Note",
+				description: "Optional note for None of the above.",
+			},
+			platform: {
+				type: "array",
+				title: "Platform",
+				description: "Where should it run?",
+				items: {
+					anyOf: [
+						{ const: "Web", title: "Web" },
+						{ const: "Desktop", title: "Desktop" },
+						{ const: "Mobile", title: "Mobile" },
+					],
+				},
+			},
+		},
+	},
+};
+
+// ---------------------------------------------------------------------------
 // Existing tests — exhausted stream fallback (#2575)
 // ---------------------------------------------------------------------------
 
@@ -2711,44 +2756,6 @@ describe("stream-adapter — workflow MCP readiness", () => {
 });
 
 describe("stream-adapter — MCP elicitation bridge", () => {
-	const askUserQuestionsRequest = {
-		serverName: "gsd-workflow",
-		message: "Please answer the following question(s).",
-		mode: "form" as const,
-		requestedSchema: {
-			type: "object" as const,
-			properties: {
-				storage_scope: {
-					type: "string",
-					title: "Storage",
-					description: "Does this app need to sync across devices?",
-					oneOf: [
-						{ const: "Local-only (Recommended)", title: "Local-only (Recommended)" },
-						{ const: "Cloud-synced", title: "Cloud-synced" },
-						{ const: "None of the above", title: "None of the above" },
-					],
-				},
-				storage_scope__note: {
-					type: "string",
-					title: "Storage Note",
-					description: "Optional note for None of the above.",
-				},
-				platform: {
-					type: "array",
-					title: "Platform",
-					description: "Where should it run?",
-					items: {
-						anyOf: [
-							{ const: "Web", title: "Web" },
-							{ const: "Desktop", title: "Desktop" },
-							{ const: "Mobile", title: "Mobile" },
-						],
-					},
-				},
-			},
-		},
-	};
-
 	test("parseAskUserQuestionsElicitation rebuilds interview questions from the MCP schema", () => {
 		const questions = parseAskUserQuestionsElicitation(askUserQuestionsRequest);
 		assert.deepEqual(questions, [
