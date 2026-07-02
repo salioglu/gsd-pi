@@ -649,9 +649,17 @@ Validation rules:
 - Repository paths are normalized and must be unique (case-insensitive).
 - Paths resolving outside the project root are rejected.
 - `workspace.mode: "parent"` requires at least one repository under `workspace.repositories`; otherwise it is rejected (a parent workspace with no child repos is indistinguishable from `project` mode).
+- `mode: "team"` combined with `workspace.mode: "parent"` produces a warning: team branch-push/PR resolves at the project root and does not push child repositories. This is a known limitation (see "Known limitations" below).
 - Unknown keys under `workspace` and each repository entry are ignored with warnings.
 
 **Layout constraint (nested-only).** Child repositories must live **inside** the project root — sibling-repo layouts (e.g. a path like `../frontend` or any path resolving outside the root) are **not supported** and are rejected. This is a deliberate safety guard, not an arbitrary limitation: declared repository roots back the task path-scope allowlist used during planning (`plan-slice` validates that every task `files`/`inputs`/`expectedOutput` path stays under a declared root). Allowing escapes would weaken that guard and let a typo'd or malicious path authorize edits outside the project. To coordinate sibling repos, nest them under a common parent directory and run GSD from that parent.
+
+**Known limitations of parent-workspace mode.** Per-repository *commits* and *verification* honor `commit_policy` and run in each repo's directory today. The following are **not** yet wired:
+
+- **Repo path-scope is enforced at planning time only.** When a task targets `frontend`, the planner is instructed its files must stay under `frontend/`'s root, but nothing mechanically blocks an executor from writing to `backend/` at runtime under `git.isolation: "none"`. Isolation modes (`worktree`/`branch`) provide stronger containment but operate at the project root, not per child repo.
+- **Per-repository git isolation (worktree/branch) is root-only.** One worktree/branch per milestone is created at the project root and shared across child repos. This inverts the isolation model and is RFC-gated; see `docs/dev/ADR-044-per-repository-git-isolation.md` when it lands.
+- **Parallel orchestration is root-only.** Each parallel worker gets one milestone worktree at the project root with no per-repo dimension — a known limit tied to the same isolation-model question (ADR-044).
+- **Per-repository push policy.** Push/PR at milestone merge resolves at the project root and pushes a single branch; child repos are not pushed individually.
 
 ### URL Blocking (`fetch_page`)
 
