@@ -270,6 +270,15 @@ export type GuardedMilestoneMergeResult =
       postflight?: PostflightResult;
     };
 
+function preflightBlockedMergeReason(
+  blockedReason: PreflightResult["blockedReason"],
+): Extract<GuardedMilestoneMergeResult, { ok: false }>["reason"] {
+  if (blockedReason?.startsWith("unmerged-conflicts")) {
+    return "preflight-unmerged-conflicts";
+  }
+  return "preflight-dirty-overlap";
+}
+
 /**
  * Run a milestone merge behind the Worktree Lifecycle seam with the root-clean
  * stash guard that protects user changes around merge.
@@ -293,9 +302,7 @@ export function runGuardedMilestoneMerge(request: {
   if (preflight.blocked) {
     return {
       ok: false,
-      reason: preflight.blockedReason === "unmerged-conflicts"
-        ? "preflight-unmerged-conflicts"
-        : "preflight-dirty-overlap",
+      reason: preflightBlockedMergeReason(preflight.blockedReason),
     };
   }
 
