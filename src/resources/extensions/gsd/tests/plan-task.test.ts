@@ -175,6 +175,32 @@ test('handlePlanTask rejects absolute task IO paths outside the active worktree'
   }
 });
 
+test('handlePlanTask rejects parent-checkout task IO paths from an active worktree', async () => {
+  const projectRoot = mkdtempSync(join(tmpdir(), 'gsd-plan-task-project-'));
+  const worktree = join(projectRoot, '.gsd', 'worktrees', 'M001');
+  mkdirSync(join(projectRoot, '.gsd'), { recursive: true });
+  mkdirSync(join(worktree, '.gsd', 'phases', '01-test'), { recursive: true });
+  openDatabase(join(projectRoot, '.gsd', 'gsd.db'));
+
+  try {
+    seedParent();
+    const parentCheckoutPath = join(projectRoot, 'src', 'index.ts');
+    const result = await handlePlanTask({
+      ...validParams(),
+      files: [parentCheckoutPath],
+      inputs: [parentCheckoutPath],
+      expectedOutput: [parentCheckoutPath],
+    }, worktree);
+
+    assert.ok('error' in result);
+    assert.match(result.error, /validation failed: files contains path outside allowed repository roots/);
+    assert.match(result.error, new RegExp(worktree.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.equal(getTask('M001', 'S02', 'T02'), null, 'parent-checkout paths must not persist worktree task planning');
+  } finally {
+    cleanup(projectRoot);
+  }
+});
+
 test('handlePlanTask rejects missing parent slice', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));
