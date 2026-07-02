@@ -45,7 +45,6 @@ import { resolveWorktreeProjectRoot } from "./worktree-root.js";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
 import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 import { proveMilestoneCloseout } from "./milestone-closeout-proof.js";
-
 /**
  * Optional override for the legacy roadmap parser used by verifyExpectedArtifact.
  * Production leaves this null so the real parseLegacyRoadmap runs; tests inject
@@ -70,6 +69,11 @@ export function _setRoadmapParserFnForTests(
 function parseRoadmapForRecovery(content: string): ReturnType<NonNullable<typeof _roadmapParserFn>> {
   if (_roadmapParserFn) return _roadmapParserFn(content);
   return parseLegacyRoadmap(content) as unknown as ReturnType<NonNullable<typeof _roadmapParserFn>>;
+}
+
+/** Slice count for plan-milestone verification; shared by scoped and legacy paths. */
+export function countPlanMilestoneRoadmapSlices(content: string): number {
+  return parseRoadmapForRecovery(content).slices.length;
 }
 
 export function diagnoseWorktreeIntegrityFailure(basePath: string): string | null {
@@ -336,8 +340,7 @@ export function verifyExpectedArtifact(
 
   if (unitType === "plan-milestone") {
     try {
-      const roadmap = parseRoadmapForRecovery(readFileSync(absPath, "utf-8"));
-      if (roadmap.slices.length === 0) {
+      if (countPlanMilestoneRoadmapSlices(readFileSync(absPath, "utf-8")) === 0) {
         logWarning("recovery", `verify-fail ${unitType} ${unitId}: roadmap has zero slices at ${absPath}`);
         return false;
       }
