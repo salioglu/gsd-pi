@@ -159,6 +159,14 @@ Replace the path with the exact global bin directory from your pnpm error messag
 - If the old worktree is stale and should be discarded, remove it with `/gsd worktree remove <MID>`.
 - Run `/gsd doctor fix`, then retry `/gsd auto`. If fallback already succeeded, work continues on `milestone/<MID>` in the project root for that milestone.
 
+### Forced worktree removal created a quarantine
+
+**Symptoms:** `/gsd worktree remove <MID> --force` reports that dirty worktree contents were quarantined under `.gsd/quarantine/worktrees/<name>-<timestamp>/`.
+
+**Current behavior:** GSD preserves uncommitted files instead of deleting them. The quarantine contains `.gsd-quarantine.json` with the original worktree path, branch, timestamp, and `git status --porcelain` output. The milestone branch is preserved, so recovery can use either the quarantined files or the branch.
+
+**Fix:** Inspect the quarantine and copy or merge anything you still need. Delete the quarantine directory only after confirming there is nothing left to salvage.
+
 ### Windows `EPERM` / `EBUSY` while removing stale worktree directories
 
 **Symptoms:** Startup or milestone entry fails during stale worktree cleanup with `EPERM` or `EBUSY` from directory removal.
