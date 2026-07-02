@@ -53,6 +53,9 @@ class GsdMcpClient:
         self._milestone_on_terminal: Callable[[str], None] | None = None
         self._milestone_notified_terminal: bool = False
         self._milestone_thread: threading.Thread | None = None
+        self._milestone_stderr_thread: threading.Thread | None = None
+        self._milestone_stderr_lock = threading.Lock()
+        self._milestone_stderr_tail = bytearray()
 
     def _env(self) -> dict[str, str]:
         env = os.environ.copy()
@@ -404,6 +407,7 @@ class GsdMcpClient:
         {"notify", "setStatus", "setWidget", "setTitle", "set_editor_text"}
     )
     _EXIT_BLOCKED = 10
+    _STDERR_TAIL_LIMIT = 64 * 1024
 
     def _is_blocked_notice(self, message: str) -> bool:
         """Mirror of stop-notice.ts isBlockedNoticeMessage (lowercased input)."""
@@ -483,11 +487,13 @@ class GsdMcpClient:
         self._milestone_notifications = notifications
         self._milestone_on_terminal = on_terminal
         self._milestone_notified_terminal = False
-        threading.Thread(
+        self._clear_milestone_stderr()
+        self._milestone_stderr_thread = threading.Thread(
             target=self._drain_milestone_stderr,
             args=(proc,),
             daemon=True,
-        ).start()
+        )
+        self._milestone_stderr_thread.start()
 
         # Headless stream-json does not emit init_result on stdout (init is an
         # internal RPC handshake). Use a local session id for ack/status only;
@@ -520,9 +526,13 @@ class GsdMcpClient:
                     event = json.loads(line.decode("utf-8"))
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     continue
+                if self._milestone_proc is not proc:
+                    return
                 self._handle_milestone_event(event)
         except Exception:
             pass
+        if self._milestone_proc is not proc:
+            return
         if self._milestone_notified_terminal:
             self._release_milestone_proc()
             return
@@ -539,11 +549,8 @@ class GsdMcpClient:
             error: str | None = None
         elif exit_code is not None:
             status = "failed"
-            err_bytes = proc.stderr.read() if proc.stderr is not None else b""
-            error = (
-                err_bytes.decode("utf-8", errors="replace").strip()
-                or f"exit code {exit_code}"
-            )
+            self._join_milestone_stderr_thread()
+            error = self._milestone_stderr_text(proc) or f"exit code {exit_code}"
         else:
             status = "failed"
             error = "stream lost — run /gsd cancel"
@@ -559,10 +566,39 @@ class GsdMcpClient:
         if proc.stderr is None:
             return
         try:
-            for _ in proc.stderr:
-                pass
+            while True:
+                chunk = proc.stderr.read(4096)
+                if not chunk:
+                    break
+                self._append_milestone_stderr(chunk)
         except Exception:
             pass
+
+    def _append_milestone_stderr(self, chunk: bytes) -> None:
+        with self._milestone_stderr_lock:
+            self._milestone_stderr_tail.extend(chunk)
+            overflow = len(self._milestone_stderr_tail) - self._STDERR_TAIL_LIMIT
+            if overflow > 0:
+                del self._milestone_stderr_tail[:overflow]
+
+    def _clear_milestone_stderr(self) -> None:
+        with self._milestone_stderr_lock:
+            self._milestone_stderr_tail.clear()
+
+    def _join_milestone_stderr_thread(self) -> None:
+        thread = self._milestone_stderr_thread
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=1)
+
+    def _milestone_stderr_text(self, proc: subprocess.Popen[bytes]) -> str:
+        with self._milestone_stderr_lock:
+            err_bytes = bytes(self._milestone_stderr_tail)
+        if not err_bytes and proc.stderr is not None:
+            try:
+                err_bytes = proc.stderr.read()
+            except Exception:
+                err_bytes = b""
+        return err_bytes.decode("utf-8", errors="replace").strip()
 
     def _handle_milestone_event(self, event: dict[str, Any]) -> None:
         etype = event.get("type")
@@ -602,6 +638,8 @@ class GsdMcpClient:
         self._milestone_proc = None
         self._milestone_notifications = None
         self._milestone_on_terminal = None
+        self._milestone_stderr_thread = None
+        self._clear_milestone_stderr()
 
     def _clear_milestone_state(self) -> None:
         self._release_milestone_proc()

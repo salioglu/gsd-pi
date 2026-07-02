@@ -9,6 +9,7 @@ These tests pin the A1 design from issue #1162's grilling:
 
 from __future__ import annotations
 
+from io import BytesIO
 import json
 from unittest.mock import MagicMock, patch
 
@@ -34,7 +35,7 @@ class _FakeProc:
         self.pid = 4242
         self.stdin = MagicMock()
         self.stdout = MagicMock()
-        self.stderr = MagicMock()
+        self.stderr = BytesIO()
         self.poll = MagicMock(return_value=None)
         self.terminate = MagicMock()
         self.wait = MagicMock(return_value=0)
@@ -199,13 +200,50 @@ def test_stream_loop_notifies_terminal_on_process_exit() -> None:
     client = GsdMcpClient(_config())
     notifications = MagicMock()
     fake_proc = _FakeProc()
+    fake_proc.poll.return_value = 0
     fake_proc.stdout.readline.side_effect = [b""]
 
     with patch.object(client, "_milestone_proc", fake_proc):
         with patch.object(client, "_milestone_notifications", notifications):
             client._milestone_stream_loop(fake_proc)
 
-    notifications.notify_terminal.assert_called_once()
+            notifications.notify_terminal.assert_called_once_with("complete", None)
+            assert client.milestone_active() is False
+
+
+def test_stream_loop_failure_reports_drained_stderr() -> None:
+    """Failure notifications must use stderr retained by the drain thread."""
+    client = GsdMcpClient(_config())
+    notifications = MagicMock()
+    fake_proc = _FakeProc()
+    fake_proc.poll.return_value = 2
+    fake_proc.stderr = BytesIO(b"fatal diagnostics\n")
+    fake_proc.stdout.readline.side_effect = [b""]
+
+    client._drain_milestone_stderr(fake_proc)
+    with patch.object(client, "_milestone_proc", fake_proc):
+        with patch.object(client, "_milestone_notifications", notifications):
+            client._milestone_stream_loop(fake_proc)
+
+    notifications.notify_terminal.assert_called_once_with(
+        "failed", "fatal diagnostics"
+    )
+
+
+def test_stream_loop_keeps_blocked_exit_non_terminal() -> None:
+    """Exit 10 is a blocked planning state, not a failed terminal exit."""
+    client = GsdMcpClient(_config())
+    notifications = MagicMock()
+    fake_proc = _FakeProc()
+    fake_proc.poll.return_value = 10
+    fake_proc.stdout.readline.side_effect = [b""]
+
+    with patch.object(client, "_milestone_proc", fake_proc):
+        with patch.object(client, "_milestone_notifications", notifications):
+            client._milestone_stream_loop(fake_proc)
+
+            notifications.notify_terminal.assert_not_called()
+            assert client.milestone_active() is True
 
 
 # ---------------------------------------------------------------------------

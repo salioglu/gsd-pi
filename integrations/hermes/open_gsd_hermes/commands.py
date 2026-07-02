@@ -71,7 +71,7 @@ class GsdCommandRouter:
             "- `/gsd bind <path>` — bind this chat to a project\n"
             "- `/gsd status` — show progress snapshot\n"
             "- `/gsd auto` — start auto mode (MCP)\n"
-            "- `/gsd new-milestone <spec>` — create a milestone (then `/gsd auto`)\n"
+            "- `/gsd new-milestone <spec>` or `--file <path>` — create a milestone (then `/gsd auto`)\n"
             "- `/gsd cancel` — cancel running session\n"
             "- `/gsd reply <text>` — resolve blocker"
         )
@@ -264,10 +264,16 @@ class GsdCommandRouter:
             if len(rest) < 2:
                 return "Usage: `/gsd new-milestone --file <path>`"
             context_file = rest[1]
-            if not os.path.isfile(context_file):
+            resolved_file = (
+                context_file
+                if os.path.isabs(context_file)
+                else os.path.join(project_dir, context_file)
+            )
+            if not os.path.isfile(resolved_file):
                 return f"Context file not found: `{context_file}`"
-            if not os.access(context_file, os.R_OK):
+            if not os.access(resolved_file, os.R_OK):
                 return f"Context file is not readable: `{context_file}`"
+            context_file = resolved_file
         else:
             context_text = " ".join(rest)
 
@@ -283,9 +289,9 @@ class GsdCommandRouter:
             milestone_ctx.notified_terminal = True
             self._set_supervisor_ctx(milestone_ctx)
 
-        # Spawn the supervised subprocess; create_milestone blocks until the
-        # init_result event yields a sessionId, then continues the stream
-        # reader in the background.
+        # Spawn the supervised subprocess; create_milestone returns a local
+        # session id immediately and continues the stream reader in the
+        # background.
         try:
             session_id = self._client.create_milestone(
                 project_dir,
