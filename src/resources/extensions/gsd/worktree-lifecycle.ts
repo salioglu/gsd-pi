@@ -286,10 +286,11 @@ function preflightBlockedMergeReason(
  * Run a milestone merge behind the Worktree Lifecycle seam with the root-clean
  * stash guard that protects user changes around merge.
  *
- * The helper owns the invariant ordering (preflight -> lifecycle exit ->
- * postflight on every attempted merge path) and returns a typed result. Auto
- * closeout remains responsible for translating that result into loop policy
- * (pause vs. stop, visible transcript preservation, projection rebuild).
+ * The helper owns the invariant ordering (preflight -> merge callback ->
+ * postflight on every attempted merge path) and returns the same typed result
+ * shape as `exitMilestone`. Auto closeout remains responsible for translating
+ * that result into loop policy (pause vs. stop, visible transcript
+ * preservation, projection rebuild).
  */
 function runGuardedMilestoneMerge(request: {
   merge: () => ExitResult;
@@ -1538,11 +1539,20 @@ export class WorktreeLifecycle {
    * With `opts.merge === false`, runs auto-commit and teardown without
    * merging to main.
    *
+   * When `opts.guardedMerge` is present with `opts.merge === true`, the
+   * lifecycle verb also owns the root-clean guard around the merge: preflight
+   * runs before the inner merge, postflight stash restore runs after every
+   * attempted merge path, and guard failures are returned as typed
+   * `ExitResult` reasons.
+   *
    * Returns a typed `ExitResult`. `MergeConflictError` is surfaced as
    * `{ ok: false, reason: "merge-conflict", cause }` instead of thrown,
-   * giving callers a typed branch for the expected failure path.
-   * Unexpected failures (filesystem, git permissions, etc.) are wrapped
-   * as `{ ok: false, reason: "teardown-failed", cause }` so callers always
+   * giving callers a typed branch for the expected failure path. Guarded merge
+   * failures surface as `preflight-dirty-overlap`,
+   * `preflight-unmerged-conflicts`, `merge-failed`, or
+   * `postflight-stash-restore-failed`. Unexpected failures (filesystem, git
+   * permissions, etc.) are wrapped as
+   * `{ ok: false, reason: "teardown-failed", cause }` so callers always
    * receive a discriminated union — no exceptions for any expected outcome.
    */
   exitMilestone(
