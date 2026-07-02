@@ -238,15 +238,15 @@ class GsdCommandRouter:
                 "Execution isn't chained from `/gsd new-milestone`. "
                 "Create the milestone, then run `/gsd auto`."
             )
-        # Co-run guard (Q2): refuse if an auto session is RUNNING/BLOCKED.
+        # Co-run guard (Q2): refuse if a milestone or auto session is active.
+        if self._client.milestone_active():
+            return (
+                "Milestone creation is in progress. Run `/gsd cancel` first."
+            )
         ctx = self._get_supervisor_ctx()
         if ctx.state in (SupervisorState.RUNNING, SupervisorState.BLOCKED):
             return (
                 "GSD auto is running. Run `/gsd cancel` first."
-            )
-        if self._client.milestone_active():
-            return (
-                "Milestone creation is in progress. Run `/gsd cancel` first."
             )
         # Resolve the bound project.
         try:
