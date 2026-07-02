@@ -202,6 +202,21 @@ def test_new_milestone_rejects_when_auto_blocked(project: Path) -> None:
     client.create_milestone.assert_not_called()
 
 
+def test_new_milestone_prioritizes_milestone_guard_over_auto_state(
+    project: Path,
+) -> None:
+    """A duplicate milestone command should report the milestone guard."""
+    router, client = _make_router(
+        project_dir=str(project),
+        supervisor_state=SupervisorState.RUNNING,
+        milestone_active=True,
+    )
+    result = run(router, "new-milestone some spec")
+    assert "milestone creation is in progress" in result.lower()
+    assert "auto is running" not in result.lower()
+    client.create_milestone.assert_not_called()
+
+
 def test_new_milestone_allows_when_auto_complete(project: Path) -> None:
     """A terminal auto state does not block milestone creation."""
     router, client = _make_router(
