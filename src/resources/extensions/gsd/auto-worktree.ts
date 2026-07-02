@@ -1803,14 +1803,31 @@ export function mergeMilestoneToMain(
     } catch (err) {
       logWarning("worktree", `clearProjectRootStateFiles failed during already-merged cleanup: ${err instanceof Error ? err.message : String(err)}`);
     }
+    let worktreeRemoved = true;
     try {
-      removeWorktree(originalBasePath_, milestoneId, {
+      worktreeRemoved = removeWorktree(originalBasePath_, milestoneId, {
         branch: milestoneBranch,
         deleteBranch: false,
       });
     } catch (err) {
+      worktreeRemoved = false;
       logWarning("worktree", `worktree removal failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+
+    if (!worktreeRemoved) {
+      logWarning(
+        "worktree",
+        `Skipping milestone branch deletion for ${milestoneBranch}; worktree removal was aborted to preserve uncommitted milestone work.`,
+      );
+      nudgeGitBranchCache(previousCwd);
+      try {
+        process.chdir(originalBasePath_);
+      } catch (err) {
+        logWarning("worktree", `chdir to project root after already-merged cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return { commitMessage, pushed: false, prCreated: false, codeFilesChanged: true };
+    }
+
     try {
       nativeBranchDelete(originalBasePath_, milestoneBranch);
     } catch (err) {
