@@ -17,6 +17,7 @@ import { isClosedStatus } from "./status-guards.js";
 import type { DoctorIssue, DoctorIssueCode, DoctorReport } from "./doctor-types.js";
 import { GLOBAL_STATE_CODES } from "./doctor-types.js";
 import type { RoadmapSliceEntry } from "./types.js";
+import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 import { createRepositoryRegistryFromPreferences } from "./repository-registry.js";
 import { checkGitHealth, checkRuntimeHealth, checkGlobalHealth, checkEngineHealth } from "./doctor-checks.js";
 import { checkEnvironmentHealth } from "./doctor-environment.js";
@@ -321,6 +322,7 @@ function resolveGitToplevel(cwd: string): string | null {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf-8",
+      env: GIT_NO_PROMPT_ENV,
     }).trim();
     return out ? resolve(out) : null;
   } catch {
