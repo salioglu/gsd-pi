@@ -179,6 +179,18 @@ Replace the path with the exact global bin directory from your pnpm error messag
 - Close apps that might hold file locks (editors, shells in old worktree paths, antivirus/indexers).
 - Retry the command after a short delay.
 
+### Startup fails during flat-phase migration
+
+**Symptoms:** GSD exits during startup with a message like `flat-phase migration failed` or `flat-phase migration required but the workflow database could not be opened`.
+
+**Cause:** The project still has the legacy nested `.gsd/milestones/` layout. On startup, GSD must migrate it to the flat `.gsd/phases/` layout before path resolvers and state checks run. This migration is fail-closed: if the SQLite database cannot be opened, the backup/rename/delete step fails, or the rendered flat-phase projection cannot be verified, startup stops instead of continuing against mixed disk state.
+
+**Fix:**
+- Make sure you are starting GSD from the project root and that `.gsd/gsd.db*`, `.gsd/`, and `.gsd-backups/` are readable and writable on local disk.
+- Close editors, shells, sync tools, antivirus/indexers, or other processes that may be locking `.gsd/milestones/`, `.gsd/milestones.migrating/`, `.gsd/phases/`, or `.gsd-backups/`.
+- If the database is damaged or missing, restore the database from backup when available. If the rendered markdown is the state you intentionally want to import, use `/gsd recover --confirm` after database access is restored.
+- Start GSD again after fixing the underlying issue. The migration retries on the next startup and can resume an interrupted run from `.gsd/milestones.migrating/`; keep `.gsd-backups/migrate-*` snapshots until the project starts successfully and `/gsd doctor` passes.
+
 ### `command not found: gsd` after install
 
 **Symptoms:** `npm install -g @opengsd/gsd-pi@latest` succeeds but `gsd` isn't found.

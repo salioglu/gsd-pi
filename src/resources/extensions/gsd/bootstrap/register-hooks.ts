@@ -1005,8 +1005,8 @@ export function registerHooks(
     await prepareWorkflowMcpForHookContext(ctx, basePath);
 
     // Migrate legacy .gsd/milestones/ to flat-phase .gsd/phases/ when detected.
-    // Best-effort — never blocks session startup. Skipped inside auto-worktrees
-    // (migration already ran on the project root before the worktree was created).
+    // Fail closed on migration errors: resolvers assume flat-phase paths after
+    // startup, so continuing with nested disk state corrupts later checks.
     try {
       const { isInAutoWorktree } = await import("../auto-worktree.js");
       if (!isInAutoWorktree(basePath)) {
@@ -1020,11 +1020,21 @@ export function registerHooks(
           } else {
             safetyLogWarning(
               "bootstrap",
-              "flat-phase migration deferred: legacy .gsd/milestones/ layout detected but the workflow database could not be opened — will retry on next session",
+              "flat-phase migration required: legacy .gsd/milestones/ layout detected but the workflow database could not be opened — fix database access before starting GSD",
+            );
+            throw new Error(
+              "flat-phase migration required but the workflow database could not be opened; fix database access before starting GSD",
             );
           }
         }
       }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      safetyLogWarning("bootstrap", `flat-phase migration failed: ${message}`);
+      throw new Error(`flat-phase migration failed: ${message}`);
+    }
+
+    try {
       const projectRoot = resolveWorktreeProjectRoot(basePath);
       const { pruneStaleFlatPhaseBackups } = await import("../flat-phase-migration.js");
       const pruned = pruneStaleFlatPhaseBackups(projectRoot);
@@ -1035,7 +1045,7 @@ export function registerHooks(
         );
       }
     } catch (err) {
-      safetyLogWarning("bootstrap", `flat-phase migration: ${err instanceof Error ? err.message : String(err)}`);
+      safetyLogWarning("bootstrap", `flat-phase backup pruning: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // Apply show_token_cost preference (#1515)
