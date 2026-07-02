@@ -56,6 +56,7 @@ test("session_start rejects when required flat-phase migration fails", async (t)
   });
 
   mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+  writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-CONTEXT.md"), "# M001: Foundation\n", "utf-8");
   openDatabase(join(base, ".gsd", "gsd.db"));
   insertMilestone({ id: "M001", title: "Foundation", status: "active" });
   closeDatabase();

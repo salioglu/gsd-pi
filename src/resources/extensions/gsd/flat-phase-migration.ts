@@ -45,7 +45,7 @@ function legacyMigratingPath(basePath: string): string {
 }
 
 function removePathWithRetries(path: string): void {
-  fsOps.rmSync(path, RM_RETRY_OPTIONS);
+  fsOps.rmSync(path, { recursive: true, force: true, maxRetries: RM_RETRY_OPTIONS.maxRetries, retryDelay: RM_RETRY_OPTIONS.retryDelay });
 }
 
 function isRetryableFsError(err: unknown): boolean {
