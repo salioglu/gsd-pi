@@ -267,6 +267,12 @@ export interface GuardedMilestoneMergeDeps {
   ) => PostflightResult;
 }
 
+/**
+ * Optional `exitMilestone({ merge: true, guardedMerge })` contract for callers
+ * that need root-clean preflight and postflight stash restoration around the
+ * lifecycle-owned merge attempt. `projectRoot` is the workspace root whose
+ * user changes are protected by the supplied guard functions.
+ */
 export interface GuardedMilestoneMergeOptions extends GuardedMilestoneMergeDeps {
   projectRoot: string;
 }
