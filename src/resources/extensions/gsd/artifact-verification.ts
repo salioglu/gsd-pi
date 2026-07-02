@@ -363,8 +363,12 @@ export function verifyExpectedArtifact(
           parsedTaskIds = parseLegacyPlan(planContent).tasks.map((t: { id: string }) => t.id);
           return parsedTaskIds;
         };
+        const tasksBlockMatch = planContent.match(/<tasks>([\s\S]*?)<\/tasks>/i);
+        const tasksBlock = tasksBlockMatch?.[1] ?? "";
         const hasEmbeddedTaskEntries =
-          /<tasks>[\s\S]*?<\/tasks>/i.test(planContent) && getParsedTaskIds().length > 0;
+          tasksBlock.length > 0 &&
+          (/^\s*- \[[xX ]\] \*\*T\d+/m.test(tasksBlock) ||
+            /^\s*#{2,4}\s+T\d+\s*(?:--|—|:)/m.test(tasksBlock));
         if (isDbAvailable()) {
           const refreshed = refreshWorkflowDatabaseFromDisk();
           if (refreshed) {
