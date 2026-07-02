@@ -464,7 +464,7 @@ export async function handleStart(
         try {
           git.autoCommit("workflow-template", templateId, []);
         } catch { /* nothing to commit */ }
-        runGit(basePath, taskBranchArgs(basePath, branchName, current));
+        runGit(basePath, taskBranchArgs(basePath, branchName, current, git.getMainBranch()));
         branchCreated = true;
       }
     } catch (err) {
@@ -636,7 +636,7 @@ export function dispatchMarkdownPhasePlugin(
       const current = git.getCurrentBranch();
       if (current !== branchName) {
         try { git.autoCommit("workflow-template", templateId, []); } catch { /* nothing to commit */ }
-        runGit(basePath, taskBranchArgs(basePath, branchName, current));
+        runGit(basePath, taskBranchArgs(basePath, branchName, current, git.getMainBranch()));
         branchCreated = true;
       }
     } catch (err) {
