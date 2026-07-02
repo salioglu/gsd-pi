@@ -1020,7 +1020,7 @@ export function registerHooks(
           } else {
             safetyLogWarning(
               "bootstrap",
-              "flat-phase migration deferred: legacy .gsd/milestones/ layout detected but the workflow database could not be opened — will retry on next session",
+              "flat-phase migration required: legacy .gsd/milestones/ layout detected but the workflow database could not be opened — fix database access before starting GSD",
             );
             throw new Error(
               "flat-phase migration required but the workflow database could not be opened; fix database access before starting GSD",

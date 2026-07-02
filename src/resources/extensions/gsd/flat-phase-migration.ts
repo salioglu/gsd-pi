@@ -11,7 +11,12 @@ import { migrateFromMarkdown } from "./md-importer.js";
 import { countDbHierarchy } from "./migration-auto-check.js";
 import { logWarning } from "./workflow-logger.js";
 import { LAYOUT_SEGMENTS } from "./layout-policy.js";
-import { canonicalPhaseDirName, milestonesDir, resolveMilestonePath } from "./paths.js";
+import {
+  canonicalPhaseDirName,
+  dirIsContentBearingLegacyMilestone,
+  milestonesDir,
+  resolveMilestonePath,
+} from "./paths.js";
 
 const LEGACY_MIGRATING_SEGMENT = "milestones.migrating";
 const RETRYABLE_FS_ERROR_CODES = new Set(["EPERM", "EBUSY", "ENOTEMPTY"]);
@@ -81,7 +86,9 @@ function expectedPhaseDirs(basePath: string): string[] {
 function hasLegacyMilestoneSubdirs(dirPath: string): boolean {
   if (!existsSync(dirPath)) return false;
   try {
-    return readdirSync(dirPath).some(e => statSync(join(dirPath, e)).isDirectory());
+    return readdirSync(dirPath).some(
+      (e) => statSync(join(dirPath, e)).isDirectory() && dirIsContentBearingLegacyMilestone(join(dirPath, e)),
+    );
   } catch {
     return false;
   }
