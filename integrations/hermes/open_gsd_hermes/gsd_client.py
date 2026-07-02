@@ -75,7 +75,11 @@ class GsdMcpClient:
         self._version_checked = True
 
     def _ensure_process(self, project_dir: str | None = None) -> subprocess.Popen[bytes]:
-        cwd = os.path.abspath(project_dir) if project_dir else None
+        cwd = (
+            os.path.abspath(project_dir)
+            if project_dir is not None
+            else self._proc_cwd
+        )
         if self._proc is not None and self._proc.poll() is None:
             if cwd is None or self._proc_cwd == cwd:
                 return self._proc
