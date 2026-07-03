@@ -3,6 +3,10 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   _runMilestoneMergeOnceWithStashRestore,
@@ -10,6 +14,9 @@ import {
 } from "../auto/closeout.js";
 import type { IterationContext } from "../auto/types.js";
 import { MergeConflictError } from "../git-service.js";
+import { closeDatabase, insertMilestone, insertSlice, insertTask, openDatabase } from "../gsd-db.js";
+import { renderAllFromDb } from "../markdown-renderer.js";
+import { resolveMilestoneFile } from "../paths.js";
 import type {
   PostflightResult,
   PreflightResult,
@@ -233,6 +240,52 @@ const PREFLIGHT_UNMERGED_EVAL_FAILED: PreflightResult = {
   conflictedPaths: ["todo.js"],
   summary: "Unable to fully evaluate unresolved Git conflicts before milestone M002 merge.",
 };
+
+function git(basePath: string, args: string[], stdio: "ignore" | "pipe" = "pipe"): void {
+  execFileSync("git", args, { cwd: basePath, stdio });
+}
+
+async function withProjectionBackedProject<T>(fn: (basePath: string, roadmapPath: string) => Promise<T>): Promise<T> {
+  const basePath = mkdtempSync(join(tmpdir(), "gsd-postflight-projection-"));
+  try {
+    mkdirSync(join(basePath, ".gsd"), { recursive: true });
+    openDatabase(join(basePath, ".gsd", "gsd.db"));
+    insertMilestone({
+      id: "M002",
+      title: "Postflight Guard",
+      status: "active",
+    });
+    insertSlice({
+      id: "S01",
+      milestoneId: "M002",
+      title: "Slice",
+      status: "pending",
+      risk: "medium",
+      depends: [],
+      demo: "demo",
+      sequence: 1,
+    });
+    insertTask({
+      id: "T01",
+      sliceId: "S01",
+      milestoneId: "M002",
+      title: "Task",
+      status: "pending",
+    });
+    await renderAllFromDb(basePath);
+    git(basePath, ["init"], "ignore");
+    git(basePath, ["config", "user.email", "test@example.invalid"]);
+    git(basePath, ["config", "user.name", "Test"]);
+    git(basePath, ["add", ".gsd"]);
+    git(basePath, ["commit", "-m", "initial projections"], "ignore");
+    const roadmapPath = resolveMilestoneFile(basePath, "M002", "ROADMAP");
+    assert.ok(roadmapPath, "expected rendered M002 roadmap path");
+    return await fn(basePath, roadmapPath);
+  } finally {
+    closeDatabase();
+    rmSync(basePath, { recursive: true, force: true });
+  }
+}
 
 const POP_OK: PostflightResult = {
   restored: true,
@@ -467,6 +520,70 @@ test("already-merged milestone skips guarded merge to terminate duplicate closeo
     0,
     "already-merged guard must not re-trigger stash restore",
   );
+});
+
+
+test("postflight-restored projection edits survive successful merge rebuild", async () => {
+  await withProjectionBackedProject(async (basePath, roadmapPath) => {
+    const { ic } = buildIc({
+      preflightResult: STASH_PUSHED,
+      mergeBehavior: "succeed",
+      postflightResult: POP_OK,
+    });
+    (ic.s as { basePath: string; originalBasePath: string }).basePath = basePath;
+    (ic.s as { basePath: string; originalBasePath: string }).originalBasePath = basePath;
+    (ic.deps as unknown as { postflightPopStash: () => PostflightResult }).postflightPopStash = () => {
+      writeFileSync(roadmapPath, "# local projection edit restored from stash\n", "utf8");
+      return POP_OK;
+    };
+
+    const result = await _runMilestoneMergeWithStashRestore(ic, "M002");
+
+    assert.equal(result, null);
+    assert.equal(
+      readFileSync(roadmapPath, "utf8"),
+      "# local projection edit restored from stash\n",
+      "projection rebuild must not overwrite user edits restored by postflight stash pop",
+    );
+  });
+});
+
+
+test("non-projection .gsd dirt does not suppress successful merge rebuild", async () => {
+  await withProjectionBackedProject(async (basePath, roadmapPath) => {
+    insertSlice({
+      id: "S02",
+      milestoneId: "M002",
+      title: "Fresh DB Slice",
+      status: "pending",
+      risk: "medium",
+      depends: [],
+      demo: "demo",
+      sequence: 2,
+    });
+    mkdirSync(join(basePath, ".gsd", "runtime"), { recursive: true });
+
+    const { ic } = buildIc({
+      preflightResult: STASH_PUSHED,
+      mergeBehavior: "succeed",
+      postflightResult: POP_OK,
+    });
+    (ic.s as { basePath: string; originalBasePath: string }).basePath = basePath;
+    (ic.s as { basePath: string; originalBasePath: string }).originalBasePath = basePath;
+    (ic.deps as unknown as { postflightPopStash: () => PostflightResult }).postflightPopStash = () => {
+      writeFileSync(join(basePath, ".gsd", "runtime", "restored.json"), "{}\n", "utf8");
+      return POP_OK;
+    };
+
+    const result = await _runMilestoneMergeWithStashRestore(ic, "M002");
+
+    assert.equal(result, null);
+    assert.match(
+      readFileSync(roadmapPath, "utf8"),
+      /Fresh DB Slice/,
+      "non-projection .gsd dirt must not block the required projection rebuild",
+    );
+  });
 });
 
 test("merge succeeds but stash pop needs manual recovery -> postflight-stash-restore-failed break", async () => {

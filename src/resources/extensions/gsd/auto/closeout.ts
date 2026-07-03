@@ -3,6 +3,7 @@
 
 import { importExtensionModule, type ExtensionAPI, type ExtensionContext } from "@gsd/pi-coding-agent";
 
+import { execFileSync } from "node:child_process";
 import { join, basename } from "node:path";
 import { existsSync, cpSync } from "node:fs";
 import type { AutoSession } from "./session.js";
@@ -182,8 +183,16 @@ export async function _runMilestoneMergeWithStashRestore(
 
 async function markMilestoneMergedAndRebuild(s: AutoSession): Promise<void> {
   s.milestoneMergedInPhases = true;
+  const rebuildBasePath = s.originalBasePath || s.canonicalProjectRoot || s.basePath;
+  if (hasDirtyGsdMarkdownProjections(rebuildBasePath)) {
+    logWarning(
+      "engine",
+      "skipping markdown projection rebuild after milestone merge because restored .gsd edits are dirty",
+    );
+    return;
+  }
+
   try {
-    const rebuildBasePath = s.originalBasePath || s.canonicalProjectRoot || s.basePath;
     const { rebuildMarkdownProjectionsFromDb } = await import("../commands-maintenance.js");
     await rebuildMarkdownProjectionsFromDb(rebuildBasePath);
   } catch (err) {
@@ -191,6 +200,21 @@ async function markMilestoneMergedAndRebuild(s: AutoSession): Promise<void> {
       "engine",
       `markdown projection rebuild after milestone merge failed: ${err instanceof Error ? err.message : String(err)}`,
     );
+  }
+}
+
+function hasDirtyGsdMarkdownProjections(basePath: string): boolean {
+  try {
+    const output = execFileSync(
+      "git",
+      ["status", "--porcelain", "--", ".gsd"],
+      { cwd: basePath, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    );
+    return output
+      .split(/\r?\n/)
+      .some((line) => /\.md$/.test(line.trim()));
+  } catch {
+    return false;
   }
 }
 
