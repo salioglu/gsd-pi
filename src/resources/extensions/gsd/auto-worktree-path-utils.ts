@@ -7,4 +7,4 @@ export {
   _gitPathspecForWorktreePath,
   _isExpectedWorktreeUnlinkError,
   _isSamePath,
-} from "./auto-worktree.js";
+} from "./auto-worktree-cleanup.js";

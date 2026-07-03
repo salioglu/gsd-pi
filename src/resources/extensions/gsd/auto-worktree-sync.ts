@@ -9,5 +9,6 @@ export {
   syncProjectRootToWorktree,
   syncStateToProjectRoot,
   syncWorktreeStateBack,
-  _shouldReconcileWorktreeDb,
 } from "./auto-worktree.js";
+
+export { _shouldReconcileWorktreeDb } from "./auto-worktree-cleanup.js";

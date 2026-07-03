@@ -15,13 +15,12 @@ import {
   readFileSync,
   readdirSync,
   mkdirSync,
-  realpathSync,
   rmSync,
   unlinkSync,
   lstatSync as lstatSyncFn,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { GSDError, GSD_IO_ERROR, GSD_GIT_ERROR } from "./errors.js";
+import { basename, dirname, join, resolve } from "node:path";
+import { GSDError, GSD_GIT_ERROR } from "./errors.js";
 import {
   reconcileWorktreeDb,
   isDbAvailable,
@@ -46,8 +45,6 @@ import {
 import {
   removeWorktree,
   resolveGitDir,
-  worktreePath,
-  isInsideWorktreesDir,
 } from "./worktree-manager.js";
 import {
   detectWorktreeName,
@@ -57,7 +54,6 @@ import {
 import {
   projectRootFromWorktreePath,
   normalizeWorktreePathForCompare,
-  resolveWorktreeProjectRoot,
 } from "./worktree-root.js";
 import { autoResolveSafeConflictPaths } from "./git-conflict-resolve.js";
 import { MergeConflictError, resolveMilestoneIntegrationBranch, RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
@@ -117,6 +113,11 @@ import {
   getActiveWorkspace,
   setActiveWorkspace,
 } from "./auto-worktree-session-registry.js";
+import {
+  _isSamePath as isSamePath,
+  _shouldReconcileWorktreeDb,
+  clearProjectRootStateFiles,
+} from "./auto-worktree-cleanup.js";
 
 export {
   getActiveAutoWorktreeContext,
@@ -125,6 +126,7 @@ export {
 } from "./auto-worktree-session-registry.js";
 
 export { createAutoWorktree } from "./auto-worktree-creation.js";
+export { teardownAutoWorktree } from "./auto-worktree-teardown.js";
 
 export {
   enterAutoWorktree,
@@ -172,38 +174,13 @@ const ROOT_STATE_FILES = [
   // because the project root is authoritative for preferences (#2684).
 ] as const;
 
-/**
- * Check if two filesystem paths resolve to the same real location.
- * Returns false if either path cannot be resolved (e.g. doesn't exist).
- */
-function isSamePath(a: string, b: string): boolean {
-  try {
-    return realpathSync(a) === realpathSync(b);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return false;
-    logWarning("worktree", `isSamePath failed: ${(e as Error).message}`);
-    return false;
-  }
-}
+export {
+  _gitPathspecForWorktreePath,
+  _isExpectedWorktreeUnlinkError,
+  _isSamePath,
+  _shouldReconcileWorktreeDb,
+} from "./auto-worktree-cleanup.js";
 
-export function _isSamePath(a: string, b: string): boolean {
-  return isSamePath(a, b);
-}
-
-export function _shouldReconcileWorktreeDb(
-  worktreeDbPath: string,
-  mainDbPath: string,
-  pathExists: (path: string) => boolean = existsSync,
-  samePath: (a: string, b: string) => boolean = isSamePath,
-): boolean {
-  return pathExists(worktreeDbPath) && !samePath(worktreeDbPath, mainDbPath);
-}
-
-export function _isExpectedWorktreeUnlinkError(
-  code: string | undefined,
-): boolean {
-  return code === "ENOENT" || code === "EISDIR";
-}
 
 function stripGsdDisplayPrefix(value: string | undefined | null, id: string): string | undefined {
   const raw = String(value ?? "").trim();
@@ -226,41 +203,6 @@ function stripGsdDisplayPrefix(value: string | undefined | null, id: string): st
  * @internal
  */
 let _restoreEntryFn: ((src: string, dest: string) => void) | null = null;
-
-function gitPathspecForWorktreePath(basePath: string, targetPath: string): string | null {
-  let base = basePath;
-  let target = targetPath;
-  try {
-    base = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd: basePath,
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf-8",
-    }).trim() || basePath;
-  } catch {
-    /* keep original */
-    void base;
-  }
-  try {
-    base = realpathSync.native(base);
-  } catch {
-    /* keep original */
-    void base;
-  }
-  try {
-    target = realpathSync.native(targetPath);
-  } catch {
-    /* keep original */
-    void target;
-  }
-
-  const rel = relative(base, target);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
-  return rel.replaceAll("\\", "/");
-}
-
-export function _gitPathspecForWorktreePath(basePath: string, targetPath: string): string | null {
-  return gitPathspecForWorktreePath(basePath, targetPath);
-}
 
 function findRegularMergeChangedPaths(basePath: string, milestoneBranch: string, mainBranch: string): Set<string> {
   const changedPaths = new Set<string>();
@@ -304,72 +246,6 @@ function findRegularMergeChangedPaths(basePath: string, milestoneBranch: string,
   }
 
   return changedPaths;
-}
-
-function clearProjectRootStateFiles(basePath: string, milestoneId: string): void {
-  const gsdDir = gsdRoot(basePath);
-  // Phase C pt 2: auto.lock removed from this list — the file is gone
-  // (migrated to the workers + unit_dispatches + runtime_kv tables). The
-  // remaining transient files (STATE.md, {MID}-META.json) are still
-  // worth removing on teardown.
-  const transientFiles = [
-    join(gsdDir, "STATE.md"),
-    join(gsdDir, "milestones", milestoneId, `${milestoneId}-META.json`),
-  ];
-
-  for (const file of transientFiles) {
-    try {
-      unlinkSync(file);
-    } catch (err) {
-      // ENOENT is expected — file may not exist (#3597)
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        logWarning("worktree", `file unlink failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-  }
-
-  // Clean up legacy synced milestone directories and runtime/units.
-  // Older versions copied these into the project root during execution.
-  // If they remain as untracked files when we attempt
-  // `git merge --squash`, git rejects the merge with "local changes would
-  // be overwritten", causing silent data loss (#1738).
-  const syncedDirs = [
-    join(gsdDir, "milestones", milestoneId),
-    join(gsdDir, "runtime", "units"),
-  ];
-
-  for (const dir of syncedDirs) {
-    try {
-      if (existsSync(dir)) {
-        const pathspec = gitPathspecForWorktreePath(basePath, dir);
-        if (!pathspec) continue;
-
-        // Only remove files that are untracked by git — tracked files are
-        // managed by the branch checkout and should not be deleted.
-        const untrackedOutput = execFileSync(
-          "git",
-          ["ls-files", "--others", "--exclude-standard", pathspec],
-          { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
-        ).trim();
-        if (untrackedOutput) {
-          for (const f of untrackedOutput.split("\n").filter(Boolean)) {
-            try {
-              unlinkSync(join(basePath, f));
-            } catch (err) {
-              // ENOENT/EISDIR are expected for already-removed or directory entries (#3597)
-              const code = (err as NodeJS.ErrnoException).code;
-              if (!_isExpectedWorktreeUnlinkError(code)) {
-                logWarning("worktree", `untracked file unlink failed: ${err instanceof Error ? err.message : String(err)}`);
-              }
-            }
-          }
-        }
-      }
-    } catch (err) {
-      /* non-fatal — git command may fail if not in repo */
-      logWarning("worktree", `untracked file cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
 }
 
 // ─── Build Artifact Auto-Resolve ─────────────────────────────────────────────
@@ -777,136 +653,6 @@ function normalizeLocalBranchRef(branch: string): string {
   return branch.startsWith("refs/heads/")
     ? branch.slice("refs/heads/".length)
     : branch;
-}
-
-function safeCwd(fallback: string): string {
-  try {
-    return process.cwd();
-  } catch {
-    return fallback;
-  }
-}
-
-// Phase C: copyPlanningArtifacts removed. Planning artifacts now live
-// only at the project root .gsd/; auto-mode writers (workflow-projections,
-// triage-resolution, rule-registry, regenerateIfMissing,
-// resolveHookArtifactPath) all route through s.canonicalProjectRoot.
-// Worktrees are pure git checkouts — they no longer maintain a parallel
-// .gsd/ projection. The gsd.db has always lived at the project root via
-// the shared-WAL R012 contract; that is unchanged.
-
-/**
- * Teardown an auto-worktree: chdir back to original base, then remove
- * the worktree and its branch.
- */
-export function teardownAutoWorktree(
-  originalBasePath: string,
-  milestoneId: string,
-  opts: { preserveBranch?: boolean; preserveWorktree?: boolean } = {},
-): void {
-  originalBasePath = resolveWorktreeProjectRoot(originalBasePath);
-
-  const branch = autoWorktreeBranch(milestoneId);
-  const { preserveBranch = false, preserveWorktree = false } = opts;
-  const previousCwd = safeCwd(originalBasePath);
-  let clearActiveWorkspace = true;
-
-  // Wrap the entire teardown body in a single try/finally so activeWorkspace
-  // is cleared on completion or irrecoverable failure — even if process.chdir
-  // throws (e.g. originalBasePath was deleted before teardown ran).
-  try {
-    try {
-      process.chdir(originalBasePath);
-    } catch (err) {
-      throw new GSDError(
-        GSD_IO_ERROR,
-        `Failed to chdir back to ${originalBasePath} during teardown: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    // Mirror cleanup steps from mergeMilestoneToMain abort path:
-
-    // 1. Remove transient state files (STATE.md, auto.lock, {MID}-META.json).
-    //    Non-fatal — must not block teardown.
-    try {
-      clearProjectRootStateFiles(originalBasePath, milestoneId);
-    } catch (err) {
-      logWarning("worktree", `clearProjectRootStateFiles failed during teardown: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    // 2. Reconcile worktree-local gsd.db into project root DB if both exist.
-    //    Non-fatal — handles legacy worktrees that have a local copy.
-    if (isDbAvailable()) {
-      try {
-        const contract = resolveGsdPathContract(previousCwd, originalBasePath);
-        const worktreeDbPath = join(contract.worktreeGsd ?? join(previousCwd, ".gsd"), "gsd.db");
-        const mainDbPath = contract.projectDb;
-        if (_shouldReconcileWorktreeDb(worktreeDbPath, mainDbPath)) {
-          reconcileWorktreeDb(mainDbPath, worktreeDbPath);
-        }
-      } catch (err) {
-        /* non-fatal */
-        logError("worktree", `DB reconciliation failed during teardown: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    nudgeGitBranchCache(previousCwd);
-
-    // 3. Remove the worktree unless this exit path explicitly preserves it
-    //    (slice-parallel dispatch stops the parent loop but keeps the parent
-    //    milestone worktree for restart/re-entry).
-    let worktreeRemoved = preserveWorktree;
-    if (!preserveWorktree) {
-      worktreeRemoved = removeWorktree(originalBasePath, milestoneId, {
-        branch,
-        deleteBranch: !preserveBranch,
-      });
-      if (!worktreeRemoved) {
-        logWarning(
-          "worktree",
-          `Worktree removal aborted for ${milestoneId}; uncommitted work was preserved. ` +
-            `Manual quarantine recovery may be needed before retrying teardown.`,
-          { worktree: milestoneId },
-        );
-        clearActiveWorkspace = false;
-      }
-    }
-
-    // Verify cleanup succeeded — warn if the worktree directory is still on disk.
-    // On Windows, bash-based cleanup can silently fail when paths contain
-    // backslashes (#1436), leaving ~1 GB+ orphaned directories.
-    const wtDir = worktreePath(originalBasePath, milestoneId);
-    if (!preserveWorktree && worktreeRemoved && existsSync(wtDir)) {
-      logWarning(
-        "reconcile",
-        `Worktree directory still exists after teardown: ${wtDir}. ` +
-          `This is likely an orphaned directory consuming disk space. ` +
-          `Remove it manually with: rm -rf "${wtDir.replaceAll("\\", "/")}"`,
-        { worktree: milestoneId },
-      );
-      // Attempt a direct filesystem removal as a fallback — but ONLY if the
-      // path is safely inside .gsd/worktrees/ to prevent #2365 data loss.
-      if (isInsideWorktreesDir(originalBasePath, wtDir)) {
-        try {
-          rmSync(wtDir, { recursive: true, force: true });
-        } catch (err) {
-          // Non-fatal — the warning above tells the user how to clean up
-          logWarning("worktree", `worktree directory removal failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      } else {
-        console.error(
-          `[GSD] REFUSING fallback rmSync — path is outside .gsd/worktrees/: ${wtDir}`,
-        );
-      }
-    }
-  } finally {
-    // Clear module state when teardown completed or failed irrecoverably.
-    // When removeWorktree returns false (quarantine failure), preserve the
-    // registry so recovery logic still sees the active milestone worktree.
-    if (clearActiveWorkspace) {
-      setActiveWorkspace(null);
-    }
-  }
 }
 
 /**
