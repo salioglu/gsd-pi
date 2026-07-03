@@ -113,8 +113,19 @@ import {
   proveMilestoneCloseout,
 } from "./milestone-closeout-proof.js";
 import { gsdHome } from "./gsd-home.js";
-import { type MilestoneScope, type GsdWorkspace, createWorkspace } from "./workspace.js";
+import { type MilestoneScope, createWorkspace } from "./workspace.js";
 import { WorktreeStateProjection } from "./worktree-state-projection.js";
+import {
+  getActiveWorkspace,
+  getAutoWorktreeOriginalBase,
+  setActiveWorkspace,
+} from "./auto-worktree-session-registry.js";
+
+export {
+  getActiveAutoWorktreeContext,
+  getAutoWorktreeOriginalBase,
+  _resetAutoWorktreeOriginalBaseForTests,
+} from "./auto-worktree-session-registry.js";
 
 export {
   autoWorktreeBranch,
@@ -241,9 +252,6 @@ function stripGsdDisplayPrefix(value: string | undefined | null, id: string): st
 
 // ─── Module State ──────────────────────────────────────────────────────────
 
-/** Active workspace registry — replaces the legacy `originalBase` singleton. */
-let activeWorkspace: GsdWorkspace | null = null;
-
 /**
  * Optional override for the shelter restore copy step (milestone merge #2505).
  * Production leaves this null so restoreShelter uses the real cpSync; tests
@@ -254,14 +262,6 @@ let activeWorkspace: GsdWorkspace | null = null;
  * @internal
  */
 let _restoreEntryFn: ((src: string, dest: string) => void) | null = null;
-
-function setActiveWorkspace(ws: GsdWorkspace | null): void {
-  activeWorkspace = ws;
-}
-
-function getActiveWorkspace(): GsdWorkspace | null {
-  return activeWorkspace;
-}
 
 function gitPathspecForWorktreePath(basePath: string, targetPath: string): string | null {
   let base = basePath;
@@ -1163,27 +1163,6 @@ export function enterAutoWorktree(
 }
 
 /**
- * Get the original project root stored when entering an auto-worktree.
- * Returns null if not currently in an auto-worktree.
- */
-export function getAutoWorktreeOriginalBase(): string | null {
-  return getActiveWorkspace()?.projectRoot ?? null;
-}
-
-/**
- * Test-only — resets the module-level `activeWorkspace` registry between
- * runs. Production code never clears the registry directly; tests call this
- * in `beforeEach`/`afterEach` to isolate registry-mutating cases. Renaming
- * the underscore-prefixed `_*ForTest` exports it joins (slice 7 / step G of
- * ADR-016) was deliberate: those wrapped real production helpers and lost
- * the suffix; this one stays as the only legitimate test-scaffolding export
- * because it has no production caller.
- */
-export function _resetAutoWorktreeOriginalBaseForTests(): void {
-  setActiveWorkspace(null);
-}
-
-/**
  * Inject an override for the shelter restore copy step, returning a function
  * that restores the default (real cpSync) behavior. Used by tests to
  * deterministically exercise the best-effort restore-failure path
@@ -1197,34 +1176,6 @@ export function _setRestoreEntryFnForTests(
 ): () => void {
   _restoreEntryFn = fn;
   return () => { _restoreEntryFn = null; };
-}
-
-export function getActiveAutoWorktreeContext(): {
-  originalBase: string;
-  worktreeName: string;
-  branch: string;
-} | null {
-  const ws = getActiveWorkspace();
-  if (!ws) return null;
-  const originalBase = ws.projectRoot;
-  const cwd = process.cwd();
-  if (!isGsdWorktreePath(cwd)) return null;
-  const cwdProjectRoot = resolveWorktreeProjectRoot(cwd, originalBase);
-  if (
-    normalizeWorktreePathForCompare(cwdProjectRoot) !==
-    normalizeWorktreePathForCompare(originalBase)
-  ) {
-    return null;
-  }
-  const worktreeName = detectWorktreeName(cwd);
-  if (!worktreeName) return null;
-  const branch = nativeGetCurrentBranch(cwd);
-  if (!branch.startsWith("milestone/")) return null;
-  return {
-    originalBase,
-    worktreeName,
-    branch,
-  };
 }
 
 // ─── Merge Milestone -> Main ───────────────────────────────────────────────
