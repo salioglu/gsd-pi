@@ -100,9 +100,15 @@ export async function _runMilestoneMergeWithStashRestore(
 ): Promise<{ action: "break"; reason: string } | null> {
   const { ctx, pi, s, deps } = ic;
 
-  const projectRoot = s.originalBasePath || s.basePath;
-  const projectionGuardPath = s.originalBasePath || s.canonicalProjectRoot || s.basePath;
-  const ignoredProjectionSnapshot = snapshotIgnoredGsdMarkdownProjections(projectionGuardPath);
+  // Resolve the project root once, before the merge can flip session path
+  // pointers (worktree teardown mutates s.basePath / s.scope). The guarded
+  // merge's preflight/postflight stash restore, the pre-merge ignored-markdown
+  // snapshot, the dirty-projection check, and the rebuild must all target this
+  // same tree; otherwise `.gsd` markdown restored on one tree can be silently
+  // overwritten by a rebuild on another. canonicalProjectRoot is the
+  // authoritative `.gsd`/DB writer path (see AutoSession.canonicalProjectRoot).
+  const projectRoot = s.originalBasePath || s.canonicalProjectRoot || s.basePath;
+  const ignoredProjectionSnapshot = snapshotIgnoredGsdMarkdownProjections(projectRoot);
   const mergeResult = deps.lifecycle.exitMilestone(
     milestoneId,
     {
@@ -117,12 +123,12 @@ export async function _runMilestoneMergeWithStashRestore(
   );
 
   if (mergeResult.ok) {
-    await markMilestoneMergedAndRebuild(s, ignoredProjectionSnapshot);
+    await markMilestoneMergedAndRebuild(s, projectRoot, ignoredProjectionSnapshot);
     return null;
   }
 
   if (mergeResult.reason === "postflight-stash-restore-failed") {
-    await markMilestoneMergedAndRebuild(s, ignoredProjectionSnapshot);
+    await markMilestoneMergedAndRebuild(s, projectRoot, ignoredProjectionSnapshot);
   }
 
   if (mergeResult.reason === "preflight-dirty-overlap" || mergeResult.reason === "preflight-unmerged-conflicts") {
@@ -188,10 +194,10 @@ type GsdMarkdownSnapshot = Map<string, string>;
 
 async function markMilestoneMergedAndRebuild(
   s: AutoSession,
+  rebuildBasePath: string,
   ignoredProjectionSnapshot: GsdMarkdownSnapshot | null,
 ): Promise<void> {
   s.milestoneMergedInPhases = true;
-  const rebuildBasePath = s.originalBasePath || s.canonicalProjectRoot || s.basePath;
   if (hasDirtyGsdMarkdownProjections(rebuildBasePath, ignoredProjectionSnapshot)) {
     logWarning(
       "engine",

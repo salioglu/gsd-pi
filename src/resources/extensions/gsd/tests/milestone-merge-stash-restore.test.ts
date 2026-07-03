@@ -725,6 +725,84 @@ test("non-projection .gsd dirt does not suppress successful merge rebuild", asyn
   });
 });
 
+test("guarded merge stash restore and rebuild target the same canonical project root", async () => {
+  await withProjectionBackedProject(async (realRoot, roadmapPath) => {
+    insertFreshDbSlice();
+    let postflightProjectRoot: string | undefined;
+
+    const { ic } = buildIc({
+      preflightResult: STASH_PUSHED,
+      mergeBehavior: "succeed",
+      postflightResult: POP_OK,
+    });
+    // originalBasePath empty + basePath diverging from canonicalProjectRoot is
+    // the exact condition where the guard (snapshot / dirty check / rebuild)
+    // could run against a different tree than the postflight stash restore.
+    // The postflight restore must land on the same canonical root the guard
+    // inspects and the rebuild writes, otherwise restored edits are missed.
+    (ic.s as unknown as {
+      basePath: string;
+      originalBasePath: string;
+      canonicalProjectRoot: string;
+    }).basePath = "/tmp/gsd-decoy-basepath-not-the-project-root";
+    (ic.s as unknown as { originalBasePath: string }).originalBasePath = "";
+    (ic.s as unknown as { canonicalProjectRoot: string }).canonicalProjectRoot = realRoot;
+    (ic.deps as unknown as { postflightPopStash: (projectRoot: string) => PostflightResult }).postflightPopStash =
+      (projectRoot: string) => {
+        postflightProjectRoot = projectRoot;
+        writeFileSync(roadmapPath, "# projection edit restored from stash\n", "utf8");
+        return POP_OK;
+      };
+
+    const result = await _runMilestoneMergeWithStashRestore(ic, "M002");
+
+    assert.equal(result, null);
+    assert.equal(
+      postflightProjectRoot,
+      realRoot,
+      "postflight stash restore must run at the canonical project root the guard and rebuild use",
+    );
+    assert.equal(
+      readFileSync(roadmapPath, "utf8"),
+      "# projection edit restored from stash\n",
+      "restored projection edits on the canonical root must suppress the rebuild",
+    );
+  });
+});
+
+test("git-quoted special-character .gsd markdown paths still suppress rebuild", async () => {
+  await withProjectionBackedProject(async (basePath, roadmapPath) => {
+    insertFreshDbSlice();
+
+    const { ic } = buildIc({
+      preflightResult: STASH_PUSHED,
+      mergeBehavior: "succeed",
+      postflightResult: POP_OK,
+    });
+    (ic.s as { basePath: string; originalBasePath: string }).basePath = basePath;
+    (ic.s as { basePath: string; originalBasePath: string }).originalBasePath = basePath;
+    (ic.deps as unknown as { postflightPopStash: () => PostflightResult }).postflightPopStash = () => {
+      const restoredDir = join(basePath, ".gsd", "restored");
+      mkdirSync(restoredDir, { recursive: true });
+      // A non-ASCII filename that `git status --porcelain` C-quotes as
+      // "...caf\303\251.md" without -z; a naive line.endsWith(".md") check
+      // would miss the quoted path. NUL-delimited (-z) parsing sees the raw
+      // path and still detects it as a dirty markdown projection.
+      writeFileSync(join(restoredDir, "café.md"), "# restored local markdown\n", "utf8");
+      return POP_OK;
+    };
+
+    const result = await _runMilestoneMergeWithStashRestore(ic, "M002");
+
+    assert.equal(result, null);
+    assert.doesNotMatch(
+      readFileSync(roadmapPath, "utf8"),
+      /Fresh DB Slice/,
+      "special-character .gsd markdown restored by postflight must suppress the rebuild",
+    );
+  });
+});
+
 test("merge succeeds but stash pop needs manual recovery -> postflight-stash-restore-failed break", async () => {
   const { ic, log } = buildIc({
     preflightResult: STASH_PUSHED,
