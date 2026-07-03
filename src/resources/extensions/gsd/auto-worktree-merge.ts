@@ -4,7 +4,6 @@
 // reconciliation, integration-branch merge, stash/shelter recovery, publication,
 // and safe teardown.
 
-import { execFileSync } from "node:child_process";
 import { atomicWriteSync } from "./atomic-write.js";
 import { debugLog } from "./debug-logger.js";
 import { GSDError, GSD_GIT_ERROR } from "./errors.js";
@@ -21,9 +20,7 @@ import {
   nativeAddAllWithExclusions,
   nativeCommit,
   nativeConflictFiles,
-  nativeDiffNumstat,
   nativeGetCurrentBranch,
-  nativeIsAncestor,
   nativeMergeRegular,
   nativeMergeSquash,
   nativeWorkingTreeStatus,
@@ -40,6 +37,7 @@ import {
   detectMergedCodeFilesChanged,
 } from "./auto-worktree-merge-code-changes.js";
 import { reconcileMilestoneBranchHead } from "./auto-worktree-merge-branch-head.js";
+import { finalizeAlreadyMergedMilestoneIfReachable } from "./auto-worktree-merge-already-merged.js";
 import { cleanupMergedMilestoneWorktree } from "./auto-worktree-merge-cleanup.js";
 import { assertMilestoneDbReadyForMerge } from "./auto-worktree-merge-db-ready.js";
 import { prepareIntegrationBranchForMilestoneMerge } from "./auto-worktree-merge-integration-branch.js";
@@ -53,50 +51,6 @@ import {
 import { logError, logWarning } from "./workflow-logger.js";
 
 export { _setRestoreEntryFnForTests } from "./auto-worktree-milestone-shelter.js";
-
-function findRegularMergeChangedPaths(basePath: string, milestoneBranch: string, mainBranch: string): Set<string> {
-  const changedPaths = new Set<string>();
-  let mergeLog = "";
-  try {
-    mergeLog = execFileSync("git", ["rev-list", "--merges", "--parents", mainBranch], {
-      cwd: basePath,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    }).trim();
-  } catch (err) {
-    logWarning("worktree", `regular merge lookup failed: ${err instanceof Error ? err.message : String(err)}`);
-    return changedPaths;
-  }
-
-  for (const line of mergeLog.split("\n").filter(Boolean)) {
-    const [mergeCommit, firstParent, ...otherParents] = line.split(" ");
-    if (!mergeCommit || !firstParent || otherParents.length === 0) continue;
-    const mergedMilestone = otherParents.some((parent) => {
-      try {
-        return nativeIsAncestor(basePath, milestoneBranch, parent);
-      } catch {
-        return false;
-      }
-    });
-    if (!mergedMilestone) continue;
-
-    try {
-      const output = execFileSync("git", ["diff", "--name-only", firstParent, mergeCommit], {
-        cwd: basePath,
-        stdio: ["ignore", "pipe", "pipe"],
-        encoding: "utf-8",
-      }).trim();
-      for (const path of output.split("\n").filter(Boolean)) {
-        if (!path.startsWith(".gsd/")) changedPaths.add(path);
-      }
-    } catch (err) {
-      logWarning("worktree", `regular merge diff lookup failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    return changedPaths;
-  }
-
-  return changedPaths;
-}
 
 
 // ─── Merge Milestone -> Main ───────────────────────────────────────────────
@@ -229,47 +183,15 @@ export function mergeMilestoneToMain(
   });
 
   // Already regular-merged milestones can skip the squash path and proceed to cleanup (#5831).
-  if (nativeIsAncestor(originalBasePath_, milestoneBranch, mainBranch)) {
-    const codeChanges = nativeDiffNumstat(
-      originalBasePath_,
-      mainBranch,
-      milestoneBranch,
-    ).filter((entry) => !entry.path.startsWith(".gsd/"));
-    if (codeChanges.length > 0) {
-      const regularMergeChangedPaths = findRegularMergeChangedPaths(
-        originalBasePath_,
-        milestoneBranch,
-        mainBranch,
-      );
-      const unanchoredCodeChanges = codeChanges.filter((entry) =>
-        regularMergeChangedPaths.has(entry.path)
-      );
-      if (unanchoredCodeChanges.length > 0) {
-        process.chdir(previousCwd);
-        throw new GSDError(
-          GSD_GIT_ERROR,
-          `Milestone branch "${milestoneBranch}" is reachable from "${mainBranch}" ` +
-            `but has ${unanchoredCodeChanges.length} milestone-touched code file(s) not on current "${mainBranch}". ` +
-            `Aborting worktree teardown to prevent data loss.`,
-        );
-      }
-    }
-    debugLog("mergeMilestoneToMain", {
-      action: "skip-squash-already-merged",
-      milestoneId,
-      milestoneBranch,
-      mainBranch,
-    });
-    cleanupMergedMilestoneWorktree({
-      projectRoot: originalBasePath_,
-      milestoneId,
-      milestoneBranch,
-      previousCwd,
-      clearProjectRootState: true,
-      chdirWarningContext: "after already-merged cleanup",
-    });
-    return { commitMessage, pushed: false, prCreated: false, codeFilesChanged: true };
-  }
+  const alreadyMerged = finalizeAlreadyMergedMilestoneIfReachable({
+    projectRoot: originalBasePath_,
+    milestoneId,
+    milestoneBranch,
+    mainBranch,
+    previousCwd,
+    commitMessage,
+  });
+  if (alreadyMerged) return alreadyMerged;
 
   // 7. Shelter queued milestone directories before the squash merge (#2505).
   // MUST run before the pre-merge stash so queued CONTEXT files are not swept
