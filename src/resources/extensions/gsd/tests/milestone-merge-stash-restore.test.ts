@@ -14,7 +14,7 @@ import {
 } from "../auto/closeout.js";
 import type { IterationContext } from "../auto/types.js";
 import { MergeConflictError } from "../git-service.js";
-import { closeDatabase, insertMilestone, insertSlice, insertTask, openDatabase } from "../gsd-db.js";
+import { closeDatabase, insertDecision, insertMilestone, insertSlice, insertTask, openDatabase } from "../gsd-db.js";
 import { renderAllFromDb } from "../markdown-renderer.js";
 import { resolveMilestoneFile } from "../paths.js";
 import type {
@@ -566,7 +566,7 @@ test("postflight-restored projection edits survive successful merge rebuild", as
   });
 });
 
-test("untracked markdown under a new .gsd directory suppresses successful merge rebuild", async () => {
+test("untracked markdown under a new generated .gsd projection directory suppresses successful merge rebuild", async () => {
   await withProjectionBackedProject(async (basePath, roadmapPath) => {
     insertFreshDbSlice();
 
@@ -578,9 +578,9 @@ test("untracked markdown under a new .gsd directory suppresses successful merge 
     (ic.s as { basePath: string; originalBasePath: string }).basePath = basePath;
     (ic.s as { basePath: string; originalBasePath: string }).originalBasePath = basePath;
     (ic.deps as unknown as { postflightPopStash: () => PostflightResult }).postflightPopStash = () => {
-      const restoredDir = join(basePath, ".gsd", "restored-projections");
+      const restoredDir = join(basePath, ".gsd", "milestones", "M002", "slices", "S99");
       mkdirSync(restoredDir, { recursive: true });
-      writeFileSync(join(restoredDir, "local.md"), "# restored local markdown\n", "utf8");
+      writeFileSync(join(restoredDir, "S99-SUMMARY.md"), "# restored local markdown\n", "utf8");
       return POP_OK;
     };
 
@@ -590,7 +590,7 @@ test("untracked markdown under a new .gsd directory suppresses successful merge 
     assert.doesNotMatch(
       readFileSync(roadmapPath, "utf8"),
       /Fresh DB Slice/,
-      "untracked markdown projections inside new .gsd directories must suppress rebuild",
+      "untracked markdown projections inside generated .gsd directories must suppress rebuild",
     );
   });
 });
@@ -610,9 +610,9 @@ test("ignored untracked markdown under .gsd suppresses successful merge rebuild"
     (ic.s as { basePath: string; originalBasePath: string }).basePath = basePath;
     (ic.s as { basePath: string; originalBasePath: string }).originalBasePath = basePath;
     (ic.deps as unknown as { postflightPopStash: () => PostflightResult }).postflightPopStash = () => {
-      const restoredDir = join(basePath, ".gsd", "ignored-restored-projections");
+      const restoredDir = join(basePath, ".gsd", "milestones", "M002", "ignored-restored-projections");
       mkdirSync(restoredDir, { recursive: true });
-      writeFileSync(join(restoredDir, "local.md"), "# ignored restored local markdown\n", "utf8");
+      writeFileSync(join(restoredDir, "S99-SUMMARY.md"), "# ignored restored local markdown\n", "utf8");
       return POP_OK;
     };
 
@@ -632,9 +632,9 @@ test("preexisting ignored markdown under .gsd does not suppress successful merge
     writeFileSync(join(basePath, ".gitignore"), ".gsd\n", "utf8");
     git(basePath, ["add", ".gitignore"]);
     git(basePath, ["commit", "-m", "ignore gsd projections"], "ignore");
-    mkdirSync(join(basePath, ".gsd", "ignored-existing-projections"), { recursive: true });
+    mkdirSync(join(basePath, ".gsd", "milestones", "M002", "ignored-existing-projections"), { recursive: true });
     writeFileSync(
-      join(basePath, ".gsd", "ignored-existing-projections", "local.md"),
+      join(basePath, ".gsd", "milestones", "M002", "ignored-existing-projections", "S99-SUMMARY.md"),
       "# already ignored local markdown\n",
       "utf8",
     );
@@ -695,6 +695,111 @@ test("failed pre-merge ignored snapshot still suppresses rebuild over restored i
       "a null pre-merge ignored snapshot must fail closed and preserve restored ignored .gsd markdown",
     );
   }, { gitInit: false });
+});
+
+test("non-projection .gsd markdown does not suppress successful merge rebuild", async () => {
+  await withProjectionBackedProject(async (basePath, roadmapPath) => {
+    insertFreshDbSlice();
+
+    const { ic } = buildIc({
+      preflightResult: STASH_PUSHED,
+      mergeBehavior: "succeed",
+      postflightResult: POP_OK,
+    });
+    (ic.s as { basePath: string; originalBasePath: string }).basePath = basePath;
+    (ic.s as { basePath: string; originalBasePath: string }).originalBasePath = basePath;
+    (ic.deps as unknown as { postflightPopStash: () => PostflightResult }).postflightPopStash = () => {
+      writeFileSync(join(basePath, ".gsd", "PREFERENCES.md"), "# local preferences note\n", "utf8");
+      mkdirSync(join(basePath, ".gsd", "milestones", "M002"), { recursive: true });
+      writeFileSync(join(basePath, ".gsd", "milestones", "M002", "NOTES.md"), "# local milestone note\n", "utf8");
+      return POP_OK;
+    };
+
+    const result = await _runMilestoneMergeWithStashRestore(ic, "M002");
+
+    assert.equal(result, null);
+    assert.match(
+      readFileSync(roadmapPath, "utf8"),
+      /Fresh DB Slice/,
+      "non-generated .gsd markdown must not block the required projection rebuild",
+    );
+  });
+});
+
+test("three-digit flat-phase projection restored by postflight suppresses successful merge rebuild", async () => {
+  await withProjectionBackedProject(async (basePath, roadmapPath) => {
+    insertFreshDbSlice();
+
+    const { ic } = buildIc({
+      preflightResult: STASH_PUSHED,
+      mergeBehavior: "succeed",
+      postflightResult: POP_OK,
+    });
+    (ic.s as { basePath: string; originalBasePath: string }).basePath = basePath;
+    (ic.s as { basePath: string; originalBasePath: string }).originalBasePath = basePath;
+    (ic.deps as unknown as { postflightPopStash: () => PostflightResult }).postflightPopStash = () => {
+      const restoredDir = join(basePath, ".gsd", "phases", "999-db-backed-planning");
+      mkdirSync(restoredDir, { recursive: true });
+      writeFileSync(join(restoredDir, "999-ROADMAP.md"), "# restored 3-digit projection\n", "utf8");
+      return POP_OK;
+    };
+
+    const result = await _runMilestoneMergeWithStashRestore(ic, "M002");
+
+    assert.equal(result, null);
+    assert.doesNotMatch(
+      readFileSync(roadmapPath, "utf8"),
+      /Fresh DB Slice/,
+      "three-digit flat-phase projections restored by postflight must suppress rebuild",
+    );
+  });
+});
+
+test("root DECISIONS projection restored by postflight suppresses successful merge rebuild", async () => {
+  await withProjectionBackedProject(async (basePath, roadmapPath) => {
+    insertFreshDbSlice();
+    insertDecision({
+      id: "D001",
+      when_context: "closeout",
+      scope: "global",
+      decision: "Regenerate decisions from DB",
+      choice: "Use database projection",
+      rationale: "Exercise root decision projection rebuild",
+      revisable: "Yes",
+      made_by: "agent",
+      superseded_by: null,
+    });
+
+    const { ic } = buildIc({
+      preflightResult: STASH_PUSHED,
+      mergeBehavior: "succeed",
+      postflightResult: POP_OK,
+    });
+    (ic.s as { basePath: string; originalBasePath: string }).basePath = basePath;
+    (ic.s as { basePath: string; originalBasePath: string }).originalBasePath = basePath;
+    (ic.deps as unknown as { postflightPopStash: () => PostflightResult }).postflightPopStash = () => {
+      writeFileSync(
+        join(basePath, ".gsd", "DECISIONS.md"),
+        "# local decisions edit restored from stash\n",
+        "utf8",
+      );
+      return POP_OK;
+    };
+
+    const result = await _runMilestoneMergeWithStashRestore(ic, "M002");
+
+    assert.equal(result, null);
+    assert.doesNotMatch(
+      readFileSync(roadmapPath, "utf8"),
+      /Fresh DB Slice/,
+      "root generated DECISIONS.md restored by postflight must suppress rebuild",
+    );
+    assert.equal(
+      readFileSync(join(basePath, ".gsd", "DECISIONS.md"), "utf8"),
+      "# local decisions edit restored from stash\n",
+      "rebuild must not overwrite restored root DECISIONS.md edits",
+    );
+  });
 });
 
 test("non-projection .gsd dirt does not suppress successful merge rebuild", async () => {
@@ -782,13 +887,13 @@ test("git-quoted special-character .gsd markdown paths still suppress rebuild", 
     (ic.s as { basePath: string; originalBasePath: string }).basePath = basePath;
     (ic.s as { basePath: string; originalBasePath: string }).originalBasePath = basePath;
     (ic.deps as unknown as { postflightPopStash: () => PostflightResult }).postflightPopStash = () => {
-      const restoredDir = join(basePath, ".gsd", "restored");
+      const restoredDir = join(basePath, ".gsd", "milestones", "M002", "restoréd");
       mkdirSync(restoredDir, { recursive: true });
-      // A non-ASCII filename that `git status --porcelain` C-quotes as
-      // "...caf\303\251.md" without -z; a naive line.endsWith(".md") check
-      // would miss the quoted path. NUL-delimited (-z) parsing sees the raw
-      // path and still detects it as a dirty markdown projection.
-      writeFileSync(join(restoredDir, "café.md"), "# restored local markdown\n", "utf8");
+      // A non-ASCII generated projection path that `git status --porcelain`
+      // C-quotes without -z; a naive line.endsWith(".md") check would miss the
+      // quoted path. NUL-delimited (-z) parsing sees the raw path and still
+      // detects it as generated projection dirt.
+      writeFileSync(join(restoredDir, "S99-SUMMARY.md"), "# restored local markdown\n", "utf8");
       return POP_OK;
     };
 
@@ -798,7 +903,7 @@ test("git-quoted special-character .gsd markdown paths still suppress rebuild", 
     assert.doesNotMatch(
       readFileSync(roadmapPath, "utf8"),
       /Fresh DB Slice/,
-      "special-character .gsd markdown restored by postflight must suppress the rebuild",
+      "special-character generated .gsd markdown restored by postflight must suppress the rebuild",
     );
   });
 });

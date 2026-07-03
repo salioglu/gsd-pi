@@ -18,7 +18,7 @@ import { getIsolationMode } from "../preferences.js";
 import { isDbAvailable, getMilestone } from "../gsd-db.js";
 import { refreshWorkflowDatabaseFromDisk } from "../db-workspace.js";
 import { isClosedStatus } from "../status-guards.js";
-import { gsdRoot } from "../paths.js";
+import { gsdRoot, PLANNING_ARTIFACT_SUFFIXES } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
 import { logWarning, logError } from "../workflow-logger.js";
 import { debugLog } from "../debug-logger.js";
@@ -233,10 +233,10 @@ function hasDirtyGsdMarkdownProjections(
       if (entry.length <= 3) continue;
       const status = entry.slice(0, 2);
       const path = entry.slice(3);
-      if (path.endsWith(".md")) return true;
+      if (isGeneratedGsdMarkdownProjection(path)) return true;
       if ((status === "R " || status === "C ") && i + 1 < entries.length) {
         const dest = entries[++i];
-        if (dest.endsWith(".md")) return true;
+        if (isGeneratedGsdMarkdownProjection(dest)) return true;
       }
     }
   } catch (err) {
@@ -244,6 +244,26 @@ function hasDirtyGsdMarkdownProjections(
     // Fall through to ignored-file snapshot comparison below.
   }
   return ignoredGsdMarkdownProjectionSnapshotChanged(basePath, ignoredProjectionSnapshot);
+}
+
+function isGeneratedGsdMarkdownProjection(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  if (normalized === ".gsd/DECISIONS.md") return true;
+  if (!normalized.startsWith(".gsd/milestones/") && !normalized.startsWith(".gsd/phases/")) {
+    return false;
+  }
+  return isGeneratedPlanningArtifactFileName(basename(normalized));
+}
+
+function isGeneratedPlanningArtifactFileName(fileName: string): boolean {
+  if (!fileName.endsWith(".md")) return false;
+  const stem = fileName.slice(0, -".md".length).toUpperCase();
+  for (const suffix of PLANNING_ARTIFACT_SUFFIXES) {
+    if (!stem.endsWith(`-${suffix}`)) continue;
+    const idPrefix = stem.slice(0, -suffix.length - 1);
+    return /^(?:[MST]\d+|\d{2,})(?:-[A-Z0-9]+)*$/.test(idPrefix);
+  }
+  return false;
 }
 
 function snapshotIgnoredGsdMarkdownProjections(basePath: string): GsdMarkdownSnapshot | null {
@@ -255,7 +275,7 @@ function snapshotIgnoredGsdMarkdownProjections(basePath: string): GsdMarkdownSna
     );
     const snapshot: GsdMarkdownSnapshot = new Map();
     for (const path of output.split("\0")) {
-      if (!path.endsWith(".md")) continue;
+      if (!isGeneratedGsdMarkdownProjection(path)) continue;
       snapshot.set(path, hashFile(join(basePath, path)));
     }
     return snapshot;
