@@ -68,19 +68,21 @@ import {
   getCurrentBranch,
 } from "./worktree.js";
 import { nativeCheckoutBranch } from "./native-git-bridge.js";
-// ADR-016 phase 2 / C2 (#5625): worktree-manager helpers inlined from
-// `./auto-worktree.js`. These seven functions are not real seams — Lifecycle
-// is the only Module that calls them, and they live alongside the Module's
-// other primitives in `auto-worktree.ts`.
+// ADR-016 phase 2 / C2 (#5625): lifecycle uses focused auto-worktree
+// modules instead of the legacy compatibility barrel. Branch, entry/path,
+// creation, and teardown primitives are still implementation-level seams for
+// Lifecycle; tests vary them through `WorktreeLifecycleTestOverrides` below.
 import {
   autoWorktreeBranch,
-  createAutoWorktree,
-  enterAutoWorktree,
   enterBranchModeForMilestone,
-  getAutoWorktreePath,
+} from "./auto-worktree-branch-lifecycle.js";
+import { createAutoWorktree } from "./auto-worktree-creation.js";
+import {
+  enterAutoWorktree,
   isInAutoWorktree,
-  teardownAutoWorktree,
-} from "./auto-worktree.js";
+} from "./auto-worktree-entry.js";
+import { getAutoWorktreePath } from "./auto-worktree-path-resolution.js";
+import { teardownAutoWorktree } from "./auto-worktree-teardown.js";
 import { resolveRoadmapForMilestoneMerge } from "./milestone-merge-roadmap.js";
 import type { MilestoneMergeTransactionRunner } from "./milestone-merge-transaction.js";
 

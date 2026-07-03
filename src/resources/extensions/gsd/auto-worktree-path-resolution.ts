@@ -1,6 +1,6 @@
-// gsd-pi — Narrow auto-worktree path resolution seam.
+// gsd-pi — Auto-worktree path resolution seam.
 //
-// Keeps callers that only resolve existing auto-worktree paths off the legacy
-// auto-worktree compatibility barrel while extraction continues.
+// Keeps callers that only resolve existing auto-worktree paths on the focused
+// entry/path module instead of the legacy auto-worktree compatibility barrel.
 
-export { getAutoWorktreePath } from "./auto-worktree.js";
+export { getAutoWorktreePath } from "./auto-worktree-entry.js";
