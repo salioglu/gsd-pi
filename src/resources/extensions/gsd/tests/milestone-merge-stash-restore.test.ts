@@ -245,7 +245,10 @@ function git(basePath: string, args: string[], stdio: "ignore" | "pipe" = "pipe"
   execFileSync("git", args, { cwd: basePath, stdio });
 }
 
-async function withProjectionBackedProject<T>(fn: (basePath: string, roadmapPath: string) => Promise<T>): Promise<T> {
+async function withProjectionBackedProject<T>(
+  fn: (basePath: string, roadmapPath: string) => Promise<T>,
+  options: { gitInit?: boolean } = {},
+): Promise<T> {
   const basePath = mkdtempSync(join(tmpdir(), "gsd-postflight-projection-"));
   try {
     mkdirSync(join(basePath, ".gsd"), { recursive: true });
@@ -273,11 +276,13 @@ async function withProjectionBackedProject<T>(fn: (basePath: string, roadmapPath
       status: "pending",
     });
     await renderAllFromDb(basePath);
-    git(basePath, ["init"], "ignore");
-    git(basePath, ["config", "user.email", "test@example.invalid"]);
-    git(basePath, ["config", "user.name", "Test"]);
-    git(basePath, ["add", ".gsd"]);
-    git(basePath, ["commit", "-m", "initial projections"], "ignore");
+    if (options.gitInit !== false) {
+      git(basePath, ["init"], "ignore");
+      git(basePath, ["config", "user.email", "test@example.invalid"]);
+      git(basePath, ["config", "user.name", "Test"]);
+      git(basePath, ["add", ".gsd"]);
+      git(basePath, ["commit", "-m", "initial projections"], "ignore");
+    }
     const roadmapPath = resolveMilestoneFile(basePath, "M002", "ROADMAP");
     assert.ok(roadmapPath, "expected rendered M002 roadmap path");
     return await fn(basePath, roadmapPath);
@@ -652,6 +657,44 @@ test("preexisting ignored markdown under .gsd does not suppress successful merge
       "stable preexisting ignored .gsd markdown must not block the required projection rebuild",
     );
   });
+});
+
+test("failed pre-merge ignored snapshot still suppresses rebuild over restored ignored markdown", async () => {
+  await withProjectionBackedProject(async (basePath, roadmapPath) => {
+    insertFreshDbSlice();
+
+    const { ic } = buildIc({
+      preflightResult: STASH_PUSHED,
+      mergeBehavior: "succeed",
+      postflightResult: POP_OK,
+    });
+    (ic.s as { basePath: string; originalBasePath: string }).basePath = basePath;
+    (ic.s as { basePath: string; originalBasePath: string }).originalBasePath = basePath;
+    (ic.deps as unknown as { postflightPopStash: () => PostflightResult }).postflightPopStash = () => {
+      // Git only becomes available AFTER the pre-merge ignored-markdown
+      // snapshot was attempted, so `before` is null. Postflight then restores
+      // ignored `.gsd` markdown that plain `git status` cannot see. With no
+      // baseline to diff against, the guard must fail closed and refuse to
+      // rebuild over the restored edit.
+      git(basePath, ["init"], "ignore");
+      git(basePath, ["config", "user.email", "test@example.invalid"]);
+      git(basePath, ["config", "user.name", "Test"]);
+      writeFileSync(join(basePath, ".gitignore"), ".gsd\n", "utf8");
+      git(basePath, ["add", ".gitignore"]);
+      git(basePath, ["commit", "-m", "ignore gsd projections"], "ignore");
+      writeFileSync(roadmapPath, "# ignored projection edit restored from stash\n", "utf8");
+      return POP_OK;
+    };
+
+    const result = await _runMilestoneMergeWithStashRestore(ic, "M002");
+
+    assert.equal(result, null);
+    assert.equal(
+      readFileSync(roadmapPath, "utf8"),
+      "# ignored projection edit restored from stash\n",
+      "a null pre-merge ignored snapshot must fail closed and preserve restored ignored .gsd markdown",
+    );
+  }, { gitInit: false });
 });
 
 test("non-projection .gsd dirt does not suppress successful merge rebuild", async () => {
