@@ -59,6 +59,7 @@ interface DerivedStateContext {
 interface DerivedStateOptions {
   blockers?: string[];
   lastCompletedMilestone?: ActiveRef | null;
+  includeActiveWorkspace?: boolean;
 }
 
 function buildProgress(context: DerivedStateContext): NonNullable<GSDState["progress"]> {
@@ -86,6 +87,7 @@ function buildDerivedState(
     ...(options.lastCompletedMilestone !== undefined
       ? { lastCompletedMilestone: options.lastCompletedMilestone }
       : {}),
+    ...(options.includeActiveWorkspace ? { activeWorkspace: undefined } : {}),
     registry: context.registry,
     requirements: context.requirements,
     progress: buildProgress(context),
@@ -392,13 +394,16 @@ export async function deriveStateFromDb(
     : allMilestones;
 
   if (milestones.length === 0) {
-    return {
-      activeMilestone: null, activeSlice: null, activeTask: null,
-      phase: 'pre-planning', recentDecisions: [], blockers: [],
-      nextAction: 'No milestones found. Run /gsd to create one.',
-      registry: [], requirements,
-      progress: { milestones: { done: 0, total: 0 } },
-    };
+    return buildDerivedState(
+      {
+        activeMilestone: null,
+        registry: [],
+        requirements,
+        milestoneProgress: { done: 0, total: 0 },
+      },
+      'pre-planning',
+      'No milestones found. Run /gsd to create one.',
+    );
   }
 
   const { completeMilestoneIds, parkedMilestoneIds } = buildCompletenessSet(basePath, milestones);
@@ -420,18 +425,24 @@ export async function deriveStateFromDb(
     const nextAction = activeMilestoneHasDraft
       ? `Discuss draft context for milestone ${activeMilestone.id}.`
       : `Plan milestone ${activeMilestone.id}.`;
-    return {
-      activeMilestone, activeSlice: null, activeTask: null,
-      phase, recentDecisions: [], blockers: [],
-      nextAction, registry, requirements,
-      progress: { milestones: milestoneProgress },
-    };
+    return buildDerivedState(
+      { activeMilestone, registry, requirements, milestoneProgress },
+      phase,
+      nextAction,
+    );
   }
 
   const allSlicesDone = activeMilestoneSlices.every(s => isStatusDone(s.status));
   const sliceProgress = {
     done: activeMilestoneSlices.filter(s => isStatusDone(s.status)).length,
     total: activeMilestoneSlices.length,
+  };
+  const sliceStateContext: DerivedStateContext = {
+    activeMilestone,
+    registry,
+    requirements,
+    milestoneProgress,
+    sliceProgress,
   };
 
   if (allSlicesDone) {
@@ -443,21 +454,19 @@ export async function deriveStateFromDb(
     // If locked slice wasn't found, it returns null but logs warning, we need to return 'blocked'
     const sliceLock = process.env.GSD_PARALLEL_WORKER ? process.env.GSD_SLICE_LOCK : undefined;
     if (sliceLock) {
-      return {
-        activeMilestone, activeSlice: null, activeTask: null,
-        phase: 'blocked', recentDecisions: [], blockers: [`GSD_SLICE_LOCK=${sliceLock} not found in active milestone slices`],
-        nextAction: 'Slice lock references a non-existent slice — check orchestrator dispatch.',
-        registry, requirements,
-        progress: { milestones: milestoneProgress, slices: sliceProgress },
-      };
+      return buildDerivedState(
+        sliceStateContext,
+        'blocked',
+        'Slice lock references a non-existent slice — check orchestrator dispatch.',
+        { blockers: [`GSD_SLICE_LOCK=${sliceLock} not found in active milestone slices`] },
+      );
     }
-    return {
-      activeMilestone, activeSlice: null, activeTask: null,
-      phase: 'blocked', recentDecisions: [], blockers: ['No slice eligible — check dependency ordering'],
-      nextAction: 'Resolve dependency blockers or plan next slice.',
-      registry, requirements,
-      progress: { milestones: milestoneProgress, slices: sliceProgress },
-    };
+    return buildDerivedState(
+      sliceStateContext,
+      'blocked',
+      'Resolve dependency blockers or plan next slice.',
+      { blockers: ['No slice eligible — check dependency ordering'] },
+    );
   }
   const { activeSlice } = activeSliceContext;
   const activeSliceRow = activeSliceContext.activeSliceRow;
@@ -468,13 +477,11 @@ export async function deriveStateFromDb(
   // PLAN.md and preference flags are projections/configuration and are
   // deliberately not used to infer whether the slice itself is a sketch.
   if (activeSliceRow?.is_sketch === 1) {
-    return {
-      activeMilestone, activeSlice, activeTask: null,
-      phase: 'refining', recentDecisions: [], blockers: [],
-      nextAction: `Refine sketch slice ${activeSlice.id} (${activeSlice.title}) using prior slice context.`,
-      registry, requirements,
-      progress: { milestones: milestoneProgress, slices: sliceProgress },
-    };
+    return buildDerivedState(
+      { ...sliceStateContext, activeSlice },
+      'refining',
+      `Refine sketch slice ${activeSlice.id} (${activeSlice.title}) using prior slice context.`,
+    );
   }
 
   const tasks = getSliceTasks(activeMilestone.id, activeSlice.id);
@@ -483,30 +490,35 @@ export async function deriveStateFromDb(
     done: tasks.filter(t => isStatusDone(t.status)).length,
     total: tasks.length,
   };
+  const taskStateContext: DerivedStateContext = {
+    ...sliceStateContext,
+    activeSlice,
+    taskProgress,
+  };
 
   const activeTaskRow = tasks.find(t => !isStatusDone(t.status));
 
   if (!activeTaskRow && tasks.length > 0) {
-    return {
-      activeMilestone, activeSlice, activeTask: null,
-      phase: 'summarizing', recentDecisions: [], blockers: [],
-      nextAction: `All tasks done in ${activeSlice.id}. Write slice summary and complete slice.`,
-      registry, requirements,
-      progress: { milestones: milestoneProgress, slices: sliceProgress, tasks: taskProgress },
-    };
+    return buildDerivedState(
+      taskStateContext,
+      'summarizing',
+      `All tasks done in ${activeSlice.id}. Write slice summary and complete slice.`,
+    );
   }
 
   if (!activeTaskRow) {
-    return {
-      activeMilestone, activeSlice, activeTask: null,
-      phase: 'planning', recentDecisions: [], blockers: [],
-      nextAction: `Slice ${activeSlice.id} has no DB tasks. Plan slice tasks before execution.`,
-      registry, requirements,
-      progress: { milestones: milestoneProgress, slices: sliceProgress, tasks: taskProgress },
-    };
+    return buildDerivedState(
+      taskStateContext,
+      'planning',
+      `Slice ${activeSlice.id} has no DB tasks. Plan slice tasks before execution.`,
+    );
   }
 
   const activeTask: ActiveRef = { id: activeTaskRow.id, title: activeTaskRow.title };
+  const activeTaskStateContext: DerivedStateContext = {
+    ...taskStateContext,
+    activeTask,
+  };
 
   // ── Quality gate evaluation check ──────────────────────────────────
   // Pause before execution only when gates owned by the `gate-evaluate`
@@ -521,28 +533,26 @@ export async function deriveStateFromDb(
     "gate-evaluate",
   );
   if (pendingGateCount > 0) {
-    return {
-      activeMilestone, activeSlice, activeTask: null,
-      phase: 'evaluating-gates', recentDecisions: [], blockers: [],
-      nextAction: `Evaluate ${pendingGateCount} quality gate(s) for ${activeSlice.id} before execution.`,
-      registry, requirements,
-      progress: { milestones: milestoneProgress, slices: sliceProgress, tasks: taskProgress },
-    };
+    return buildDerivedState(
+      taskStateContext,
+      'evaluating-gates',
+      `Evaluate ${pendingGateCount} quality gate(s) for ${activeSlice.id} before execution.`,
+    );
   }
 
   const blockerTaskId = await detectBlockers(basePath, activeMilestone.id, activeSlice.id, tasks);
   if (blockerTaskId) {
     const replanHistory = getReplanHistory(activeMilestone.id, activeSlice.id);
     if (replanHistory.length === 0) {
-      return {
-        activeMilestone, activeSlice, activeTask,
-        phase: 'replanning-slice', recentDecisions: [],
-        blockers: [`Task ${blockerTaskId} discovered a blocker requiring slice replan`],
-        nextAction: `Task ${blockerTaskId} reported blocker_discovered. Replan slice ${activeSlice.id} before continuing.`,
-        activeWorkspace: undefined,
-        registry, requirements,
-        progress: { milestones: milestoneProgress, slices: sliceProgress, tasks: taskProgress },
-      };
+      return buildDerivedState(
+        activeTaskStateContext,
+        'replanning-slice',
+        `Task ${blockerTaskId} reported blocker_discovered. Replan slice ${activeSlice.id} before continuing.`,
+        {
+          blockers: [`Task ${blockerTaskId} discovered a blocker requiring slice replan`],
+          includeActiveWorkspace: true,
+        },
+      );
     }
   }
 
@@ -558,15 +568,15 @@ export async function deriveStateFromDb(
   // and the user's prior resolution never lands.
   const escalatingTaskId = detectPendingEscalation(tasks, basePath);
   if (escalatingTaskId) {
-    return {
-      activeMilestone, activeSlice, activeTask,
-      phase: 'escalating-task', recentDecisions: [],
-      blockers: [`Task ${escalatingTaskId} requires a user decision before the loop can proceed`],
-      nextAction: `Run /gsd escalate show ${escalatingTaskId} to review, then /gsd escalate resolve ${escalatingTaskId} <choice> to proceed.`,
-      activeWorkspace: undefined,
-      registry, requirements,
-      progress: { milestones: milestoneProgress, slices: sliceProgress, tasks: taskProgress },
-    };
+    return buildDerivedState(
+      activeTaskStateContext,
+      'escalating-task',
+      `Run /gsd escalate show ${escalatingTaskId} to review, then /gsd escalate resolve ${escalatingTaskId} <choice> to proceed.`,
+      {
+        blockers: [`Task ${escalatingTaskId} requires a user decision before the loop can proceed`],
+        includeActiveWorkspace: true,
+      },
+    );
   }
 
   if (!blockerTaskId) {
@@ -574,24 +584,22 @@ export async function deriveStateFromDb(
     if (isTriggered) {
       const replanHistory = getReplanHistory(activeMilestone.id, activeSlice.id);
       if (replanHistory.length === 0) {
-        return {
-          activeMilestone, activeSlice, activeTask,
-          phase: 'replanning-slice', recentDecisions: [],
-          blockers: ['Triage replan trigger detected — slice replan required'],
-          nextAction: `Triage replan triggered for slice ${activeSlice.id}. Replan before continuing.`,
-          activeWorkspace: undefined,
-          registry, requirements,
-          progress: { milestones: milestoneProgress, slices: sliceProgress, tasks: taskProgress },
-        };
+        return buildDerivedState(
+          activeTaskStateContext,
+          'replanning-slice',
+          `Triage replan triggered for slice ${activeSlice.id}. Replan before continuing.`,
+          {
+            blockers: ['Triage replan trigger detected — slice replan required'],
+            includeActiveWorkspace: true,
+          },
+        );
       }
     }
   }
 
-  return {
-    activeMilestone, activeSlice, activeTask,
-    phase: 'executing', recentDecisions: [], blockers: [],
-    nextAction: `Execute ${activeTask.id}: ${activeTask.title} in slice ${activeSlice.id}.`,
-    registry, requirements,
-    progress: { milestones: milestoneProgress, slices: sliceProgress, tasks: taskProgress },
-  };
+  return buildDerivedState(
+    activeTaskStateContext,
+    'executing',
+    `Execute ${activeTask.id}: ${activeTask.title} in slice ${activeSlice.id}.`,
+  );
 }
