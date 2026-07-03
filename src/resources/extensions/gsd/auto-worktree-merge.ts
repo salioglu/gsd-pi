@@ -11,7 +11,6 @@ import { GSDError, GSD_GIT_ERROR } from "./errors.js";
 import { autoResolveSafeConflictPaths } from "./git-conflict-resolve.js";
 import {
   MergeConflictError,
-  resolveMilestoneIntegrationBranch,
   RUNTIME_EXCLUSION_PATHS,
 } from "./git-service.js";
 import {
@@ -20,10 +19,8 @@ import {
 } from "./gsd-db.js";
 import {
   nativeAddAllWithExclusions,
-  nativeCheckoutBranch,
   nativeCommit,
   nativeConflictFiles,
-  nativeDetectMainBranch,
   nativeDiffNumstat,
   nativeGetCurrentBranch,
   nativeIsAncestor,
@@ -36,7 +33,6 @@ import { publishMilestone } from "./publication.js";
 import {
   autoWorktreeBranch,
 } from "./auto-worktree-branch-lifecycle.js";
-import { clearProjectRootStateFiles } from "./auto-worktree-cleanup.js";
 import { createMilestoneDirectoryShelter } from "./auto-worktree-milestone-shelter.js";
 import { getActiveWorkspace } from "./auto-worktree-session-registry.js";
 import {
@@ -46,6 +42,7 @@ import {
 import { reconcileMilestoneBranchHead } from "./auto-worktree-merge-branch-head.js";
 import { cleanupMergedMilestoneWorktree } from "./auto-worktree-merge-cleanup.js";
 import { assertMilestoneDbReadyForMerge } from "./auto-worktree-merge-db-ready.js";
+import { prepareIntegrationBranchForMilestoneMerge } from "./auto-worktree-merge-integration-branch.js";
 import { buildMilestoneMergeMessage } from "./auto-worktree-merge-message.js";
 import { assertMilestoneWorktreeCleanBeforeTeardown } from "./auto-worktree-merge-pre-teardown.js";
 import { createPreMergeStash } from "./auto-worktree-merge-stash.js";
@@ -101,11 +98,6 @@ function findRegularMergeChangedPaths(basePath: string, milestoneBranch: string,
   return changedPaths;
 }
 
-function normalizeLocalBranchRef(branch: string): string {
-  return branch.startsWith("refs/heads/")
-    ? branch.slice("refs/heads/".length)
-    : branch;
-}
 
 // ─── Merge Milestone -> Main ───────────────────────────────────────────────
 
@@ -214,52 +206,17 @@ export function mergeMilestoneToMain(
   const previousCwd = process.cwd();
   process.chdir(originalBasePath_);
 
-  // 4. Resolve integration branch via shared resolver so stale/invalid
-  //    milestone metadata can recover to configured/detected fallbacks.
+  // 4/5. Resolve and prepare the integration branch. The integration-branch
+  //      module owns stale metadata fallback, self-merge fail-closed behavior,
+  //      detached HEAD protection, transient state cleanup, and checkout.
   const prefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
-  const branchResolution = resolveMilestoneIntegrationBranch(originalBasePath_, milestoneId, prefs);
-  const mainBranch = branchResolution.effectiveBranch ?? nativeDetectMainBranch(originalBasePath_);
-
-  // Fail closed when the resolved integration branch is the milestone branch
-  // itself (#5024). Stale or corrupt metadata (e.g. integrationBranch recorded
-  // as "milestone/<MID>") would otherwise let the squash merge resolve to a
-  // self-merge: nothing-to-commit + empty self-diff in the post-merge safety
-  // check (#1792) collapse to a false success, and the worktree-resolver
-  // emits worktree-merged for work that never landed on a distinct
-  // integration branch.
-  if (normalizeLocalBranchRef(mainBranch) === milestoneBranch) {
-    process.chdir(previousCwd);
-    throw new GSDError(
-      GSD_GIT_ERROR,
-      `Resolved integration branch "${mainBranch}" is the same ref as milestone branch ` +
-      `"${milestoneBranch}" — refusing to self-merge. ${branchResolution.reason}. ` +
-      `Repair milestone integration metadata before retrying milestone completion.`,
-    );
-  }
-
-  // Remove transient project-root state files before any branch or merge
-  // operation. Untracked milestone metadata can otherwise block squash merges.
-  clearProjectRootStateFiles(originalBasePath_, milestoneId);
-
-  // 5. Checkout integration branch (skip if already current — avoids git error
-  //    when main is already checked out in the project-root worktree, #757)
-  //
-  // Refuse to proceed if the project root is in detached HEAD state. Silently
-  // running `nativeCheckoutBranch(mainBranch)` on a detached HEAD would
-  // abandon the user's deliberately-checked-out commit (mid-bisect, reviewing
-  // a tag, CI checkout-sha) without warning. (Issue #4980 HIGH-10)
-  const currentBranchAtBase = nativeGetCurrentBranch(originalBasePath_);
-  if (!currentBranchAtBase || currentBranchAtBase.length === 0) {
-    process.chdir(previousCwd);
-    throw new GSDError(
-      GSD_GIT_ERROR,
-      `Project root is in detached HEAD state — cannot perform milestone merge. ` +
-      `Checkout an integration branch (e.g. \`git checkout ${mainBranch}\`) before resuming.`,
-    );
-  }
-  if (currentBranchAtBase !== mainBranch) {
-    nativeCheckoutBranch(originalBasePath_, mainBranch);
-  }
+  const { mainBranch } = prepareIntegrationBranchForMilestoneMerge({
+    milestoneBranch,
+    milestoneId,
+    prefs,
+    previousCwd,
+    projectRoot: originalBasePath_,
+  });
 
   // 6b. Reconcile worktree HEAD with milestone branch ref (#1846).
   //     The branch-head module owns the data-loss guard: fast-forward stale
