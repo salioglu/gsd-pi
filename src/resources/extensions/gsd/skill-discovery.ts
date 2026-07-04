@@ -44,7 +44,7 @@ export function snapshotSkills(options?: { cwd?: string }): void {
     gsdHome: gsdHome(),
   }).map((entry) => entry.path);
   snapshot = {
-    baselineNames: snapshotCurrentSkillNames(),
+    baselineNames: snapshotCurrentSkillNames(searchDirs),
     searchDirs,
   };
 }
@@ -157,10 +157,10 @@ function escapeXml(value: string): string {
   });
 }
 
-function snapshotCurrentSkillNames(): Set<string> {
-  // Uses the snapshot's search dirs when active; falls back to user-only dirs
+function snapshotCurrentSkillNames(searchDirsOverride?: string[]): Set<string> {
+  // Uses explicit dirs, the snapshot's search dirs when active, or user-only dirs
   // (no project context) when called before a snapshot is taken.
-  const searchDirs = snapshot?.searchDirs ?? defaultSearchDirs();
+  const searchDirs = searchDirsOverride ?? snapshot?.searchDirs ?? defaultSearchDirs();
   return new Set(getCurrentSkillsForDiscovery(searchDirs).map(skill => normalizeSkillName(skill.name)));
 }
 
