@@ -112,6 +112,21 @@ function alignNumericMarkdownIdsWithDb(markdownScan: HierarchyScan, dbScan: Hier
   }
 }
 
+function bareMilestoneId(id: string): string | null {
+  const match = id.match(/^(M\d{3})-[a-z0-9]{6}$/);
+  return match?.[1] ?? null;
+}
+
+function alignBareMarkdownIdsWithSuffixedDb(markdownScan: HierarchyScan, dbScan: HierarchyScan): void {
+  for (const dbId of dbScan.milestones) {
+    const bareId = bareMilestoneId(dbId);
+    if (!bareId || dbScan.milestones.has(bareId) || !markdownScan.milestones.has(bareId)) continue;
+    replaceSetPrefix(markdownScan.milestones, bareId, dbId);
+    replaceSetPrefix(markdownScan.slices, bareId, dbId);
+    replaceSetPrefix(markdownScan.tasks, bareId, dbId);
+  }
+}
+
 /**
  * True when the DB holds any milestone/slice/task identity the markdown lacks —
  * i.e. a `/gsd recover --confirm` (markdown → DB) would DELETE authoritative DB
@@ -208,6 +223,7 @@ export async function checkMarkdownHierarchyAgainstDb(
   const dbScan = scanDbHierarchy();
   const beforeDb = dbScan.counts;
   alignNumericMarkdownIdsWithDb(markdownScan, dbScan);
+  alignBareMarkdownIdsWithSuffixedDb(markdownScan, dbScan);
 
   // Discussion-phase scratch: a milestone dir with no ROADMAP and no DB row is
   // a pre-registration discussion artifact (CONTEXT/CONTEXT-DRAFT only — the

@@ -704,8 +704,9 @@ function phaseDirMatchesMilestoneId(dirName: string, milestoneId: string, phaseN
   if (suffix) {
     return slugPart === suffix || slugPart.startsWith(`${suffix}-`);
   }
-  // Plain sequential IDs must not resolve to unique-suffix phase dirs.
-  return !/^[a-z0-9]{6}(-|$)/.test(slugPart);
+  // Plain sequential IDs may need to resolve a suffixed team-mode phase dir
+  // during markdown-vs-DB drift checks before the DB identity has been aligned.
+  return true;
 }
 
 function resolvePhaseDir(basePath: string, milestoneId: string): string | null {
