@@ -816,22 +816,42 @@ export function migrateHierarchyToDb(basePath: string): {
         // Per K002: use 'complete' not 'done'
         let taskStatus: string = taskEntry.done ? 'complete' : 'pending';
 
+        // Resolve the per-task SUMMARY.md. Legacy layout keeps summaries under
+        // a tasks/ subdir; flat-phase writes TID-SUMMARY.md directly in the
+        // phase dir (execute-task's gsd_task_complete writes it there).
+        const tDir = resolveTasksDir(basePath, milestoneId, sliceEntry.id);
+        let taskSummaryFile: string | null = null;
+        if (tDir) {
+          taskSummaryFile = join(tDir, `${taskEntry.id}-SUMMARY.md`);
+        } else {
+          const phaseDir = resolveMilestonePath(basePath, milestoneId);
+          if (phaseDir) taskSummaryFile = join(phaseDir, `${taskEntry.id}-SUMMARY.md`);
+        }
+        const hasTaskSummary = taskSummaryFile !== null && existsSync(taskSummaryFile);
+
         // Pre-migration consistency (legacy layout only): if a task is marked
         // done but has no per-task SUMMARY.md, import it as pending so it gets
         // re-executed rather than silently entering the DB as complete.
-        // Flat-phase has no per-task summary files by design — the checkbox
-        // state is the authoritative completion signal and is imported as-is.
-        if (taskStatus === 'complete') {
-          const tDir = resolveTasksDir(basePath, milestoneId, sliceEntry.id);
-          if (tDir) {
-            const summaryFile = join(tDir, `${taskEntry.id}-SUMMARY.md`);
-            if (!existsSync(summaryFile)) {
-              taskStatus = 'pending';
-              process.stderr.write(
-                `gsd-migrate: ${milestoneId}/${sliceEntry.id}/${taskEntry.id} marked done but missing summary — importing as pending\n`,
-              );
-            }
-          }
+        if (taskStatus === 'complete' && tDir && !hasTaskSummary) {
+          taskStatus = 'pending';
+          process.stderr.write(
+            `gsd-migrate: ${milestoneId}/${sliceEntry.id}/${taskEntry.id} marked done but missing summary — importing as pending\n`,
+          );
+        }
+
+        // Lost-update guard (#1222): a per-task SUMMARY.md is the durable
+        // completion attestation written by gsd_task_complete. When the plan
+        // checkbox is stale-unchecked but the SUMMARY exists on disk, a
+        // re-import must NOT downgrade the completed task back to pending — that
+        // silent revert is the lost-update that hard-stopped auto-mode after the
+        // first execute-task. The surviving SUMMARY wins over a stale checkbox.
+        // reopen-task removes the SUMMARY, so this never re-completes an
+        // intentionally reopened task.
+        if (taskStatus === 'pending' && hasTaskSummary) {
+          taskStatus = 'complete';
+          process.stderr.write(
+            `gsd-migrate: ${milestoneId}/${sliceEntry.id}/${taskEntry.id} unchecked in plan but SUMMARY.md present — importing as complete (#1222)\n`,
+          );
         }
 
         insertTask({

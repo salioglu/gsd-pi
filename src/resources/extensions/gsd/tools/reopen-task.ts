@@ -25,7 +25,7 @@ import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { resolveTasksDir, clearPathCache } from "../paths.js";
+import { resolveTasksDir, resolveMilestonePath, clearPathCache } from "../paths.js";
 
 export interface ReopenTaskParams {
   milestoneId: string;
@@ -106,10 +106,14 @@ export async function handleReopenTask(
   // ── Clean up stale filesystem artifacts (M12 fix) ────────────────────────
   // Without this, the DB-filesystem reconciler sees the SUMMARY.md and
   // auto-corrects the task back to "complete", making reopen a no-op (#3161).
+  // Legacy layout keeps the summary under a tasks/ subdir; flat-phase writes
+  // TID-SUMMARY.md directly in the phase dir. Remove whichever exists so the
+  // re-import lost-update guard (#1222) doesn't re-complete a reopened task.
   try {
     const tasksDir = resolveTasksDir(basePath, params.milestoneId, params.sliceId);
-    if (tasksDir) {
-      const summaryPath = join(tasksDir, `${params.taskId}-SUMMARY.md`);
+    const summaryDir = tasksDir ?? resolveMilestonePath(basePath, params.milestoneId);
+    if (summaryDir) {
+      const summaryPath = join(summaryDir, `${params.taskId}-SUMMARY.md`);
       if (existsSync(summaryPath)) unlinkSync(summaryPath);
     }
   } catch (cleanupErr) {
