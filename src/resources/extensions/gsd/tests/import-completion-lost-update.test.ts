@@ -152,7 +152,7 @@ test("re-import preserves execution metadata and completed_at of an attested-com
   assert.equal(after.completed_at, OLD_COMPLETED_AT, "completed_at must not be refreshed by re-import");
 });
 
-test("removing the SUMMARY.md (reopen) lets a re-import return the task to pending (#1222)", () => {
+test("removing the SUMMARY.md (reopen) lets a re-import return the task to pending and clears completion metadata (#1222)", () => {
   const base = copyFixture();
   writeFileSync(join(base, SUMMARY_REL), "# T01 SUMMARY\n\nDone.\n");
 
@@ -161,13 +161,36 @@ test("removing the SUMMARY.md (reopen) lets a re-import return the task to pendi
   invalidateStateCache();
   assert.equal(taskStatus(base), "complete", "precondition: task imports complete with SUMMARY present");
 
+  // Simulate the durable completion row gsd_task_complete leaves behind.
+  const { milestoneId, sliceId } = t01Ids();
+  repairTaskCompletionFromSummary({
+    milestoneId,
+    sliceId,
+    taskId: "T01",
+    oneLiner: "Implemented the widget frobnicator end-to-end",
+    verificationResult: "all 12 checks passed",
+    completedAt: "2026-07-01T00:00:00.000Z",
+    fullSummaryMd: "# T01 full summary\n\nEverything about how T01 was done.",
+  });
+  invalidateStateCache();
+  const before = t01Row()!;
+  assert.equal(before.status, "complete", "precondition: T01 is complete");
+  assert.equal(before.completed_at, "2026-07-01T00:00:00.000Z", "precondition: completed_at set");
+
   // reopen-task deletes the flat-phase SUMMARY; the next re-import must respect it.
   unlinkSync(join(base, SUMMARY_REL));
   migrateHierarchyToDb(base);
   invalidateStateCache();
+  const after = t01Row()!;
   assert.equal(
-    taskStatus(base),
+    after.status,
     "pending",
     "after the SUMMARY is removed, a re-import must return the unchecked task to pending",
   );
+  // A pending re-import must not preserve stale completion metadata (#1228 thread):
+  // preserveCompletionMetadata only applies to complete/done imports.
+  assert.ok(!after.completed_at, "completed_at must be cleared when the task reverts to pending");
+  assert.ok(!after.one_liner, "one_liner must be cleared when the task reverts to pending");
+  assert.ok(!after.full_summary_md, "full_summary_md must be cleared when the task reverts to pending");
+  assert.ok(!after.verification_result, "verification_result must be cleared when the task reverts to pending");
 });
