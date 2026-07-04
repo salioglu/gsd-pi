@@ -136,11 +136,11 @@ function rollbackPartialMigration(
     }
     if (existsSync(backupDir)) {
       cpSync(backupDir, milestonesPath, { recursive: true });
+      cleanupBackup();
     }
     if (migratingPath && existsSync(migratingPath)) {
       removePathWithRetries(migratingPath);
     }
-    cleanupBackup();
   } catch (restoreErr) {
     logWarning(
       "migration",
