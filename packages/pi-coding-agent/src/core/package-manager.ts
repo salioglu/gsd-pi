@@ -2267,12 +2267,15 @@ export class DefaultPackageManager implements PackageManager {
 		);
 
 		// Skills — sourced from the shared directory taxonomy (`./skill-directories.js`).
-		// PackageManager filters to the non-Claude kinds so the catalog contents
-		// are unchanged; `agents` vs `pi` mode is derived from the kind. The loop
-		// is split into project-then-user passes to preserve the original
-		// resource-add ordering (project skills before project prompts/themes;
-		// user skills before user prompts/themes) so first-loaded-wins collision
-		// resolution is byte-identical to the prior hardcoded version.
+		// All six kinds are eligible for the catalog. The taxonomy's enumeration
+		// order is precedence order (project → bundled GSD → Claude), so
+		// first-loaded-wins collision resolution makes bundled GSD skills beat
+		// same-named Claude skills — protecting auto-mode dependencies. `agents`
+		// vs `pi` mode is derived from the kind (Claude skills parse identically
+		// to `.agents/skills`, so they reuse the `agents` mode). The loop is split
+		// into project-then-user passes to preserve resource-add ordering
+		// (project skills before project prompts/themes; user skills before user
+		// prompts/themes) so collision resolution matches the prior version.
 		const userAgentsSkillsResolved = resolve(userAgentsSkillsDir);
 		const allSkillEntries = getSkillDirectories({
 			cwd: this.cwd,
@@ -2282,7 +2285,9 @@ export class DefaultPackageManager implements PackageManager {
 				entry.kind === "gsd-project" ||
 				entry.kind === "agents-project" ||
 				entry.kind === "gsd-user" ||
-				entry.kind === "agents-user",
+				entry.kind === "agents-user" ||
+				entry.kind === "claude-project" ||
+				entry.kind === "claude-user",
 		);
 		const addSkillEntries = (scope: "project" | "user"): void => {
 			const baseMetadata = scope === "project" ? projectMetadata : userMetadata;
@@ -2292,8 +2297,10 @@ export class DefaultPackageManager implements PackageManager {
 				// `~/.agents/skills` is excluded from the project (ancestor) walk
 				// so it only loads once, as a user-scope skill.
 				if (scope === "project" && resolve(entry.path) === userAgentsSkillsResolved) continue;
+				// `pi` mode is only for `.gsd/skills` (root-level .md files);
+				// `.agents/skills` and `.claude/skills` use the `agents` mode.
 				const mode: SkillDiscoveryMode =
-					entry.kind === "agents-project" || entry.kind === "agents-user" ? "agents" : "pi";
+					entry.kind === "gsd-project" || entry.kind === "gsd-user" ? "pi" : "agents";
 				const metadata: PathMetadata =
 					entry.baseDir === baseMetadata.baseDir
 						? baseMetadata
