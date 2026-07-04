@@ -95,15 +95,26 @@ export interface GetSkillDirectoriesOptions {
 }
 
 /**
- * Return all known skill directories in precedence order (project kinds first,
- * then user kinds). First match wins for collision resolution.
+ * Return all known skill directories in precedence order. First match wins
+ * for collision resolution.
+ *
+ * Three-tier precedence:
+ *   1. Project kinds (`gsd-project`, `agents-project`) — native project dirs
+ *      override everything below.
+ *   2. Bundled GSD (`gsd-user`, i.e. ~/.gsd/agent/skills/) — protects
+ *      auto-mode dependencies (`handoff`, `decompose-into-slices`, etc.) from
+ *      being shadowed by same-named Claude skills.
+ *   3. Foreign/Claude kinds (`claude-project`, `agents-user`, `claude-user`).
  *
  * The `agents-project` kind is expanded into one entry per ancestor directory
- * (nearest first), mirroring the catalog's historical ancestor walk.
+ * (nearest first, up to the git root), mirroring the catalog's historical
+ * ancestor walk.
  */
 export function getSkillDirectories({ cwd, gsdHome }: GetSkillDirectoriesOptions): SkillDirectoryEntry[] {
 	const resolvedCwd = resolve(cwd);
 	const entries: SkillDirectoryEntry[] = [];
+
+	// Tier 1 — project scope (overrides everything below).
 
 	// 1. <cwd>/.gsd/skills
 	const gsdProjectSkills = join(resolvedCwd, CONFIG_DIR_NAME, "skills");
@@ -124,22 +135,26 @@ export function getSkillDirectories({ cwd, gsdHome }: GetSkillDirectoriesOptions
 		});
 	}
 
-	// 3. <cwd>/.claude/skills
-	const claudeProjectSkills = join(resolvedCwd, ".claude", "skills");
-	entries.push({
-		path: claudeProjectSkills,
-		kind: "claude-project",
-		scope: "project",
-		baseDir: dirname(claudeProjectSkills),
-	});
+	// Tier 2 — bundled GSD (wins over Claude kinds on name collision).
 
-	// 4. ~/.gsd/agent/skills
+	// 3. ~/.gsd/agent/skills
 	const gsdUserSkills = join(gsdHome, "agent", "skills");
 	entries.push({
 		path: gsdUserSkills,
 		kind: "gsd-user",
 		scope: "user",
 		baseDir: dirname(gsdUserSkills),
+	});
+
+	// Tier 3 — foreign / Claude kinds.
+
+	// 4. <cwd>/.claude/skills
+	const claudeProjectSkills = join(resolvedCwd, ".claude", "skills");
+	entries.push({
+		path: claudeProjectSkills,
+		kind: "claude-project",
+		scope: "project",
+		baseDir: dirname(claudeProjectSkills),
 	});
 
 	// 5. ~/.agents/skills

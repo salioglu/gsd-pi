@@ -36,22 +36,24 @@ describe("collectAncestorAgentsSkillDirs", () => {
 });
 
 describe("getSkillDirectories", () => {
-	it("returns one entry per kind plus ancestor expansion, in precedence order", () => {
+	it("returns one entry per kind plus ancestor expansion, in three-tier precedence order", () => {
 		const cwd = "/tmp/myproject";
 		const entries = getSkillDirectories({ cwd, gsdHome: GSD_HOME });
 
-		// The first three kinds are single entries (project, ancestor-from-cwd, claude-project),
-		// then three user kinds. The agents-project expansion adds >=1 ancestor.
+		// Three-tier precedence: project → bundled GSD → Claude/foreign.
+		// Load order decides name-collision winners (first-loaded-wins).
 		const kinds = entries.map((e) => e.kind);
 		expect(kinds[0]).toBe("gsd-project");
-		// agents-project must appear before claude-project (precedence: project kinds first).
+		// Tier 1: project kinds (gsd-project, then agents-project ancestor walk).
 		const firstAgentsProject = kinds.indexOf("agents-project");
-		const firstClaudeProject = kinds.indexOf("claude-project");
-		expect(firstAgentsProject).toBeGreaterThan(-1);
-		expect(firstClaudeProject).toBeGreaterThan(firstAgentsProject);
-		// User kinds come after all project kinds.
-		expect(kinds.indexOf("gsd-user")).toBeGreaterThan(firstClaudeProject);
-		expect(kinds.indexOf("agents-user")).toBeGreaterThan(kinds.indexOf("gsd-user"));
+		expect(firstAgentsProject).toBeGreaterThan(0);
+		// Tier 2: bundled GSD (gsd-user) loads before any Claude kind.
+		const gsdUserIdx = kinds.indexOf("gsd-user");
+		expect(gsdUserIdx).toBeGreaterThan(firstAgentsProject);
+		// Tier 3: Claude/foreign kinds (claude-project, agents-user, claude-user).
+		const claudeProjectIdx = kinds.indexOf("claude-project");
+		expect(claudeProjectIdx).toBeGreaterThan(gsdUserIdx);
+		expect(kinds.indexOf("agents-user")).toBeGreaterThan(claudeProjectIdx);
 		expect(kinds.indexOf("claude-user")).toBeGreaterThan(kinds.indexOf("agents-user"));
 	});
 
