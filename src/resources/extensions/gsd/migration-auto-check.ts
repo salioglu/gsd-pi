@@ -102,13 +102,28 @@ function replaceSetPrefix(values: Set<string>, from: string, to: string): void {
   }
 }
 
+/**
+ * Rewrite one milestone identity across EVERY markdown identity set. The
+ * roadmapless subset is a view of `milestones`, so it must speak the same
+ * aligned vocabulary; otherwise the discussion-phase exclusion below keys off
+ * the stale bare id, fails its `dbScan.milestones.has(...)` membership check,
+ * and decrements the milestone count even though the aligned identity remains
+ * in the set, reporting false drift for a milestone that is actually in sync.
+ * Centralising the set list here keeps every alignment path from silently
+ * missing a set (the defect that regressed the suffixed roadmapless case).
+ */
+function realignMilestonePrefix(markdownScan: HierarchyScan, from: string, to: string): void {
+  replaceSetPrefix(markdownScan.milestones, from, to);
+  replaceSetPrefix(markdownScan.slices, from, to);
+  replaceSetPrefix(markdownScan.tasks, from, to);
+  replaceSetPrefix(markdownScan.milestonesWithoutRoadmap, from, to);
+}
+
 function alignNumericMarkdownIdsWithDb(markdownScan: HierarchyScan, dbScan: HierarchyScan): void {
   for (const dbId of dbScan.milestones) {
     const paddedId = paddedMilestoneId(dbId);
     if (!paddedId || dbScan.milestones.has(paddedId) || !markdownScan.milestones.has(paddedId)) continue;
-    replaceSetPrefix(markdownScan.milestones, paddedId, dbId);
-    replaceSetPrefix(markdownScan.slices, paddedId, dbId);
-    replaceSetPrefix(markdownScan.tasks, paddedId, dbId);
+    realignMilestonePrefix(markdownScan, paddedId, dbId);
   }
 }
 
@@ -121,10 +136,7 @@ function alignBareMarkdownIdsWithSuffixedDb(markdownScan: HierarchyScan, dbScan:
   for (const dbId of dbScan.milestones) {
     const bareId = bareMilestoneId(dbId);
     if (!bareId || dbScan.milestones.has(bareId) || !markdownScan.milestones.has(bareId)) continue;
-    replaceSetPrefix(markdownScan.milestones, bareId, dbId);
-    replaceSetPrefix(markdownScan.slices, bareId, dbId);
-    replaceSetPrefix(markdownScan.tasks, bareId, dbId);
-    replaceSetPrefix(markdownScan.milestonesWithoutRoadmap, bareId, dbId);
+    realignMilestonePrefix(markdownScan, bareId, dbId);
   }
 }
 
