@@ -34,7 +34,7 @@ import {
 import { findMilestoneIds } from './guided-flow.js';
 import { milestoneIdToPhaseNum } from './layout-policy.js';
 import { parseRoadmap, parsePlan } from './parsers-legacy.js';
-import { parseContextDependsOn } from './files.js';
+import { parseContextDependsOn, parseSummary } from './files.js';
 import { logWarning } from './workflow-logger.js';
 
 // ─── DECISIONS.md Parser ───────────────────────────────────────────────────
@@ -852,7 +852,19 @@ export function migrateHierarchyToDb(basePath: string): {
         // first execute-task. The surviving SUMMARY wins over a stale checkbox.
         // reopen-task removes the SUMMARY, so this never re-completes an
         // intentionally reopened task.
-        if (taskStatus === 'pending' && hasTaskSummary) {
+        // Flat-phase summaries are phase-scoped (T01-SUMMARY.md); when a milestone
+        // has multiple slices, require the summary parent frontmatter to match so
+        // one slice's completion does not attest a sibling's same-named task.
+        let summaryAttestsCompletion = hasTaskSummary;
+        if (summaryAttestsCompletion && !isLegacySlice && roadmap.slices.length > 1 && taskSummaryFile) {
+          try {
+            const summaryContent = readFileSync(taskSummaryFile, 'utf-8');
+            summaryAttestsCompletion = parseSummary(summaryContent).frontmatter.parent === sliceEntry.id;
+          } catch {
+            summaryAttestsCompletion = false;
+          }
+        }
+        if (taskStatus === 'pending' && summaryAttestsCompletion) {
           taskStatus = 'complete';
           process.stderr.write(
             `gsd-migrate: ${milestoneId}/${sliceEntry.id}/${taskEntry.id} unchecked in plan but SUMMARY.md present — importing as complete (#1222)\n`,
