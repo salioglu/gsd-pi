@@ -531,7 +531,7 @@ export function insertTask(t: {
     ":observability_impact": t.planning?.observabilityImpact ?? "",
     ":full_plan_md": t.planning?.fullPlanMd ?? "",
     ":sequence": t.sequence ?? 0,
-    ":preserve_completion": t.preserveCompletionMetadata ? 1 : 0,
+    ":preserve_completion": t.preserveCompletionMetadata && (t.status === "complete" || t.status === "done") ? 1 : 0,
     ":target_repositories": JSON.stringify(t.planning?.targetRepositories ?? []),
     ":raw_target_repositories":
       t.planning && "targetRepositories" in t.planning
