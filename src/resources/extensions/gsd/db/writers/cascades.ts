@@ -38,6 +38,15 @@ export type ReopenSliceOutcome =
  * completion timestamps cleared, in one commit. Folds the hand-rolled
  * transaction-plus-cascade previously in tools/reopen-slice.ts. Guards run
  * inside the transaction (TOCTOU-safe).
+ *
+ * A closed slice is always reopenable. An open slice is only reopenable when it
+ * carries a completed-task state desync (#1205): a UAT→planning fallback can
+ * leave the slice "pending" while its tasks stay "complete", which deadlocks
+ * every recovery path (plan-slice/replan-slice/complete-task all reject the
+ * still-closed tasks, and slice_reopen historically rejected the still-open
+ * slice). Resetting those tasks to pending gives the planner the clean slate it
+ * needs. An open slice with nothing completed has nothing to reset and is still
+ * rejected as "slice-not-complete".
  */
 export function reopenSliceCascade(milestoneId: string, sliceId: string): ReopenSliceOutcome {
   requireDb();
@@ -48,9 +57,13 @@ export function reopenSliceCascade(milestoneId: string, sliceId: string): Reopen
     if (isClosedStatus(milestone.status)) { outcome = { ok: false, reason: "milestone-closed", status: milestone.status }; return; }
     const slice = getSlice(milestoneId, sliceId);
     if (!slice) { outcome = { ok: false, reason: "slice-not-found" }; return; }
-    if (!isClosedStatus(slice.status)) { outcome = { ok: false, reason: "slice-not-complete", status: slice.status }; return; }
 
     const tasks = getSliceTasks(milestoneId, sliceId);
+    if (!isClosedStatus(slice.status) && !tasks.some((t) => isClosedStatus(t.status))) {
+      outcome = { ok: false, reason: "slice-not-complete", status: slice.status };
+      return;
+    }
+
     getDbOrNull()!.prepare(
       `UPDATE slices SET status = 'in_progress', completed_at = NULL WHERE milestone_id = :mid AND id = :sid`,
     ).run({ ":mid": milestoneId, ":sid": sliceId });

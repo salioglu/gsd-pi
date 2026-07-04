@@ -125,6 +125,31 @@ test('handleReopenSlice: rejects slice in a closed milestone', async () => {
   }
 });
 
+test('handleReopenSlice: recovers a desynced slice (open status, completed tasks) — #1205', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+  try {
+    // Desync signature: slice left "pending" by a UAT→planning fallback while
+    // its tasks stayed "complete" from the first execution pass.
+    insertMilestone({ id: 'M001', title: 'Active', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', status: 'pending' });
+    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete' });
+    insertTask({ id: 'T02', sliceId: 'S01', milestoneId: 'M001', status: 'complete' });
+
+    const result = await handleReopenSlice({ milestoneId: 'M001', sliceId: 'S01' }, base);
+
+    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+    assert.equal(result.tasksReset, 2, 'both completed tasks should be reset');
+
+    const slice = getSlice('M001', 'S01');
+    assert.equal(slice!.status, 'in_progress', 'slice should be reopened to in_progress');
+    const tasks = getSliceTasks('M001', 'S01');
+    assert.ok(tasks.every(t => t.status === 'pending'), 'all tasks should be reset to pending');
+  } finally {
+    cleanup(base);
+  }
+});
+
 test('handleReopenSlice: rejects reopening a slice that is not complete', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));
