@@ -5,7 +5,7 @@
 // Exports: parseDecisionsTable, parseRequirementsSections, migrateFromMarkdown
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
-import { join, relative, basename } from 'node:path';
+import { join, relative, basename, dirname } from 'node:path';
 import type { Decision, Requirement } from './types.js';
 import {
   upsertDecision,
@@ -24,6 +24,7 @@ import {
   resolveGsdRootFile,
   resolveMilestoneFile,
   resolveSliceFile,
+  resolveSlicePath,
   resolveTasksDir,
   legacyMilestonesDir,
   gsdRoot,
@@ -818,21 +819,25 @@ export function migrateHierarchyToDb(basePath: string): {
 
         // Resolve the per-task SUMMARY.md. Legacy layout keeps summaries under
         // a tasks/ subdir; flat-phase writes TID-SUMMARY.md directly in the
-        // phase dir (execute-task's gsd_task_complete writes it there).
-        const tDir = resolveTasksDir(basePath, milestoneId, sliceEntry.id);
+        // phase dir (execute-task's gsd_task_complete writes it there). A tasks/
+        // subdir may still exist in flat-phase for auxiliary artifacts — its
+        // mere existence must NOT redirect summary resolution into tasks/ (#1208).
+        const slicePath = resolveSlicePath(basePath, milestoneId, sliceEntry.id);
         let taskSummaryFile: string | null = null;
-        if (tDir) {
-          taskSummaryFile = join(tDir, `${taskEntry.id}-SUMMARY.md`);
-        } else {
-          const phaseDir = resolveMilestonePath(basePath, milestoneId);
-          if (phaseDir) taskSummaryFile = join(phaseDir, `${taskEntry.id}-SUMMARY.md`);
+        let isLegacySlice = false;
+        if (slicePath) {
+          isLegacySlice = basename(dirname(slicePath)) === 'slices';
+          const summaryDir = isLegacySlice
+            ? (resolveTasksDir(basePath, milestoneId, sliceEntry.id) ?? slicePath)
+            : slicePath;
+          taskSummaryFile = join(summaryDir, `${taskEntry.id}-SUMMARY.md`);
         }
         const hasTaskSummary = taskSummaryFile !== null && existsSync(taskSummaryFile);
 
         // Pre-migration consistency (legacy layout only): if a task is marked
         // done but has no per-task SUMMARY.md, import it as pending so it gets
         // re-executed rather than silently entering the DB as complete.
-        if (taskStatus === 'complete' && tDir && !hasTaskSummary) {
+        if (taskStatus === 'complete' && isLegacySlice && !hasTaskSummary) {
           taskStatus = 'pending';
           process.stderr.write(
             `gsd-migrate: ${milestoneId}/${sliceEntry.id}/${taskEntry.id} marked done but missing summary — importing as pending\n`,
