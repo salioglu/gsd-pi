@@ -882,12 +882,20 @@ export function migrateHierarchyToDb(basePath: string): {
       if (!sliceEntry.done) {
         const sliceSummaryPath = resolveSliceFile(basePath, milestoneId, sliceEntry.id, 'SUMMARY');
         const hasSliceSummary = sliceSummaryPath !== null && existsSync(sliceSummaryPath);
+        const slicePathForTasks = resolveSlicePath(basePath, milestoneId, sliceEntry.id);
+        const isLegacySliceLayout = slicePathForTasks !== null
+          && basename(dirname(slicePathForTasks)) === 'slices';
+        const taskSummaryDir = slicePathForTasks
+          ? (isLegacySliceLayout
+              ? (resolveTasksDir(basePath, milestoneId, sliceEntry.id) ?? slicePathForTasks)
+              : slicePathForTasks)
+          : null;
         const allTasksDone = plan.tasks.length > 0 && plan.tasks.every(t => {
-          if (!t.done) return false;
-          const tDir = resolveTasksDir(basePath, milestoneId, sliceEntry.id);
-          // Flat-phase has no per-task summary files — checkbox state is authoritative.
-          if (!tDir) return true;
-          return existsSync(join(tDir, `${t.id}-SUMMARY.md`));
+          const hasTaskSummary = taskSummaryDir !== null
+            && existsSync(join(taskSummaryDir, `${t.id}-SUMMARY.md`));
+          // Match per-task import rules above: SUMMARY attestation wins over a stale
+          // checkbox (#1222); flat-phase checkboxes are authoritative without summary.
+          return hasTaskSummary || (t.done && !isLegacySliceLayout);
         });
         if (allTasksDone && hasSliceSummary) {
           if (_getAdapter()) {
