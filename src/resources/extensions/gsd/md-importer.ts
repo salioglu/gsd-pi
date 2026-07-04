@@ -903,11 +903,22 @@ export function migrateHierarchyToDb(basePath: string): {
               : slicePathForTasks)
           : null;
         const allTasksDone = plan.tasks.length > 0 && plan.tasks.every(t => {
-          const hasTaskSummary = taskSummaryDir !== null
-            && existsSync(join(taskSummaryDir, `${t.id}-SUMMARY.md`));
+          const taskSummaryFile = taskSummaryDir !== null
+            ? join(taskSummaryDir, `${t.id}-SUMMARY.md`)
+            : null;
+          const hasTaskSummary = taskSummaryFile !== null && existsSync(taskSummaryFile);
+          let summaryAttestsCompletion = hasTaskSummary;
+          if (summaryAttestsCompletion && !isLegacySliceLayout && roadmap.slices.length > 1 && taskSummaryFile) {
+            try {
+              const summaryContent = readFileSync(taskSummaryFile, 'utf-8');
+              summaryAttestsCompletion = parseSummary(summaryContent).frontmatter.parent === sliceEntry.id;
+            } catch {
+              summaryAttestsCompletion = false;
+            }
+          }
           // Match per-task import rules above: SUMMARY attestation wins over a stale
           // checkbox (#1222); flat-phase checkboxes are authoritative without summary.
-          return hasTaskSummary || (t.done && !isLegacySliceLayout);
+          return summaryAttestsCompletion || (t.done && !isLegacySliceLayout);
         });
         if (allTasksDone && hasSliceSummary) {
           if (_getAdapter()) {
