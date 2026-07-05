@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 const {
   MANAGED_BROWSER_TOOL_SPECS,
   MANAGED_GSD_BROWSER_TOOL_NAMES,
+  ManagedGsdBrowserConnectionPool,
   findMissingContractCoverage,
   normalizeManagedArgs,
   registerManagedGsdBrowserTools,
@@ -69,6 +70,44 @@ describe("findMissingContractCoverage", () => {
   it("reports translated tools when a required MCP tool is missing", () => {
     const served = GSD_BROWSER_SERVED_TOOLS.filter((name) => name !== "browser_batch");
     assert.deepEqual(findMissingContractCoverage(served), ["browser_click", "browser_type", "browser_batch"]);
+  });
+});
+
+describe("ManagedGsdBrowserConnectionPool", () => {
+  it("closes a pending connection that resolves after the pool is closed", async () => {
+    const closed = [];
+    let resolveConnect;
+    const pool = new ManagedGsdBrowserConnectionPool(async () => {
+      return new Promise((resolve) => {
+        resolveConnect = resolve;
+      });
+    }, async (connection) => {
+      closed.push(connection.id);
+    });
+
+    const launch = {
+      command: "gsd-browser",
+      args: ["mcp"],
+      cwd: "/tmp/example-project",
+      projectRoot: "/tmp/example-project",
+      serverName: "gsd-browser",
+      sessionName: "test-session",
+    };
+
+    const pending = pool.getOrConnect(launch);
+    const closedPool = pool.closeAll();
+    resolveConnect({ id: "late-connection" });
+
+    await assert.rejects(
+      pending,
+      /closed during startup/,
+      "pending callers must not receive a reusable connection after close",
+    );
+    await closedPool;
+
+    assert.deepEqual(closed, ["late-connection"]);
+    assert.equal(pool.activeCount, 0);
+    assert.equal(pool.pendingCount, 0);
   });
 });
 
