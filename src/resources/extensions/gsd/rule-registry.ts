@@ -22,7 +22,7 @@ import type {
 } from "./types.js";
 import { resolvePostUnitHooks, resolvePreDispatchHooks } from "./preferences.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseUnitId } from "./unit-id.js";
 import { resolveMilestonePath } from "./paths.js";
 import { queryJournal, type JournalEntry } from "./journal.js";
@@ -40,7 +40,9 @@ export function resolveHookArtifactPath(basePath: string, unitId: string, artifa
   // then a task-prefixed variant for retry sentinels / rework briefs.
   const candidates: string[] = [];
   const phaseDir = resolveMilestonePath(basePath, milestone);
-  if (phaseDir) {
+  const isFlatPhaseDir = phaseDir !== null
+    && !(dirname(phaseDir).endsWith("/milestones") || dirname(phaseDir).endsWith("\\milestones"));
+  if (isFlatPhaseDir) {
     candidates.push(join(phaseDir, artifactName));
     if (task !== undefined) {
       candidates.push(join(phaseDir, `${task}-${artifactName}`));
@@ -69,7 +71,7 @@ export function resolveHookArtifactPath(basePath: string, unitId: string, artifa
   // Nothing on disk yet: prefer the active phase path when the phase dir is
   // known, otherwise fall back to the legacy default (preserves pre-flat-phase
   // behavior for missing-artifact diagnostics).
-  return phaseDir ? join(phaseDir, artifactName) : legacyDefault;
+  return isFlatPhaseDir ? join(phaseDir!, artifactName) : legacyDefault;
 }
 
 // ─── Dispatch Rule Conversion ──────────────────────────────────────────────
