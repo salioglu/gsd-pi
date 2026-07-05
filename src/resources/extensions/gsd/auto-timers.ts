@@ -170,7 +170,9 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
     // Triggering during active tool calls causes tool results to be skipped
     // with "Skipped due to queued user message", leading to provider errors (#3512).
     const softTrigger = getInFlightToolCount() === 0;
-    await applySupervisorModelIfConfigured(ctx, pi, s.basePath);
+    if (softTrigger) {
+      await applySupervisorModelIfConfigured(ctx, pi, s.basePath);
+    }
     pi.sendMessage(
       {
         customType: "gsd-auto-wrapup",
@@ -384,7 +386,9 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
 
     // Only trigger a new turn if no tools are currently in flight (#3512).
     const contextTrigger = getInFlightToolCount() === 0;
-    await applySupervisorModelIfConfigured(ctx, pi, s.basePath);
+    if (contextTrigger) {
+      await applySupervisorModelIfConfigured(ctx, pi, s.basePath);
+    }
     pi.sendMessage(
       {
         customType: "gsd-auto-wrapup",
