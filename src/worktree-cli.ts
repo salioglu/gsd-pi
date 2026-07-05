@@ -31,7 +31,7 @@ import { createAndEnterWorktree } from './worktree-cli-create.js'
 import { enterWorktreeSession } from './worktree-cli-session.js'
 import {
   getWorktreeStatus as calculateWorktreeStatus,
-  hasWorktreeChanges,
+  findWorktreesWithChanges,
   type WorktreeDiff,
   type WorktreeStatus,
   type WorktreeStatusDependencies,
@@ -324,14 +324,7 @@ async function handleStatusBanner(basePath: string): Promise<void> {
   const worktrees = ext.listWorktrees(basePath)
   if (worktrees.length === 0) return
 
-  const withChanges = worktrees.filter(wt => {
-    try {
-      return hasWorktreeChanges(worktreeStatusDependencies(ext), basePath, wt.name, wt.branch)
-    } catch (error) {
-      logDebugFailure(`status scan for ${wt.name}`, error)
-      return false
-    }
-  })
+  const withChanges = findWorktreesWithChanges(worktreeStatusDependencies(ext), basePath, worktrees, 'status scan')
 
   if (withChanges.length === 0) return
 
@@ -351,14 +344,7 @@ async function handleWorktreeFlag(worktreeFlag: boolean | string): Promise<void>
   const basePath = ext.resolveWorktreeProjectRoot(process.cwd())
   const existing = ext.listWorktrees(basePath)
   const withChanges = worktreeFlag === true
-    ? existing.filter(wt => {
-        try {
-          return hasWorktreeChanges(worktreeStatusDependencies(ext), basePath, wt.name, wt.branch)
-        } catch (error) {
-          logDebugFailure(`worktree -w scan for ${wt.name}`, error)
-          return false
-        }
-      })
+    ? findWorktreesWithChanges(worktreeStatusDependencies(ext), basePath, existing, 'worktree -w scan')
     : []
 
   const plan = planWorktreeFlag(worktreeFlag, existing, withChanges, generateWorktreeName)
