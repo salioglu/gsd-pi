@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url'
 import { generateWorktreeName } from './worktree-name-gen.js'
 import { resolveBundledGsdExtensionModule } from './bundled-resource-path.js'
 import { getJitiWorkspaceAliases } from './jiti-workspace-aliases.js'
+import { planWorktreeFlag } from './worktree-cli-plan.js'
 import { enterWorktreeSession } from './worktree-cli-session.js'
 import {
   getWorktreeStatus as calculateWorktreeStatus,
@@ -367,53 +368,35 @@ async function handleStatusBanner(basePath: string): Promise<void> {
 async function handleWorktreeFlag(worktreeFlag: boolean | string): Promise<void> {
   const ext = await loadExtensionModules()
   const basePath = ext.resolveWorktreeProjectRoot(process.cwd())
+  const existing = ext.listWorktrees(basePath)
+  const withChanges = worktreeFlag === true
+    ? existing.filter(wt => {
+        try {
+          return hasWorktreeChanges(worktreeStatusDependencies(ext), basePath, wt.name, wt.branch)
+        } catch (error) {
+          logDebugFailure(`worktree -w scan for ${wt.name}`, error)
+          return false
+        }
+      })
+    : []
 
-  // gsd -w (no name) — resume most recent worktree with changes, or create new
-  if (worktreeFlag === true) {
-    const existing = ext.listWorktrees(basePath)
-    const withChanges = existing.filter(wt => {
-      try {
-        return hasWorktreeChanges(worktreeStatusDependencies(ext), basePath, wt.name, wt.branch)
-      } catch (error) {
-        logDebugFailure(`worktree -w scan for ${wt.name}`, error)
-        return false
-      }
-    })
-
-    if (withChanges.length === 1) {
-      // Single active worktree — resume it
-      const wt = withChanges[0]
-      enterWorktreeSession(wt, basePath, 'Resumed')
-      return
-    }
-
-    if (withChanges.length > 1) {
-      // Multiple active worktrees — show them and ask user to pick
-      process.stderr.write(chalk.yellow(`${withChanges.length} worktrees have unmerged changes:\n\n`))
-      for (const wt of withChanges) {
-        const status = getWorktreeStatus(ext, basePath, wt.name, wt.path, wt.branch)
-        process.stderr.write(formatStatus(status) + '\n\n')
-      }
-      process.stderr.write(chalk.dim('Specify which one: gsd -w <name>\n'))
-      process.exit(0)
-    }
-
-    // No active worktrees — create a new one
-    const name = generateWorktreeName()
-    await createAndEnter(ext, basePath, name)
+  const plan = planWorktreeFlag(worktreeFlag, existing, withChanges, generateWorktreeName)
+  if (plan.action === 'resume') {
+    enterWorktreeSession(plan.worktree, basePath, 'Resumed')
     return
   }
 
-  // gsd -w <name> — create or resume named worktree
-  const name = worktreeFlag as string
-  const existing = ext.listWorktrees(basePath)
-  const found = existing.find(wt => wt.name === name)
-
-  if (found) {
-    enterWorktreeSession(found, basePath, 'Resumed')
-  } else {
-    await createAndEnter(ext, basePath, name)
+  if (plan.action === 'show-multiple') {
+    process.stderr.write(chalk.yellow(`${plan.worktrees.length} worktrees have unmerged changes:\n\n`))
+    for (const wt of plan.worktrees) {
+      const status = getWorktreeStatus(ext, basePath, wt.name, wt.path, wt.branch)
+      process.stderr.write(formatStatus(status) + '\n\n')
+    }
+    process.stderr.write(chalk.dim('Specify which one: gsd -w <name>\n'))
+    process.exit(0)
   }
+
+  await createAndEnter(ext, basePath, plan.name)
 }
 
 async function createAndEnter(ext: ExtensionModules, basePath: string, name: string): Promise<void> {
