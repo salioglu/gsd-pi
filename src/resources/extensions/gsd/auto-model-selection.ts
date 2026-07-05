@@ -297,7 +297,10 @@ export async function applySupervisorModelIfConfigured(
     if (!match) continue;
     if (isModelUnavailable(basePath, match.provider, match.id)) continue;
     try {
-      if (await pi.setModel(match, { persist: false })) return;
+      if (await pi.setModel(match, { persist: false })) {
+        applyThinkingLevelForModel(pi, pi.getThinkingLevel(), match, ctx);
+        return;
+      }
     } catch (err) {
       // Non-fatal — try the next fallback.
       logWarning(
