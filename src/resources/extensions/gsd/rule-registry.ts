@@ -376,10 +376,8 @@ export class RuleRegistry {
     return {
       hookName: config.name,
       prompt,
-      // Object-form `model` resolves to its primary here; the recovery path
-      // resolves the full fallback chain via resolveModelWithFallbacksForUnit
-      // for the `hook/<name>` unit type (#1229).
-      model: normalizeModelFieldConfig(config.model)?.primary,
+      // Model selection (including fallbacks[]) is handled by
+      // resolveModelWithFallbacksForUnit for the `hook/<name>` unit type (#1229).
       unitType: `hook/${config.name}`,
       unitId: triggerUnitId,
     };
