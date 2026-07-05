@@ -11,20 +11,23 @@
  * at the tool execution layer.
  */
 
-import { z } from 'zod';
 import type Anthropic from '@anthropic-ai/sdk';
 import type {
   MessageParam,
   ContentBlockParam,
-  Tool,
   ToolResultBlockParam,
   ToolUseBlock,
   TextBlock,
 } from '@anthropic-ai/sdk/resources/messages/messages';
 import type { SessionManager } from './session-manager.js';
 import type { ChannelManager } from './channel-manager.js';
-import type { ProjectInfo, ManagedSession } from './types.js';
+import type { ProjectInfo } from './types.js';
 import type { Logger } from './logger.js';
+import {
+  ORCHESTRATOR_TOOLS,
+  executeOrchestratorTool,
+  type OrchestratorToolContext,
+} from './orchestrator-tools.js';
 
 // ---------------------------------------------------------------------------
 // API key resolution — requires ANTHROPIC_API_KEY env var
@@ -78,82 +81,6 @@ Response guidelines:
 - Never expose internal error stack traces to the user — summarize the issue.`;
 
 // ---------------------------------------------------------------------------
-// Tool Definitions (Anthropic API format)
-// ---------------------------------------------------------------------------
-
-const TOOLS: Tool[] = [
-  {
-    name: 'list_projects',
-    description: 'List all detected projects across configured scan roots. Returns project names, paths, and detected markers (git, node, gsd, etc.).',
-    input_schema: {
-      type: 'object' as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'start_session',
-    description: 'Start a new GSD auto-mode session for a project. Provide the absolute project path. Optionally provide a command to run instead of the default "/gsd auto".',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        projectPath: { type: 'string', description: 'Absolute path to the project directory' },
-        command: { type: 'string', description: 'Optional command to send instead of "/gsd auto"' },
-      },
-      required: ['projectPath'],
-    },
-  },
-  {
-    name: 'get_status',
-    description: 'Get the current status of all active GSD sessions. Shows project name, status, duration, and cost for each.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'stop_session',
-    description: 'Stop a running GSD session. Provide a session ID or project name — fuzzy matching is used to find the session.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        identifier: { type: 'string', description: 'Session ID or project name to match' },
-      },
-      required: ['identifier'],
-    },
-  },
-  {
-    name: 'get_session_detail',
-    description: 'Get detailed information about a specific session including cost breakdown, recent events, pending blockers, and error state.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        sessionId: { type: 'string', description: 'The session ID to inspect' },
-      },
-      required: ['sessionId'],
-    },
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Zod schemas for tool input validation
-// ---------------------------------------------------------------------------
-
-const StartSessionInput = z.object({
-  projectPath: z.string(),
-  command: z.string().optional(),
-});
-
-const StopSessionInput = z.object({
-  identifier: z.string(),
-});
-
-const GetSessionDetailInput = z.object({
-  sessionId: z.string(),
-});
-
-// ---------------------------------------------------------------------------
 // Conversation History Cap
 // ---------------------------------------------------------------------------
 
@@ -165,6 +92,7 @@ const MAX_HISTORY = 30;
 
 export class Orchestrator {
   private readonly deps: OrchestratorDeps;
+  private readonly toolContext: OrchestratorToolContext;
   private client: Anthropic | null;
   private history: MessageParam[] = [];
 
@@ -174,6 +102,11 @@ export class Orchestrator {
    */
   constructor(deps: OrchestratorDeps, client?: Anthropic) {
     this.deps = deps;
+    this.toolContext = {
+      sessionManager: deps.sessionManager,
+      scanProjects: deps.scanProjects,
+      logger: deps.logger,
+    };
     this.client = client ?? null;
   }
 
@@ -279,7 +212,7 @@ export class Orchestrator {
         model,
         max_tokens,
         system: SYSTEM_PROMPT,
-        tools: TOOLS,
+        tools: ORCHESTRATOR_TOOLS,
         messages: loopMessages,
       });
 
@@ -304,7 +237,11 @@ export class Orchestrator {
       // Build tool results
       const toolResults: ToolResultBlockParam[] = [];
       for (const toolUse of toolUseBlocks) {
-        const result = await this.executeTool(toolUse.name, toolUse.input as Record<string, unknown>);
+        const result = await executeOrchestratorTool(
+          this.toolContext,
+          toolUse.name,
+          toolUse.input as Record<string, unknown>,
+        );
         toolResults.push({
           type: 'tool_result',
           tool_use_id: toolUse.id,
@@ -324,100 +261,6 @@ export class Orchestrator {
     return 'I hit the maximum number of tool iterations. Please try a simpler request.';
   }
 
-  /**
-   * Execute a single tool by name. Returns a string result for the LLM.
-   * All errors are caught and returned as error strings (the LLM can reason about them).
-   */
-  private async executeTool(name: string, input: Record<string, unknown>): Promise<string> {
-    try {
-      switch (name) {
-        case 'list_projects':
-          return await this.toolListProjects();
-        case 'start_session':
-          return await this.toolStartSession(input);
-        case 'get_status':
-          return this.toolGetStatus();
-        case 'get_session_detail':
-          return this.toolGetSessionDetail(input);
-        case 'stop_session':
-          return await this.toolStopSession(input);
-        default:
-          return `Unknown tool: ${name}`;
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.deps.logger.error('tool execution error', { tool: name, error: msg });
-      return `Error: ${msg}`;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Tool implementations
-  // ---------------------------------------------------------------------------
-
-  private async toolListProjects(): Promise<string> {
-    const projects = await this.deps.scanProjects();
-    if (projects.length === 0) return 'No projects found.';
-    return JSON.stringify(
-      projects.map((p) => ({ name: p.name, path: p.path, markers: p.markers })),
-      null,
-      2,
-    );
-  }
-
-  private async toolStartSession(input: Record<string, unknown>): Promise<string> {
-    const parsed = StartSessionInput.parse(input);
-    const sessionId = await this.deps.sessionManager.startSession({
-      projectDir: parsed.projectPath,
-      command: parsed.command,
-    });
-    return `Session started: ${sessionId} for ${parsed.projectPath}`;
-  }
-
-  private toolGetStatus(): string {
-    const sessions = this.deps.sessionManager.getAllSessions();
-    if (sessions.length === 0) return 'No active sessions.';
-
-    return sessions
-      .map((s: ManagedSession) => {
-        const durationMin = Math.floor((Date.now() - s.startTime) / 60_000);
-        const cost = s.cost.totalCost.toFixed(4);
-        return `• ${s.projectName} — ${s.status} (${durationMin}m, $${cost})`;
-      })
-      .join('\n');
-  }
-
-  private async toolStopSession(input: Record<string, unknown>): Promise<string> {
-    const parsed = StopSessionInput.parse(input);
-    const { identifier } = parsed;
-
-    // Try exact sessionId match first
-    const byId = this.deps.sessionManager.getSession(identifier);
-    if (byId) {
-      await this.deps.sessionManager.cancelSession(identifier);
-      return `Stopped session ${identifier} (${byId.projectName})`;
-    }
-
-    // Fuzzy match by project name
-    const all = this.deps.sessionManager.getAllSessions();
-    const match = all.find(
-      (s: ManagedSession) =>
-        s.projectName.toLowerCase().includes(identifier.toLowerCase()) ||
-        s.projectDir.toLowerCase().includes(identifier.toLowerCase()),
-    );
-    if (match) {
-      await this.deps.sessionManager.cancelSession(match.sessionId);
-      return `Stopped session ${match.sessionId} (${match.projectName})`;
-    }
-
-    return `No session found matching "${identifier}"`;
-  }
-
-  private toolGetSessionDetail(input: Record<string, unknown>): string {
-    const parsed = GetSessionDetailInput.parse(input);
-    const result = this.deps.sessionManager.getResult(parsed.sessionId);
-    return JSON.stringify(result, null, 2);
-  }
 
   // ---------------------------------------------------------------------------
   // History management
