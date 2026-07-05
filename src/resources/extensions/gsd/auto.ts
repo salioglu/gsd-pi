@@ -2895,15 +2895,18 @@ export async function startAuto(
       debugLog("resume-orchestration-resume", { error: err instanceof Error ? err.message : String(err) });
     }
     startAutoCommandPolling(s.basePath);
-    await runAutoLoopWithUok({
-      ctx,
-      pi,
-      s,
-      deps: loopDeps,
-      runKernelLoop: runUokKernelLoop,
-      runLegacyLoop: runLegacyAutoLoop,
-    });
-    await cleanupAfterLoopExit(ctx);
+    try {
+      await runAutoLoopWithUok({
+        ctx,
+        pi,
+        s,
+        deps: loopDeps,
+        runKernelLoop: runUokKernelLoop,
+        runLegacyLoop: runLegacyAutoLoop,
+      });
+    } finally {
+      await cleanupAfterLoopExit(ctx);
+    }
     return;
   }
 
@@ -2957,15 +2960,18 @@ export async function startAuto(
   startAutoCommandPolling(s.basePath);
 
   // Dispatch the first unit
-  await runAutoLoopWithUok({
-    ctx,
-    pi,
-    s,
-    deps: loopDeps,
-    runKernelLoop: runUokKernelLoop,
-    runLegacyLoop: runLegacyAutoLoop,
-  });
-  await cleanupAfterLoopExit(ctx);
+  try {
+    await runAutoLoopWithUok({
+      ctx,
+      pi,
+      s,
+      deps: loopDeps,
+      runKernelLoop: runUokKernelLoop,
+      runLegacyLoop: runLegacyAutoLoop,
+    });
+  } finally {
+    await cleanupAfterLoopExit(ctx);
+  }
 }
 
 // describeNextUnit is imported from auto-dashboard.ts and re-exported
