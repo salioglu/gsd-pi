@@ -76,7 +76,7 @@ import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState, reconcileRestoredHookDispatch } from "./post-unit-hooks.js";
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
-import { isDbAvailable, getMilestone, getAllMilestones, insertMilestone, updateMilestoneStatus } from "./gsd-db.js";
+import { isDbAvailable, probeDbWritable, getMilestone, getAllMilestones, insertMilestone, updateMilestoneStatus } from "./gsd-db.js";
 import {
   getWorkflowDatabaseStatus,
   openExistingWorkflowDatabase,
@@ -1788,6 +1788,23 @@ export async function bootstrapAutoSession(
         "error",
       );
       return releaseLockAndReturn();
+    }
+
+    // Gate: confirm the handle is actually writable, not just open. A
+    // schema-current DB does zero writes during open, so a read-only /
+    // DBMOVED handle otherwise passes the check above and only fails much
+    // later at the first authoritative write (the uok-kernel-enter audit)
+    // with an opaque "readonly database" error (#1234).
+    if (existsSync(gsdDbPath) && isDbAvailable()) {
+      const writable = probeDbWritable();
+      if (!writable.ok) {
+        const detail = writable.detail ? ` (${writable.detail})` : "";
+        ctx.ui.notify(
+          `SQLite database is not writable: ${gsdDbPath}.${detail} Check file/WAL permissions or reopen a stale handle before running auto-mode.`,
+          "error",
+        );
+        return releaseLockAndReturn();
+      }
     }
 
     // Initialize metrics
