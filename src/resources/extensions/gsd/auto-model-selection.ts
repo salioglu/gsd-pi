@@ -298,8 +298,12 @@ export async function applySupervisorModelIfConfigured(
     if (isModelUnavailable(basePath, match.provider, match.id)) continue;
     try {
       if (await pi.setModel(match, { persist: false })) return;
-    } catch {
+    } catch (err) {
       // Non-fatal — try the next fallback.
+      logWarning(
+        "dispatch",
+        `supervisor model set failed for ${candidate}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 }
