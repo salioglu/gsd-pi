@@ -55,7 +55,12 @@ function sanitizeModelField(
 ): string | GSDPhaseModelConfig | undefined {
   if (raw === undefined) return undefined;
   if (typeof raw === "string") {
-    return raw.trim() ? raw.trim() : undefined;
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      errors.push(`${label} must not be an empty string`);
+      return undefined;
+    }
+    return trimmed;
   }
   if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
