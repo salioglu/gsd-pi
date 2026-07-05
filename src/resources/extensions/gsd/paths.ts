@@ -1031,34 +1031,44 @@ export function relSlicePath(
 }
 
 /**
- * Build relative .gsd/ path to a slice file.
- * Layout-aware: legacy uses S01-SUFFIX.md; flat-phase uses NN-MM-SUFFIX.md.
- *
- * @param milestoneTitle - Optional milestone title forwarded to relSlicePath /
- *   relMilestonePath for title-aware flat-phase fallback dir naming. Only used
- *   when the phase directory does not yet exist on disk.
+ * Build the canonical absolute write target for a slice file.
+ * Existing compatibility filenames are intentionally ignored; readers that need
+ * to preserve an existing file should call resolveSliceFile first.
  */
-export function relSliceFile(
+export function targetSliceFile(
   basePath: string, milestoneId: string, sliceId: string, suffix: string, milestoneTitle?: string
 ): string {
-  const sRel = relSlicePath(basePath, milestoneId, sliceId, milestoneTitle);
-  const absPath = resolveSliceFile(basePath, milestoneId, sliceId, suffix);
-  if (absPath) {
-    const fileName = absPath.split(/[/\\]/).pop()!;
-    return `${sRel}/${fileName}`;
-  }
-  // Fallback when file doesn't exist yet — use layout-aware filename.
   const mDir = resolveMilestonePath(basePath, milestoneId);
   const legacyBase = legacyMilestonesDir(basePath);
   const isLegacy = mDir
     ? mDir.startsWith(legacyBase + "/") || mDir.startsWith(legacyBase + "\\")
-    : false;
-  if (isLegacy) {
-    return `${sRel}/${sliceId}-${suffix}.md`;
-  }
-  const phaseNum = milestoneIdToPhaseNum(milestoneId);
-  const planNum = sliceIdToPlanNum(sliceId);
-  return `${sRel}/${planFileName(phaseNum, planNum, suffix)}`;
+    : isLegacyMilestonesLayout(basePath);
+  const milestoneDir = mDir
+    ?? dirname(targetMilestoneFile(basePath, milestoneId, "ROADMAP", milestoneTitle));
+  const slicesDir = join(milestoneDir, "slices");
+  const dir = isLegacy
+    ? join(slicesDir, resolveDir(slicesDir, sliceId) ?? sliceId)
+    : milestoneDir;
+  const fileName = isLegacy
+    ? `${sliceId}-${suffix}.md`
+    : planFileName(milestoneIdToPhaseNum(milestoneId), sliceIdToPlanNum(sliceId), suffix);
+  return join(dir, fileName);
+}
+
+/**
+ * Build relative .gsd/ path to a slice file.
+ * Preserves an existing compatibility filename when present; otherwise falls
+ * back to the canonical write target.
+ */
+export function relSliceFile(
+  basePath: string, milestoneId: string, sliceId: string, suffix: string, milestoneTitle?: string
+): string {
+  const rel = relative(
+    gsdProjectionRoot(basePath),
+    resolveSliceFile(basePath, milestoneId, sliceId, suffix)
+      ?? targetSliceFile(basePath, milestoneId, sliceId, suffix, milestoneTitle),
+  ).replace(/\\/g, "/");
+  return `.gsd/${rel}`;
 }
 
 /**

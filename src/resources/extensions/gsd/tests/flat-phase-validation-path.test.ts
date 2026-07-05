@@ -9,7 +9,7 @@ import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeRealPath, relMilestoneFile, resolveMilestoneFile, targetMilestoneFile } from "../paths.ts";
+import { normalizeRealPath, relMilestoneFile, relSliceFile, resolveMilestoneFile, targetMilestoneFile } from "../paths.ts";
 
 function makeFlatPhaseFixture(): { basePath: string; cleanup: () => void } {
   const basePath = mkdtempSync(join(tmpdir(), "flat-phase-validation-"));
@@ -61,6 +61,18 @@ test("legacy layout: relMilestoneFile fallback stays in milestones when the targ
   const rel = relMilestoneFile(basePath, "M001", "ROADMAP", "Milestone");
 
   assert.equal(rel, ".gsd/milestones/M001/M001-ROADMAP.md");
+});
+
+test("legacy layout: relSliceFile fallback uses slices directory when target milestone is missing", (t) => {
+  const basePath = mkdtempSync(join(tmpdir(), "legacy-missing-slice-"));
+  t.after(() => rmSync(basePath, { recursive: true, force: true }));
+  const existingLegacyDir = join(basePath, ".gsd", "milestones", "M002");
+  mkdirSync(existingLegacyDir, { recursive: true });
+  writeFileSync(join(existingLegacyDir, "M002-ROADMAP.md"), "# existing legacy roadmap\n");
+
+  const rel = relSliceFile(basePath, "M001", "S01", "PLAN", "Milestone");
+
+  assert.equal(rel, ".gsd/milestones/M001/slices/S01/S01-PLAN.md");
 });
 
 test("flat-phase: targetMilestoneFile ignores legacy-named compatibility files when writing", (t) => {
