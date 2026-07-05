@@ -282,6 +282,28 @@ export function isModelUnavailable(
     isModelTemporarilyUnavailable(basePath, provider, id);
 }
 
+/** Apply `auto_supervisor.model`, walking configured fallbacks on unavailability (#1229). */
+export async function applySupervisorModelIfConfigured(
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+  basePath: string,
+): Promise<void> {
+  const modelConfig = resolveModelWithFallbacksForUnit("supervisor", basePath);
+  if (!modelConfig) return;
+
+  const availableModels = ctx.modelRegistry.getAvailable();
+  for (const candidate of [modelConfig.primary, ...modelConfig.fallbacks]) {
+    const match = resolveModelId(candidate, availableModels, ctx.model?.provider);
+    if (!match) continue;
+    if (isModelUnavailable(basePath, match.provider, match.id)) continue;
+    try {
+      if (await pi.setModel(match, { persist: false })) return;
+    } catch {
+      // Non-fatal — try the next fallback.
+    }
+  }
+}
+
 function restoreToolBaseline(pi: ExtensionAPI): void {
   const key = pi as unknown as object;
   const baseline = TOOL_BASELINE.get(key);

@@ -126,6 +126,9 @@ export function normalizeModelFieldConfig(
  * `fallbacks[]` chain as phase buckets — the recovery path can then switch to
  * a fallback provider instead of hard-failing (and potentially pausing) the
  * run on a transient provider trip (#1229).
+ *
+ * The synthetic `supervisor` unit type resolves against `auto_supervisor.model`
+ * for supervisor interventions (wrap-up warnings, timeout recovery).
  */
 export function resolveModelWithFallbacksForUnit(
   unitType: string,
@@ -140,6 +143,11 @@ export function resolveModelWithFallbacksForUnit(
     ...(skipProfileDefaults ? { skipProfileDefaults: true } : {}),
   };
   const prefs = loadEffectiveGSDPreferences(basePath, loadOpts);
+
+  // Supervisor interventions resolve against `auto_supervisor.model` (#1229).
+  if (unitType === "supervisor") {
+    return normalizeModelFieldConfig(prefs?.preferences?.auto_supervisor?.model);
+  }
 
   // Hook sessions resolve against their own `post_unit_hooks[].model` field,
   // which now shares the phase-bucket object form (#1229).
@@ -456,16 +464,16 @@ export function resolveAutoSupervisorConfig(): ResolvedAutoSupervisorConfig {
   const prefs = loadEffectiveGSDPreferences();
   const configured = prefs?.preferences.auto_supervisor ?? {};
 
-  // `model` accepts the same object form as phase buckets (#1229); normalize to
-  // the primary model ID for the single-string consumer.
-  const model = normalizeModelFieldConfig(configured.model)?.primary;
+  const modelConfig = normalizeModelFieldConfig(configured.model);
 
   return {
     soft_timeout_minutes: configured.soft_timeout_minutes ?? 20,
     idle_timeout_minutes: configured.idle_timeout_minutes ?? 10,
     hard_timeout_minutes: configured.hard_timeout_minutes ?? 30,
     stalled_tool_timeout_minutes: configured.stalled_tool_timeout_minutes ?? 5,
-    ...(model ? { model } : {}),
+    ...(modelConfig
+      ? { model: modelConfig.primary, modelFallbacks: modelConfig.fallbacks }
+      : {}),
   };
 }
 

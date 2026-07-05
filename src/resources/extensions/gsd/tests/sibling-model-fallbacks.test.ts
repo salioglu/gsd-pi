@@ -118,7 +118,7 @@ test("hook/<name> resolves undefined when the hook has no model", () => {
 
 // ─── auto_supervisor.model ───────────────────────────────────────────────────
 
-test("auto_supervisor.model object form normalizes to its primary", () => {
+test("auto_supervisor.model object form resolves with fallbacks", () => {
   withPreferences(
     [
       "auto_supervisor:",
@@ -127,7 +127,13 @@ test("auto_supervisor.model object form normalizes to its primary", () => {
       "    fallbacks: [supervisor-fb]",
     ],
     () => {
-      assert.equal(resolveAutoSupervisorConfig().model, "supervisor-primary");
+      assert.deepEqual(resolveModelWithFallbacksForUnit("supervisor"), {
+        primary: "supervisor-primary",
+        fallbacks: ["supervisor-fb"],
+      });
+      const supervisor = resolveAutoSupervisorConfig();
+      assert.equal(supervisor.model, "supervisor-primary");
+      assert.deepEqual(supervisor.modelFallbacks, ["supervisor-fb"]);
     },
   );
 });

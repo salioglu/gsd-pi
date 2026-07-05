@@ -339,11 +339,12 @@ export interface AutoSupervisorConfig {
 /**
  * The supervisor config after resolution by `resolveAutoSupervisorConfig`.
  * Identical to {@link AutoSupervisorConfig} except `model` is always the
- * normalized primary model ID string — the object form accepted in preferences
- * is collapsed to its primary during resolution (#1229).
+ * normalized primary model ID string and `modelFallbacks` carries the ordered
+ * fallback chain from the object form accepted in preferences (#1229).
  */
 export type ResolvedAutoSupervisorConfig = Omit<AutoSupervisorConfig, "model"> & {
   model?: string;
+  modelFallbacks?: string[];
 };
 
 export interface RemoteQuestionsConfig {

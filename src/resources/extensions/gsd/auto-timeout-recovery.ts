@@ -21,6 +21,7 @@ import { existsSync } from "node:fs";
 
 import { bumpAndResolveSynthetic } from "./auto/resolve.js";
 import { finalizeProjectResearchTimeout } from "./project-research-policy.js";
+import { applySupervisorModelIfConfigured } from "./auto-model-selection.js";
 
 export interface RecoveryContext {
   basePath: string;
@@ -122,6 +123,7 @@ export async function recoverTimedOutUnit(
             "If full completion is impossible, write the partial artifact/state needed for recovery and make the blocker explicit.",
           ];
 
+      await applySupervisorModelIfConfigured(ctx, pi, basePath);
       pi.sendMessage(
         {
           customType: "gsd-auto-timeout-recovery",
@@ -249,6 +251,7 @@ export async function recoverTimedOutUnit(
           "If blocked, write the partial artifact and explicitly record the blocker instead of going silent.",
         ];
 
+    await applySupervisorModelIfConfigured(ctx, pi, basePath);
     pi.sendMessage(
       {
         customType: "gsd-auto-timeout-recovery",
