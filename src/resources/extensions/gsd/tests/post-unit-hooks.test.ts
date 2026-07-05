@@ -310,6 +310,51 @@ test('Restore reconciliation is a no-op with no active hook (#1246)', () => {
   }
 });
 
+test('Blocking hook re-dispatches once after a lost dispatch at default max_cycles', () => {
+  resetHookState();
+  const base = createFixtureBase();
+  try {
+    // Default max_cycles (1): a cycle is charged at dispatch time.
+    writeHookPreferences(base, `  - name: plan-review
+    after:
+      - plan-slice
+    prompt: Review plan
+    artifact: PLAN-REVIEW.md
+    criticality: blocking
+`);
+
+    const firstDispatch = checkPostUnitHooks("plan-slice", "M002/S01", base);
+    assert.ok(firstDispatch, "gate dispatches and consumes its cycle at dispatch");
+    assert.equal(firstDispatch.unitType, "hook/plan-review");
+    persistHookState(base);
+
+    // Simulate a lost dispatch: the hook never produced its own unit-end, the
+    // trigger unit resumes instead. The dispatch-consumed cycle is refunded once
+    // so the gate re-dispatches rather than hard-blocking on a hook that never ran.
+    resetHookState();
+    restoreHookState(base);
+    const redispatch = checkPostUnitHooks("plan-slice", "M002/S01", base);
+    assert.ok(redispatch, "lost dispatch re-dispatches the gate instead of blocking");
+    assert.equal(redispatch.unitType, "hook/plan-review");
+    assert.deepStrictEqual(consumeGateBlock(), null, "no gate block on the first lost dispatch");
+    persistHookState(base);
+
+    // A second lost dispatch consumes the budget and blocks — the refund is one-shot.
+    resetHookState();
+    restoreHookState(base);
+    const blocked = checkPostUnitHooks("plan-slice", "M002/S01", base);
+    assert.deepStrictEqual(blocked, null, "second lost dispatch exhausts the budget");
+    const block = consumeGateBlock();
+    assert.ok(block, "gate block recorded after the one-shot re-dispatch is used");
+    assert.equal(block.hookName, "plan-review");
+    assert.match(block.reason, /gate cycle budget exhausted/);
+  } finally {
+    resetHookState();
+    invalidateAllCaches();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('Blocking hook needs-rework verdict requests trigger unit retry', () => {
   resetHookState();
   const base = createFixtureBase();
