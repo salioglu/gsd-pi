@@ -116,7 +116,7 @@ import {
 } from "./auto-tool-tracking.js";
 import { closeoutUnit } from "./auto-unit-closeout.js";
 import { recoverTimedOutUnit } from "./auto-timeout-recovery.js";
-import { selectAndApplyModel, resolveModelId, clearToolBaseline } from "./auto-model-selection.js";
+import { selectAndApplyModel, resolveModelId, clearToolBaseline, isModelUnavailable } from "./auto-model-selection.js";
 import { resolveModelWithFallbacksForUnit } from "./preferences-models.js";
 import { resetRoutingHistory, recordOutcome } from "./routing-history.js";
 import {
@@ -3148,6 +3148,11 @@ export async function dispatchHookUnit(
     for (const candidate of modelCandidates) {
       const match = resolveModelId(candidate, availableModels, ctx.model?.provider);
       if (!match) continue;
+      // Skip models the runtime has marked blocked or temporarily unavailable
+      // (e.g. a primary that just tripped a provider limit) so the configured
+      // fallbacks[] chain actually engages — parity with auto-mode's
+      // selectAndApplyModel, which consults the same blocked-models store (#1229).
+      if (isModelUnavailable(targetBasePath, match.provider, match.id)) continue;
       try {
         await pi.setModel(match);
         applied = true;

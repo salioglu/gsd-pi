@@ -513,7 +513,15 @@ export function validatePreferences(preferences: GSDPreferences): {
   // ─── Auto Supervisor ────────────────────────────────────────────────
   if (preferences.auto_supervisor !== undefined) {
     if (preferences.auto_supervisor && typeof preferences.auto_supervisor === "object") {
-      validated.auto_supervisor = preferences.auto_supervisor;
+      // Validate `model` through the shared sanitizer so the
+      // `{ model, provider?, fallbacks? }` object form is rejected on the same
+      // terms as its post_unit_hooks / reactive_execution siblings (#1229).
+      // Other supervisor fields pass through unchanged.
+      const supervisor = { ...preferences.auto_supervisor };
+      if (supervisor.model !== undefined) {
+        supervisor.model = sanitizeModelField(supervisor.model, "auto_supervisor.model", errors);
+      }
+      validated.auto_supervisor = supervisor;
     } else {
       errors.push("auto_supervisor must be an object");
     }

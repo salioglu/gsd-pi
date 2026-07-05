@@ -273,7 +273,7 @@ function buildModelPolicyBlockReasons(
   }];
 }
 
-function isModelUnavailable(
+export function isModelUnavailable(
   basePath: string,
   provider: string | undefined,
   id: string | undefined,
