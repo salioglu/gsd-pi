@@ -81,7 +81,7 @@ import {
   checkNeedsReassessment,
   checkNeedsRunUat,
 } from "./auto-prompts.js";
-import { resolveModelWithFallbacksForUnit, resolveThinkingLevelForUnit } from "./preferences-models.js";
+import { normalizeModelFieldConfig, resolveModelWithFallbacksForUnit, resolveThinkingLevelForUnit } from "./preferences-models.js";
 import { resolveUokFlags } from "./uok/flags.js";
 import { selectReactiveDispatchBatch } from "./uok/execution-graph.js";
 import { getMilestonePipelineVariant } from "./milestone-scope-classifier.js";
@@ -1428,7 +1428,11 @@ export const DISPATCH_RULES: DispatchRule[] = [
       const sTitle = state.activeSlice.title;
       if (resolveSliceFile(basePath, mid, sid, "REACTIVE-BLOCKER")) return null;
       const maxParallel = reactiveConfig?.max_parallel ?? 2;
-      const subagentModel = reactiveConfig?.subagent_model ?? resolveModelWithFallbacksForUnit("subagent")?.primary;
+      // `subagent_model` accepts the phase-bucket object form (#1229); use its
+      // primary here (the reactive subagent model is embedded in the dispatch
+      // prompt rather than set as the session model).
+      const subagentModel = normalizeModelFieldConfig(reactiveConfig?.subagent_model)?.primary
+        ?? resolveModelWithFallbacksForUnit("subagent")?.primary;
       const subagentThinking = resolveThinkingLevelForUnit("subagent");
       // Default-on safety threshold: only activate reactive dispatch when at
       // least N tasks are ready. Users who explicitly enabled reactive_execution

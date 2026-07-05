@@ -21,6 +21,7 @@ import type {
   PostUnitHookOutcomeVerdict,
 } from "./types.js";
 import { resolvePostUnitHooks, resolvePreDispatchHooks } from "./preferences.js";
+import { normalizeModelFieldConfig } from "./preferences-models.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseUnitId } from "./unit-id.js";
@@ -375,7 +376,10 @@ export class RuleRegistry {
     return {
       hookName: config.name,
       prompt,
-      model: config.model,
+      // Object-form `model` resolves to its primary here; the recovery path
+      // resolves the full fallback chain via resolveModelWithFallbacksForUnit
+      // for the `hook/<name>` unit type (#1229).
+      model: normalizeModelFieldConfig(config.model)?.primary,
       unitType: `hook/${config.name}`,
       unitId: triggerUnitId,
     };
@@ -1014,7 +1018,7 @@ export class RuleRegistry {
     return {
       hookName: hook.name,
       prompt,
-      model: hook.model,
+      model: normalizeModelFieldConfig(hook.model)?.primary,
       unitType: `hook/${hook.name}`,
       unitId,
     };
