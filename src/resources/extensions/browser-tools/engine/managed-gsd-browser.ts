@@ -39,6 +39,11 @@ type ConnectManagedGsdBrowser = (
 
 type CloseManagedGsdBrowserConnection = (connection: ManagedConnection) => Promise<void>;
 
+interface PendingManagedConnection {
+  promise: Promise<ManagedConnection>;
+  abortController: AbortController;
+}
+
 interface McpContentItem {
   type: string;
   text?: string;
@@ -373,9 +378,31 @@ function buildConnectionKey(launch: GsdBrowserMcpLaunchConfig): string {
   });
 }
 
+function combineAbortSignals(
+  poolSignal: AbortSignal,
+  callerSignal?: AbortSignal,
+): AbortSignal {
+  if (!callerSignal) return poolSignal;
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any([poolSignal, callerSignal]);
+  }
+
+  const controller = new AbortController();
+  const abort = (): void => {
+    if (!controller.signal.aborted) controller.abort();
+  };
+  if (poolSignal.aborted || callerSignal.aborted) {
+    abort();
+  } else {
+    poolSignal.addEventListener("abort", abort, { once: true });
+    callerSignal.addEventListener("abort", abort, { once: true });
+  }
+  return controller.signal;
+}
+
 export class ManagedGsdBrowserConnectionPool {
   private readonly connections = new Map<string, ManagedConnection>();
-  private readonly pendingConnections = new Map<string, Promise<ManagedConnection>>();
+  private readonly pendingConnections = new Map<string, PendingManagedConnection>();
   private readonly connect: ConnectManagedGsdBrowser;
   private readonly closeConnection: CloseManagedGsdBrowserConnection;
   private generation = 0;
@@ -405,10 +432,12 @@ export class ManagedGsdBrowserConnectionPool {
     if (existing) return Promise.resolve(existing);
 
     const pending = this.pendingConnections.get(key);
-    if (pending) return pending;
+    if (pending) return pending.promise;
 
     const generation = this.generation;
-    const connectionPromise = this.connect(launch, signal)
+    const abortController = new AbortController();
+    const connectionSignal = combineAbortSignals(abortController.signal, signal);
+    const connectionPromise = this.connect(launch, connectionSignal)
       .then(async (connection) => {
         if (this.generation !== generation) {
           await this.closeConnection(connection);
@@ -418,12 +447,12 @@ export class ManagedGsdBrowserConnectionPool {
         return connection;
       })
       .finally(() => {
-        if (this.pendingConnections.get(key) === connectionPromise) {
+        if (this.pendingConnections.get(key)?.promise === connectionPromise) {
           this.pendingConnections.delete(key);
         }
       });
 
-    this.pendingConnections.set(key, connectionPromise);
+    this.pendingConnections.set(key, { promise: connectionPromise, abortController });
     return connectionPromise;
   }
 
@@ -434,11 +463,14 @@ export class ManagedGsdBrowserConnectionPool {
     const pendingConnections = Array.from(this.pendingConnections.values());
     this.connections.clear();
     this.pendingConnections.clear();
+    for (const pending of pendingConnections) {
+      pending.abortController.abort();
+    }
 
     const closingActive = activeConnections.map((connection) => this.closeConnection(connection));
     const closingPending = pendingConnections.map(async (pending) => {
       try {
-        const connection = await pending;
+        const connection = await pending.promise;
         await this.closeConnection(connection);
       } catch {
         // Failed or invalidated connection attempts have already cleaned up.

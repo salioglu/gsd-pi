@@ -30,6 +30,17 @@ const GSD_BROWSER_SERVED_TOOLS = [
   "browser_act",
 ];
 
+function makeLaunchConfig() {
+  return {
+    command: "gsd-browser",
+    args: ["mcp"],
+    cwd: "/tmp/example-project",
+    projectRoot: "/tmp/example-project",
+    serverName: "gsd-browser",
+    sessionName: "test-session",
+  };
+}
+
 describe("registerManagedGsdBrowserTools", () => {
   it("registers the curated Pi browser contract", () => {
     const tools = [];
@@ -85,14 +96,7 @@ describe("ManagedGsdBrowserConnectionPool", () => {
       closed.push(connection.id);
     });
 
-    const launch = {
-      command: "gsd-browser",
-      args: ["mcp"],
-      cwd: "/tmp/example-project",
-      projectRoot: "/tmp/example-project",
-      serverName: "gsd-browser",
-      sessionName: "test-session",
-    };
+    const launch = makeLaunchConfig();
 
     const pending = pool.getOrConnect(launch);
     const closedPool = pool.closeAll();
@@ -106,6 +110,26 @@ describe("ManagedGsdBrowserConnectionPool", () => {
     await closedPool;
 
     assert.deepEqual(closed, ["late-connection"]);
+    assert.equal(pool.activeCount, 0);
+    assert.equal(pool.pendingCount, 0);
+  });
+
+  it("aborts pending connection attempts when the pool is closed", async () => {
+    let receivedSignal;
+    const pool = new ManagedGsdBrowserConnectionPool(async (_launch, signal) => {
+      receivedSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("connect aborted")), { once: true });
+      });
+    }, async () => {});
+
+    const pending = pool.getOrConnect(makeLaunchConfig());
+    const closedPool = pool.closeAll();
+
+    await assert.rejects(pending, /connect aborted/);
+    await closedPool;
+
+    assert.equal(receivedSignal?.aborted, true);
     assert.equal(pool.activeCount, 0);
     assert.equal(pool.pendingCount, 0);
   });
