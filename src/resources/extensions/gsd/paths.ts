@@ -379,21 +379,26 @@ export function resolveGsdPathContract(
   const resolvedWorkRoot = resolve(workRoot || process.cwd());
   const isWorktree = isGsdWorktreePath(resolvedWorkRoot);
   if (isWorktree && !originalProjectRoot?.trim()) {
-    const projectGsd = resolveExternalStateProjectGsdFromWorktreePath(resolvedWorkRoot);
-    if (projectGsd) {
+    const rawProjectGsd = resolveExternalStateProjectGsdFromWorktreePath(resolvedWorkRoot);
+    if (rawProjectGsd) {
+      // Canonicalize the `.gsd` root so the DB path matches what every other
+      // accessor (gsdRoot/gsdProjectionRoot) returns — otherwise an unresolved
+      // symlink (e.g. `/mnt/c/.../.gsd` → native ext4 on WSL) selects the wrong
+      // journal mode and yields a fragile, move-prone handle. See issue #1239.
+      const projectGsd = normalizeRealPath(rawProjectGsd);
       return {
         projectRoot: dirname(dirname(projectGsd)),
         workRoot: resolvedWorkRoot,
         projectGsd,
-        worktreeGsd: join(resolvedWorkRoot, ".gsd"),
+        worktreeGsd: normalizeRealPath(join(resolvedWorkRoot, ".gsd")),
         projectDb: join(projectGsd, "gsd.db"),
         isWorktree,
       };
     }
   }
   const projectRoot = resolve(resolveWorktreeProjectRoot(resolvedWorkRoot, originalProjectRoot));
-  const projectGsd = join(projectRoot, ".gsd");
-  const worktreeGsd = isWorktree ? join(resolvedWorkRoot, ".gsd") : null;
+  const projectGsd = normalizeRealPath(join(projectRoot, ".gsd"));
+  const worktreeGsd = isWorktree ? normalizeRealPath(join(resolvedWorkRoot, ".gsd")) : null;
 
   return {
     projectRoot,
