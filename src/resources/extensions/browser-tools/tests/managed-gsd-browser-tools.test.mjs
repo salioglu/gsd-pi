@@ -133,6 +133,36 @@ describe("ManagedGsdBrowserConnectionPool", () => {
     assert.equal(pool.activeCount, 0);
     assert.equal(pool.pendingCount, 0);
   });
+
+  it("rejects new connection attempts started while the pool is closing", async () => {
+    let resolveConnect;
+    let connectCount = 0;
+    const pool = new ManagedGsdBrowserConnectionPool(async () => {
+      connectCount += 1;
+      return new Promise((resolve) => {
+        resolveConnect = resolve;
+      });
+    }, async () => {});
+
+    const pending = pool.getOrConnect(makeLaunchConfig());
+    const closedPool = pool.closeAll();
+
+    // A caller that arrives during the in-flight closeAll must not open a new
+    // connection that could survive shutdown.
+    await assert.rejects(
+      pool.getOrConnect(makeLaunchConfig()),
+      /closing/,
+      "getOrConnect must reject while the pool is closing",
+    );
+
+    resolveConnect({ id: "pending-connection" });
+    await assert.rejects(pending, /closed during startup/);
+    await closedPool;
+
+    assert.equal(connectCount, 1, "no second connection is started during shutdown");
+    assert.equal(pool.activeCount, 0);
+    assert.equal(pool.pendingCount, 0);
+  });
 });
 
 describe("contract tool translations", () => {
