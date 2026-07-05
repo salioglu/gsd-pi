@@ -26,7 +26,7 @@ import { deriveState } from "./state.js";
 import type { GSDState } from "./types.js";
 import { renderPlanFromDb, renderRoadmapFromDb } from "./markdown-renderer.js";
 import { readManifest } from "./workflow-manifest.js";
-import { gsdRoot, resolveSliceFile, resolveTaskFile, relTaskFile } from "./paths.js";
+import { gsdRoot, resolveMilestoneFile, resolveSliceFile, resolveTaskFile, relTaskFile } from "./paths.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -522,7 +522,7 @@ export async function regenerateIfMissing(
       filePath = resolveSliceFile(basePath, milestoneId, sliceId, "PLAN") ?? "";
       break;
     case "ROADMAP":
-      filePath = join(basePath, ".gsd", "milestones", milestoneId, `${milestoneId}-ROADMAP.md`);
+      filePath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP") ?? "";
       break;
     case "SUMMARY":
       // For SUMMARY, we regenerate all task summaries in the slice
@@ -576,7 +576,7 @@ export async function regenerateIfMissing(
         return !!(resolveSliceFile(basePath, milestoneId, sliceId, "PLAN"));
       case "ROADMAP":
         await renderRoadmapFromDb(basePath, milestoneId);
-        return existsSync(filePath);
+        return !!resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
       case "STATE":
         await renderStateProjection(basePath);
         return existsSync(filePath);

@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { regenerateIfMissing, renderPlanContent, renderStateProjection, renderSummaryProjection } from '../workflow-projections.ts';
 import type { SliceRow, TaskRow } from '../gsd-db.ts';
 import { closeDatabase, insertMilestone, insertSlice, insertTask, openDatabase } from '../gsd-db.ts';
-import { clearPathCache, _clearGsdRootCache, normalizeRealPath, resolveTaskFile } from '../paths.ts';
+import { clearPathCache, _clearGsdRootCache, normalizeRealPath, resolveMilestoneFile, resolveTaskFile } from '../paths.ts';
 import { invalidateStateCache } from '../state.ts';
 import { clearParseCache } from '../files.ts';
 
@@ -237,6 +237,80 @@ test('workflow-projections: regenerateIfMissing PLAN restores slice plan and tas
     assert.equal(regenerated, true, 'regenerateIfMissing reports the PLAN was rebuilt');
     assert.ok(existsSync(slicePlanPath), 'slice PLAN restored on disk');
     // Flat-phase: tasks are checkboxes inside the plan file, not separate task plan files.
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('workflow-projections: regenerateIfMissing ROADMAP is idempotent for flat-phase roadmap projections', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'gsd-projections-flat-roadmap-'));
+  const dbPath = join(base, '.gsd', 'gsd.db');
+  const phaseDir = join(base, '.gsd', 'phases', '01-milestone');
+  mkdirSync(phaseDir, { recursive: true });
+  openDatabase(dbPath);
+  clearParseCache();
+  clearPathCache();
+  _clearGsdRootCache();
+  invalidateStateCache();
+
+  try {
+    insertMilestone({ id: 'M001', title: 'Milestone', status: 'active', planning: { vision: 'Ship a layout-aware roadmap.' } });
+    insertSlice({
+      id: 'S01',
+      milestoneId: 'M001',
+      title: 'Flat slice',
+      status: 'pending',
+      demo: 'Roadmap exists at the flat-phase path.',
+      planning: { goal: 'Keep ROADMAP regeneration idempotent.' },
+    });
+
+    const roadmapPath = join(phaseDir, '01-ROADMAP.md');
+    writeFileSync(roadmapPath, '# existing flat roadmap\n');
+
+    const regenerated = await regenerateIfMissing(base, 'M001', 'S01', 'ROADMAP');
+
+    assert.equal(regenerated, false, 'existing flat-phase ROADMAP is detected without rewriting');
+    assert.equal(readFileSync(roadmapPath, 'utf-8'), '# existing flat roadmap\n');
+    assert.equal(normalizeRealPath(resolveMilestoneFile(base, 'M001', 'ROADMAP') ?? ''), normalizeRealPath(roadmapPath));
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('workflow-projections: regenerateIfMissing ROADMAP regenerates missing flat-phase roadmap projections', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'gsd-projections-missing-roadmap-'));
+  const dbPath = join(base, '.gsd', 'gsd.db');
+  const phaseDir = join(base, '.gsd', 'phases', '01-milestone');
+  mkdirSync(phaseDir, { recursive: true });
+  openDatabase(dbPath);
+  clearParseCache();
+  clearPathCache();
+  _clearGsdRootCache();
+  invalidateStateCache();
+
+  try {
+    insertMilestone({ id: 'M001', title: 'Milestone', status: 'active', planning: { vision: 'Ship a layout-aware roadmap.' } });
+    insertSlice({
+      id: 'S01',
+      milestoneId: 'M001',
+      title: 'Flat slice',
+      status: 'pending',
+      demo: 'Roadmap regenerates at the flat-phase path.',
+      planning: { goal: 'Recover ROADMAP from DB.' },
+    });
+
+    const roadmapPath = join(phaseDir, '01-ROADMAP.md');
+    const legacyRoadmapPath = join(base, '.gsd', 'milestones', 'M001', 'M001-ROADMAP.md');
+    assert.ok(!existsSync(roadmapPath), 'precondition: flat-phase ROADMAP is absent');
+
+    const regenerated = await regenerateIfMissing(base, 'M001', 'S01', 'ROADMAP');
+
+    assert.equal(regenerated, true, 'missing flat-phase ROADMAP is regenerated');
+    assert.match(readFileSync(roadmapPath, 'utf-8'), /Ship a layout-aware roadmap/);
+    assert.equal(existsSync(legacyRoadmapPath), false, 'regeneration does not create a legacy ROADMAP path');
+    assert.equal(normalizeRealPath(resolveMilestoneFile(base, 'M001', 'ROADMAP') ?? ''), normalizeRealPath(roadmapPath));
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
