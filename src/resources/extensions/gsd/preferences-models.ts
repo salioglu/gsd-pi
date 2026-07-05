@@ -23,7 +23,7 @@ import type {
   GSDModelPhaseKey,
   GSDThinkingConfig,
   ResolvedModelConfig,
-  AutoSupervisorConfig,
+  ResolvedAutoSupervisorConfig,
 } from "./preferences-types.js";
 import { clearGSDPreferencesCache, loadEffectiveGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
 import { getUnitPhaseChain } from "./unit-registry.js";
@@ -452,7 +452,7 @@ export function resolveDynamicRoutingConfig(): DynamicRoutingConfig {
   };
 }
 
-export function resolveAutoSupervisorConfig(): AutoSupervisorConfig {
+export function resolveAutoSupervisorConfig(): ResolvedAutoSupervisorConfig {
   const prefs = loadEffectiveGSDPreferences();
   const configured = prefs?.preferences.auto_supervisor ?? {};
 

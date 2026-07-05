@@ -336,6 +336,16 @@ export interface AutoSupervisorConfig {
   stalled_tool_timeout_minutes?: number;
 }
 
+/**
+ * The supervisor config after resolution by `resolveAutoSupervisorConfig`.
+ * Identical to {@link AutoSupervisorConfig} except `model` is always the
+ * normalized primary model ID string — the object form accepted in preferences
+ * is collapsed to its primary during resolution (#1229).
+ */
+export type ResolvedAutoSupervisorConfig = Omit<AutoSupervisorConfig, "model"> & {
+  model?: string;
+};
+
 export interface RemoteQuestionsConfig {
   channel: "slack" | "discord" | "telegram";
   channel_id: string | number;
