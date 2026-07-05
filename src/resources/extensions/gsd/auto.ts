@@ -615,11 +615,27 @@ export function startAutoDetached(
     milestoneLock?: string | null;
   },
 ): void {
-  void withDetachedAutoKeepalive(startAuto(ctx, pi, base, verboseMode, options)).catch((err) => {
+  void withDetachedAutoKeepalive(startAuto(ctx, pi, base, verboseMode, options)).catch(async (err) => {
     const message = getErrorMessage(err);
     ctx.ui.notify(`Auto-start failed: ${message}`, "error");
     logWarning("engine", `auto start error: ${message}`, { file: "auto.ts" });
     debugLog("auto-start-failed", { error: message });
+    // Backstop cleanup (#1235): if startAuto threw after auto-mode was activated
+    // (e.g. an exception during bootstrap, before the loop's try/finally could
+    // run cleanupAfterLoopExit), s.active and the on-disk auto lock leak, so the
+    // re-entry guard silently no-ops every later /gsd auto until restart. Clear
+    // the leaked activation here so a failed start is always recoverable.
+    if (s.active) {
+      try {
+        await cleanupAfterLoopExit(ctx);
+      } catch (cleanupErr) {
+        logWarning(
+          "engine",
+          `auto start cleanup failed: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`,
+          { file: "auto.ts" },
+        );
+      }
+    }
   });
 }
 
@@ -2895,15 +2911,18 @@ export async function startAuto(
       debugLog("resume-orchestration-resume", { error: err instanceof Error ? err.message : String(err) });
     }
     startAutoCommandPolling(s.basePath);
-    await runAutoLoopWithUok({
-      ctx,
-      pi,
-      s,
-      deps: loopDeps,
-      runKernelLoop: runUokKernelLoop,
-      runLegacyLoop: runLegacyAutoLoop,
-    });
-    await cleanupAfterLoopExit(ctx);
+    try {
+      await runAutoLoopWithUok({
+        ctx,
+        pi,
+        s,
+        deps: loopDeps,
+        runKernelLoop: runUokKernelLoop,
+        runLegacyLoop: runLegacyAutoLoop,
+      });
+    } finally {
+      await cleanupAfterLoopExit(ctx);
+    }
     return;
   }
 
@@ -2931,7 +2950,15 @@ export async function startAuto(
     bootstrapDeps,
     freshStartAssessment,
   );
-  if (!ready) return;
+  if (!ready) {
+    // bootstrapAutoSession sets s.active = true (auto-start.ts) before several
+    // post-activation bail-outs return false without a loop ever running (e.g.
+    // the SQLite-unavailable gate). Without this, s.active and the auto lock
+    // leak and every later /gsd auto silently no-ops via the re-entry guard
+    // (#1235). Run the canonical cleanup so a failed bootstrap stays recoverable.
+    if (s.active) await cleanupAfterLoopExit(ctx);
+    return;
+  }
 
   // Build scope after bootstrap has populated s.basePath / s.originalBasePath /
   // s.currentMilestoneId (including worktree setup inside bootstrapAutoSession).
@@ -2957,15 +2984,18 @@ export async function startAuto(
   startAutoCommandPolling(s.basePath);
 
   // Dispatch the first unit
-  await runAutoLoopWithUok({
-    ctx,
-    pi,
-    s,
-    deps: loopDeps,
-    runKernelLoop: runUokKernelLoop,
-    runLegacyLoop: runLegacyAutoLoop,
-  });
-  await cleanupAfterLoopExit(ctx);
+  try {
+    await runAutoLoopWithUok({
+      ctx,
+      pi,
+      s,
+      deps: loopDeps,
+      runKernelLoop: runUokKernelLoop,
+      runLegacyLoop: runLegacyAutoLoop,
+    });
+  } finally {
+    await cleanupAfterLoopExit(ctx);
+  }
 }
 
 // describeNextUnit is imported from auto-dashboard.ts and re-exported
