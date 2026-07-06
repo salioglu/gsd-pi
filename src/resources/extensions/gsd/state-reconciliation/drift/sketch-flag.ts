@@ -41,7 +41,7 @@ export function detectStaleSketchFlags(
  * only when it has a *real* plan on disk — not merely any PLAN file.
  *
  * File existence alone (#1287) is too weak: a stub/placeholder PLAN, a
- * crash-leftover, or a projection round-trip that emits synthetic "Plan NN"
+ * crash-leftover, or a projection round-trip that emits synthetic placeholder
  * task titles (migrate/transformer.buildTaskTitle) all satisfy existsSync yet
  * were never actually refined. Clearing the flag for one strips the `refining`
  * guard in phase derivation and lets a phantom task drive dispatch.
@@ -56,11 +56,24 @@ function sketchIsPlanned(basePath: string, mid: string, sid: string): boolean {
   if (planPath === null || !existsSync(planPath)) return false;
   try {
     const plan = parsePlan(readFileSync(planPath, "utf-8"));
-    return plan.tasks.some((t) => !/^Plan\s+\d+$/i.test(t.title.trim()));
+    return plan.tasks.some((t) => !isPlaceholderTaskTitle(t.title));
   } catch {
     // A PLAN we cannot parse is not a trustworthy "planning done" signal.
     return false;
   }
+}
+
+/**
+ * True when a task title is a synthetic placeholder emitted by a projection
+ * round-trip rather than a real, refined task. `migrate/transformer.buildTaskTitle`
+ * produces two shapes when a plan was never decomposed:
+ *   - `Plan NN`            (fallback when phase/plan frontmatter is absent)
+ *   - `${phase} ${plan}`   (e.g. `00 01` — two numeric tokens)
+ * Neither carries genuine planning intent, so both must be treated as stubs.
+ */
+function isPlaceholderTaskTitle(title: string): boolean {
+  const trimmed = title.trim();
+  return /^Plan\s+\d+$/i.test(trimmed) || /^\d+\s+\d+$/.test(trimmed);
 }
 
 export function repairStaleSketchFlag(record: SketchFlagDrift): void {

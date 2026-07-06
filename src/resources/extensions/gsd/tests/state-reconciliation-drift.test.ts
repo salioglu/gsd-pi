@@ -179,6 +179,27 @@ test("#1287: stub/placeholder PLAN does NOT clear the sketch flag", async (t) =>
   assert.equal(result.ok, true);
   assert.equal(getSlice("M001", "S02")?.is_sketch, 1, "placeholder task: flag stays set");
   assert.equal(result.repaired.length, 0, "placeholder task: no repair");
+
+  // buildTaskTitle also emits `${phase} ${plan}` (e.g. "00 01") when the plan
+  // frontmatter carries phase/plan. This projected placeholder must not clear
+  // the flag either.
+  writeFileSync(
+    planPath,
+    makeStalePlanContent("S02", [{ id: "T01", title: "00 01", done: false }]),
+  );
+  clearRendererCaches();
+  state = makeState({ activeMilestone: { id: "M001", title: "Test" } });
+  result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => state,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(
+    getSlice("M001", "S02")?.is_sketch,
+    1,
+    "phase/plan placeholder task: flag stays set",
+  );
+  assert.equal(result.repaired.length, 0, "phase/plan placeholder task: no repair");
 });
 
 test("ADR-017 (#5700): repair failure throws ReconciliationFailedError with shape", async () => {
