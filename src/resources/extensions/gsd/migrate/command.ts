@@ -10,20 +10,15 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { existsSync } from "node:fs";
 import { gsdRoot } from "../paths.js";
 import { showNextAction } from "../../shared/tui.js";
 import {
   notifyMigrateNeedsInteractiveMenu,
   requiresInteractiveMenu,
 } from "../command-feedback.js";
-import {
-  validatePlanningDirectory,
-  parsePlanningDirectory,
-  transformToGSD,
-  generatePreview,
-  writeGSDDirectory,
-} from "./index.js";
+import { transformToGSD } from "./transformer.js";
+import { writeGSDDirectory } from "./writer.js";
+import { createMigrationPlan } from "./plan.js";
 import { buildMigrationPreviewSummary, buildReviewPrompt } from "./presentation.js";
 
 import type { MigrationPreview, WrittenFiles } from "./writer.js";
@@ -40,10 +35,7 @@ import {
   type MigrationProjectionVerification,
 } from "./audit.js";
 import {
-  assertMigrationHasSlices,
-  assertMigrationTargetAvailable,
   prepareMigrationTarget,
-  resolveMigrationPaths,
   restoreMigrationTarget,
   type MigrationBackup,
 } from "./safety.js";
@@ -181,34 +173,28 @@ export async function handleMigrate(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
 ): Promise<void> {
-  // ── Resolve source path ────────────────────────────────────────────────────
-  const { sourcePath, targetRoot } = resolveMigrationPaths(args);
+  const plan = await createMigrationPlan(args);
+  const { sourcePath, targetRoot } = plan;
 
-  if (!existsSync(sourcePath)) {
+  if (plan.status === "missing-source") {
     ctx.ui.notify(
       `Directory not found: ${sourcePath}\n\n` +
-      'Migration converts a .planning/ directory (from older GSD versions) into .gsd/ format.\n' +
-      'If you are starting a new project, use /gsd:new-project instead.\n' +
-      'If migrating, ensure the path contains a .planning/ directory.',
+      "Migration converts a .planning/ directory (from older GSD versions) into .gsd/ format.\n" +
+      "If you are starting a new project, use /gsd:new-project instead.\n" +
+      "If migrating, ensure the path contains a .planning/ directory.",
       "error",
     );
     return;
   }
 
-  // ── Validate ───────────────────────────────────────────────────────────────
-  const validation = await validatePlanningDirectory(sourcePath);
-
-  const warnings = validation.issues.filter((i) => i.severity === "warning");
-  const fatals = validation.issues.filter((i) => i.severity === "fatal");
-
-  for (const w of warnings) {
-    ctx.ui.notify(`⚠ ${w.message} (${w.file})`, "warning");
+  for (const warning of plan.warnings) {
+    ctx.ui.notify(`⚠ ${warning.message} (${warning.file})`, "warning");
   }
-  for (const f of fatals) {
-    ctx.ui.notify(`✖ ${f.message} (${f.file})`, "error");
+  for (const fatal of plan.fatals) {
+    ctx.ui.notify(`✖ ${fatal.message} (${fatal.file})`, "error");
   }
 
-  if (!validation.valid) {
+  if (plan.status === "invalid") {
     ctx.ui.notify(
       "Migration blocked — fix the fatal issues above before retrying.",
       "error",
@@ -216,17 +202,12 @@ export async function handleMigrate(
     return;
   }
 
-  // ── Parse → Transform → Preview ───────────────────────────────────────────
-  const parsed = await parsePlanningDirectory(sourcePath);
-  const project = transformToGSD(parsed);
-  const preview = generatePreview(project);
-  try {
-    assertMigrationHasSlices(preview);
-    await assertMigrationTargetAvailable(targetRoot);
-  } catch (err) {
-    ctx.ui.notify((err as Error).message, "error");
+  if (plan.status === "blocked") {
+    ctx.ui.notify(plan.message, "error");
     return;
   }
+
+  const { project, preview } = plan;
 
   // ── Build preview text ─────────────────────────────────────────────────────
   const lines = buildMigrationPreviewSummary(preview, targetRoot);
