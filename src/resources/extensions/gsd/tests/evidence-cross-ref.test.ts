@@ -81,6 +81,33 @@ test("newer script-wrapped pass is not shadowed by a stale exact failing run", (
   assert.deepEqual(mismatches, []);
 });
 
+test("later containing script does not override an exact successful run", () => {
+  const command = "npm test";
+  const mismatches = crossReferenceEvidence(
+    [{ command, exitCode: 0, verdict: "passed" }],
+    [
+      {
+        kind: "bash",
+        toolCallId: "call-1",
+        command,
+        exitCode: 0,
+        outputSnippet: "passed",
+        timestamp: 1,
+      },
+      {
+        kind: "bash",
+        toolCallId: "call-2",
+        command: `cd /work && ${command} && npm run lint`,
+        exitCode: 1,
+        outputSnippet: "lint failed",
+        timestamp: 2,
+      },
+    ] as EvidenceEntry[],
+  );
+
+  assert.deepEqual(mismatches, []);
+});
+
 test("same-timestamp retry evidence prefers the later recorded run", () => {
   const command = "npm test";
   const mismatches = crossReferenceEvidence(

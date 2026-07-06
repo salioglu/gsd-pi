@@ -163,15 +163,14 @@ function findMatches(
 
   const exact = bashCalls.filter((b) => b.command.trim() === normalized);
 
-  // When an exact run exists, also consider script-wrapped reruns (e.g.
+  // When an exact run exists, also consider wrapper-equivalent reruns (e.g.
   // `cd ... && <command>`) so a newer pass is not shadowed by a stale exact
-  // failure. Exclude same-command extensions (e.g. `npm test --coverage`) so
-  // a later unrelated invocation cannot override a successful exact run.
+  // failure. Do not merge arbitrary containing scripts: their exit code may
+  // belong to later work, not to the claimed verification command.
   const scriptWrapped = bashCalls.filter((b) => {
     const command = b.command.trim();
     if (command.length === 0 || command === normalized) return false;
-    if (!command.includes(normalized)) return false;
-    return !isCommandExtension(command, normalized);
+    return isWrapperEquivalentCommand(command, normalized);
   });
   if (exact.length > 0) return [...exact, ...scriptWrapped];
 
@@ -213,9 +212,19 @@ function latestMatch(matches: readonly BashEvidence[]): BashEvidence {
   ));
 }
 
-/** True when `actual` is the same invocation as `claimed` with extra args. */
-function isCommandExtension(actual: string, claimed: string): boolean {
-  if (!actual.startsWith(claimed)) return false;
-  if (actual.length === claimed.length) return false;
-  return /^\s/.test(actual.slice(claimed.length));
+/** True when `actual` is the same command with only shell wrapper noise. */
+function isWrapperEquivalentCommand(actual: string, claimed: string): boolean {
+  const claimIndex = actual.lastIndexOf(claimed);
+  if (claimIndex < 0) return false;
+
+  const prefix = actual.slice(0, claimIndex).trim();
+  if (prefix.length > 0 && !/^cd\s+.+\s+&&$/.test(prefix)) return false;
+
+  const suffix = actual.slice(claimIndex + claimed.length).trim();
+  return suffix.length === 0 || isBenignWrapperSuffix(suffix);
+}
+
+function isBenignWrapperSuffix(suffix: string): boolean {
+  if (/^;\s*echo\s+["']?[A-Z_]*EXIT=\$\?["']?$/.test(suffix)) return true;
+  return /^(?:(?:\d?>>?|&>)\s*\S+|\d?>&\d)(?:\s+(?:(?:\d?>>?|&>)\s*\S+|\d?>&\d))*$/.test(suffix);
 }
