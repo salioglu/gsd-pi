@@ -68,7 +68,6 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
     const s = new AutoSession();
     s.active = true;
     s.basePath = base;
-    s.canonicalProjectRoot = base;
     s.currentUnit = { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() };
 
     let pauseCalled = false;
@@ -77,7 +76,7 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
       s,
       ctx: {
         ui: { notify: (message: string) => notifications.push(message) },
-      } as PostUnitContext["ctx"],
+      } as unknown as PostUnitContext["ctx"],
       pi: {} as PostUnitContext["pi"],
       buildSnapshotOpts: () => ({}),
       lockBase: () => base,

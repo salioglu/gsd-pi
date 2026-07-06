@@ -161,20 +161,19 @@ function findMatches(
 ): BashEvidence[] {
   const normalized = claimedCommand.trim();
 
-  // Exact matches first
-  const exact = bashCalls.filter(b => b.command.trim() === normalized);
-  if (exact.length > 0) return exact;
-
-  // Substring match: claimed is contained in actual or actual in claimed.
-  // A claimed verification command typically appears verbatim inside a
-  // larger gsd_exec script body (cd prefix, multi-line scripts), so
-  // script-containing-claim is the common direction. Blank-command entries
-  // must be excluded — `"x".includes("")` is true, so they'd match anything.
-  const substring = bashCalls.filter(
-    b => b.command.trim().length > 0 &&
-      (b.command.includes(normalized) || normalized.includes(b.command)),
-  );
-  if (substring.length > 0) return substring;
+  // Strong matches first. Exact command evidence and script-wrapped evidence
+  // are equivalent for freshness purposes: a stale exact failure must not
+  // shadow a newer `cd ... && <command>` pass.
+  const strongMatches = bashCalls.filter((b) => {
+    const command = b.command.trim();
+    if (command.length === 0) return false;
+    return (
+      command === normalized ||
+      command.includes(normalized) ||
+      normalized.includes(command)
+    );
+  });
+  if (strongMatches.length > 0) return strongMatches;
 
   // Token match: split on whitespace and check significant overlap
   const claimedTokens = normalized.split(/\s+/).filter(t => t.length > 2);
@@ -199,6 +198,6 @@ function findMatches(
 
 function latestMatch(matches: readonly BashEvidence[]): BashEvidence {
   return matches.reduce((latest, match) => (
-    match.timestamp > latest.timestamp ? match : latest
+    match.timestamp >= latest.timestamp ? match : latest
   ));
 }
