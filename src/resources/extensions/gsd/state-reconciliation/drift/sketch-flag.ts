@@ -48,7 +48,9 @@ function isPlaceholderTaskTitle(title: string): boolean {
   const t = title.trim();
   if (/^Plan\s+\d+[a-z]*$/i.test(t)) return true;
   // buildTaskTitle returns `${phase} ${plan}` when frontmatter has both fields.
-  return /^[\w-]+\s+\d+[a-z]*$/i.test(t);
+  // Phase slugs are digit-led (e.g. `00`, `29-auth-system`); require that so
+  // legitimate titles like `Step 1` are not misclassified as stubs.
+  return /^\d[\w-]*\s+\d+[a-z]*$/i.test(t);
 }
 
 /**
