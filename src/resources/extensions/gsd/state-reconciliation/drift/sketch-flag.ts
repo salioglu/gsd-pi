@@ -37,6 +37,21 @@ export function detectStaleSketchFlags(
 }
 
 /**
+ * True when a task title is a synthetic placeholder emitted by a projection
+ * round-trip rather than a real, refined task. `migrate/transformer.buildTaskTitle`
+ * produces two shapes when a plan was never decomposed:
+ *   - `Plan NN`            (fallback when phase/plan frontmatter is absent)
+ *   - `${phase} ${plan}`   (e.g. `00 01`, `00 03b`, `29-auth-system 01`)
+ * Neither carries genuine planning intent, so both must be treated as stubs.
+ */
+function isPlaceholderTaskTitle(title: string): boolean {
+  const t = title.trim();
+  if (/^Plan\s+\d+[a-z]*$/i.test(t)) return true;
+  // buildTaskTitle returns `${phase} ${plan}` when frontmatter has both fields.
+  return /^[\w-]+\s+\d+[a-z]*$/i.test(t);
+}
+
+/**
  * A sketch slice counts as "planned" (so its is_sketch flag may be cleared)
  * only when it has a *real* plan on disk — not merely any PLAN file.
  *
@@ -61,19 +76,6 @@ function sketchIsPlanned(basePath: string, mid: string, sid: string): boolean {
     // A PLAN we cannot parse is not a trustworthy "planning done" signal.
     return false;
   }
-}
-
-/**
- * True when a task title is a synthetic placeholder emitted by a projection
- * round-trip rather than a real, refined task. `migrate/transformer.buildTaskTitle`
- * produces two shapes when a plan was never decomposed:
- *   - `Plan NN`            (fallback when phase/plan frontmatter is absent)
- *   - `${phase} ${plan}`   (e.g. `00 01` — two numeric tokens)
- * Neither carries genuine planning intent, so both must be treated as stubs.
- */
-function isPlaceholderTaskTitle(title: string): boolean {
-  const trimmed = title.trim();
-  return /^Plan\s+\d+$/i.test(trimmed) || /^\d+\s+\d+$/.test(trimmed);
 }
 
 export function repairStaleSketchFlag(record: SketchFlagDrift): void {
