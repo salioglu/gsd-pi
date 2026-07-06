@@ -181,17 +181,14 @@ export async function writePlanningDirectory(
       });
 
       if (tasks.length === 0) {
-        // Empty phase — write a single placeholder plan so the dir isn't empty.
-        const planPath = join(phaseDir, `${pad(phaseNum)}-01-PLAN.md`);
-        await saveFile(
-          planPath,
-          formatPlanningPlan(phaseNum, 1, slice.title || slice.id, []),
-        );
-        paths.push(planPath);
-        projectionWrites.push({
-          relPath: toPlanningRel(planPath),
-          entities: [`${milestone.id}/${slice.id}`],
-        });
+        // Sketch / undecomposed slice — zero tasks. Do NOT emit an ingestible
+        // *-PLAN.md here: the reverse transform maps one GSDTask per plan file
+        // (transformer.ts mapSlice), so a placeholder would materialize a
+        // phantom "Plan NN" task and flip the slice from "needs planning" to
+        // "has a planned task", causing auto-mode to skip planning (issue #1285).
+        // The phase dir is already created (mkdirSync above) and the slice is
+        // listed in ROADMAP.md, so it round-trips with tasks = [] — the correct
+        // sketch-slice shape.
       } else {
         for (let ti = 0; ti < tasks.length; ti++) {
           const task = tasks[ti]!;
@@ -217,19 +214,14 @@ export async function writePlanningDirectory(
     }
   }
 
-  // If no slices produced any phases, write a single empty phase so ROADMAP.md
-  // isn't blank and the layout is still discoverable.
+  // If no slices produced any phases, emit a single empty phase dir + ROADMAP
+  // entry so the layout stays discoverable. Do NOT write a placeholder
+  // *-PLAN.md — an ingestible plan file would round-trip into a phantom task
+  // (see the tasks.length === 0 branch above, issue #1285).
   if (roadmapEntries.length === 0) {
     const phaseDirName = `${pad(1)}-milestone`;
     const phaseDir = join(root, "phases", phaseDirName);
     mkdirSync(phaseDir, { recursive: true });
-    const planPath = join(phaseDir, `${pad(1)}-01-PLAN.md`);
-    await saveFile(planPath, formatPlanningPlan(1, 1, milestones[0]!.title || milestones[0]!.id, []));
-    paths.push(planPath);
-    projectionWrites.push({
-      relPath: toPlanningRel(planPath),
-      entities: [milestones[0]!.id],
-    });
     roadmapEntries.push({ number: 1, title: milestones[0]!.title || milestones[0]!.id, done: false });
   }
 
