@@ -247,6 +247,31 @@ test("rollback after a re-fired migration preserves the reused migrate-* backup"
   assert.ok(existsSync(milestonesPath), "legacy milestones/ should be restored on rollback");
 });
 
+test("migration ignores an empty/partial leftover backup and writes a complete one (#1292)", async () => {
+  const base = makeTmp();
+
+  // Simulate a prior first-time backup that crashed mid-cpSync: an empty
+  // migrate-<ts>/ leftover with no milestones/ content. It is the newest entry,
+  // so mtime-based selection would reuse it as the rollback copy if content were
+  // not validated — silently retaining a recovery copy missing the legacy tree.
+  const backupRoot = join(base, ".gsd-backups");
+  const emptyLeftover = join(backupRoot, "migrate-crashed");
+  mkdirSync(emptyLeftover, { recursive: true });
+
+  await migrateToFlatPhase(base);
+
+  assert.ok(existsSync(join(base, ".gsd", "phases", "01-foundation")), "flat phase should render");
+  // The empty leftover must not have been reused; a fresh, content-bearing
+  // backup that actually captured the legacy milestones/ tree must be created.
+  const contentBackups = readdirSync(backupRoot)
+    .filter((d) => d.startsWith("migrate-"))
+    .filter((d) => existsSync(join(backupRoot, d, "M001")));
+  assert.ok(
+    contentBackups.length >= 1,
+    "a complete backup containing the legacy milestones/ tree must be created, not the empty leftover",
+  );
+});
+
 test("migrateToFlatPhase preserves slice sidecar artifacts and skips recovery placeholder PLAN", async () => {
   const base = makeTmp({ withTask: false });
   const legacySliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
