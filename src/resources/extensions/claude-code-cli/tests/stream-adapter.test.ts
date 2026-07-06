@@ -1406,6 +1406,26 @@ describe("stream-adapter — Claude Code external tool results", () => {
 		const textBlocks = finalContent.filter((b) => b.type === "text").map((b) => (b as any).text);
 		assert.deepEqual(textBlocks, ["prose A", "prose B"]);
 	});
+
+	test("buildFinalAssistantContent emits scalar fallback prose/thinking not captured in the accumulator", () => {
+		// A non-streaming `assistant` SDK message sets lastText/lastThinkingContent
+		// only (never pushed to intermediateTextBlocks). With pendingContent empty
+		// and intermediate blocks present, the fallback must still be emitted.
+		const finalContent = buildFinalAssistantContent({
+			intermediateToolBlocks: [
+				{ type: "toolCall", id: "q1", name: "ask_user_questions", arguments: {} } as any,
+			],
+			intermediateTextBlocks: [{ type: "text", text: "prose A" }],
+			toolResultsById: new Map(),
+			lastThinkingContent: "final thinking",
+			lastTextContent: "final prose",
+		});
+
+		const textBlocks = finalContent.filter((b) => b.type === "text").map((b) => (b as any).text);
+		const thinkingBlocks = finalContent.filter((b) => b.type === "thinking").map((b) => (b as any).thinking);
+		assert.deepEqual(textBlocks, ["prose A", "final prose"]);
+		assert.deepEqual(thinkingBlocks, ["final thinking"]);
+	});
 });
 
 describe("claude-code-cli — Claude Fable 5 Opus-tier support", () => {

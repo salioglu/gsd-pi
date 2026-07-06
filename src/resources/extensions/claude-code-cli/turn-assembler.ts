@@ -275,12 +275,30 @@ export function buildFinalAssistantContent(params: {
 				finalContent.push(block);
 			}
 		}
-	} else if (intermediateTextBlocks.length === 0) {
+	} else {
+		// No builder content survived to this turn boundary, so fall back to the
+		// last scalar thinking/text captured off the stream. When the turn ends
+		// on an elicitation these scalars just mirror the final intermediate
+		// block (they are overwritten at each synthetic-user boundary), so only
+		// emit them when they carry content not already accumulated — otherwise
+		// a non-streaming `assistant` message's prose/thinking is silently lost.
+		const lastBlockOfType = (type: "text" | "thinking") => {
+			for (let i = intermediateTextBlocks.length - 1; i >= 0; i--) {
+				if (intermediateTextBlocks[i].type === type) return intermediateTextBlocks[i];
+			}
+			return undefined;
+		};
 		if (params.lastThinkingContent) {
-			finalContent.push({ type: "thinking", thinking: params.lastThinkingContent });
+			const lastThinking = lastBlockOfType("thinking") as { thinking?: string } | undefined;
+			if (lastThinking?.thinking !== params.lastThinkingContent) {
+				finalContent.push({ type: "thinking", thinking: params.lastThinkingContent });
+			}
 		}
 		if (params.lastTextContent) {
-			finalContent.push({ type: "text", text: params.lastTextContent });
+			const lastText = lastBlockOfType("text") as { text?: string } | undefined;
+			if (lastText?.text !== params.lastTextContent) {
+				finalContent.push({ type: "text", text: params.lastTextContent });
+			}
 		}
 	}
 
