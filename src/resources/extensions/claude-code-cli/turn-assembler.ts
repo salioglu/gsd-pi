@@ -244,6 +244,7 @@ export function shouldSuppressDuplicateToolUnavailableBlock(
  */
 export function buildFinalAssistantContent(params: {
 	intermediateToolBlocks: AssistantMessage["content"];
+	intermediateTextBlocks?: AssistantMessage["content"];
 	pendingContent?: AssistantMessage["content"];
 	toolResultsById: ReadonlyMap<string, ExternalToolResultPayload>;
 	lastThinkingContent?: string;
@@ -259,13 +260,22 @@ export function buildFinalAssistantContent(params: {
 	const finalContent: AssistantMessage["content"] = mergedToolBlocks.filter(
 		(block) => !shouldSuppressDuplicateToolUnavailableBlock(block, mergedToolBlocks),
 	);
+	// Emit prose/thinking captured at earlier turn-boundaries (each successive
+	// `ask_user_questions` elicitation completes a turn) before the final
+	// segment. Capturing these in an ordered accumulator — symmetric with
+	// `intermediateToolBlocks` — is what keeps intermediate explanations from
+	// being collapsed to a single overwritten scalar and silently dropped.
+	const intermediateTextBlocks = params.intermediateTextBlocks ?? [];
+	for (const block of intermediateTextBlocks) {
+		finalContent.push(block);
+	}
 	if (params.pendingContent && params.pendingContent.length > 0) {
 		for (const block of params.pendingContent) {
 			if (block.type === "text" || block.type === "thinking") {
 				finalContent.push(block);
 			}
 		}
-	} else {
+	} else if (intermediateTextBlocks.length === 0) {
 		if (params.lastThinkingContent) {
 			finalContent.push({ type: "thinking", thinking: params.lastThinkingContent });
 		}

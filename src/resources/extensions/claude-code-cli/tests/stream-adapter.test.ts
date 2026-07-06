@@ -1365,6 +1365,47 @@ describe("stream-adapter — Claude Code external tool results", () => {
 		});
 		assert.deepEqual(finalContent[1], { type: "text", text: "Read complete." });
 	});
+
+	test("buildFinalAssistantContent keeps every prose segment across successive elicitation boundaries (#1284)", () => {
+		// A multi-question /gsd discuss turn: [prose A][Q1][prose B][Q2][prose C].
+		// Prose A and B are committed at synthetic-user boundaries (intermediate),
+		// prose C is still in the builder (pending) when `result` arrives.
+		const finalContent = buildFinalAssistantContent({
+			intermediateToolBlocks: [
+				{ type: "toolCall", id: "q1", name: "ask_user_questions", arguments: {} } as any,
+				{ type: "toolCall", id: "q2", name: "ask_user_questions", arguments: {} } as any,
+			],
+			intermediateTextBlocks: [
+				{ type: "text", text: "prose A" },
+				{ type: "text", text: "prose B" },
+			],
+			pendingContent: [{ type: "text", text: "prose C" }],
+			toolResultsById: new Map(),
+		});
+
+		const textBlocks = finalContent.filter((b) => b.type === "text").map((b) => (b as any).text);
+		assert.deepEqual(textBlocks, ["prose A", "prose B", "prose C"]);
+	});
+
+	test("buildFinalAssistantContent does not duplicate the last prose when the turn ends on an elicitation (#1284)", () => {
+		// [prose A][Q1][prose B][Q2] — builder was reset at the final boundary, so
+		// pendingContent is empty and lastTextContent still holds "prose B".
+		const finalContent = buildFinalAssistantContent({
+			intermediateToolBlocks: [
+				{ type: "toolCall", id: "q1", name: "ask_user_questions", arguments: {} } as any,
+				{ type: "toolCall", id: "q2", name: "ask_user_questions", arguments: {} } as any,
+			],
+			intermediateTextBlocks: [
+				{ type: "text", text: "prose A" },
+				{ type: "text", text: "prose B" },
+			],
+			toolResultsById: new Map(),
+			lastTextContent: "prose B",
+		});
+
+		const textBlocks = finalContent.filter((b) => b.type === "text").map((b) => (b as any).text);
+		assert.deepEqual(textBlocks, ["prose A", "prose B"]);
+	});
 });
 
 describe("claude-code-cli — Claude Fable 5 Opus-tier support", () => {

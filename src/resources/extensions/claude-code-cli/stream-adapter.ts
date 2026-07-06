@@ -2252,6 +2252,7 @@ export function streamViaClaudeCode(
 interface SdkAttemptMessageState {
 	builder: PartialMessageBuilder | null;
 	intermediateToolBlocks: AssistantMessage["content"];
+	intermediateTextBlocks: AssistantMessage["content"];
 	toolResultsById: Map<string, ExternalToolResultPayload>;
 	toolCompletionTargetsById: Map<string, { partial: AssistantMessage; contentIndex: number }>;
 	emittedExternalToolResultIds: Set<string>;
@@ -2261,6 +2262,7 @@ function createSdkAttemptMessageState(): SdkAttemptMessageState {
 	return {
 		builder: null,
 		intermediateToolBlocks: [],
+		intermediateTextBlocks: [],
 		toolResultsById: new Map<string, ExternalToolResultPayload>(),
 		toolCompletionTargetsById: new Map<string, { partial: AssistantMessage; contentIndex: number }>(),
 		emittedExternalToolResultIds: new Set<string>(),
@@ -2402,6 +2404,7 @@ async function pumpSdkMessages(
 				let {
 					builder,
 					intermediateToolBlocks,
+					intermediateTextBlocks,
 					toolResultsById,
 					toolCompletionTargetsById,
 					emittedExternalToolResultIds,
@@ -2542,8 +2545,14 @@ async function pumpSdkMessages(
 								for (const [contentIndex, block] of builder.message.content.entries()) {
 									if (block.type === "text" && block.text) {
 										lastTextContent = block.text;
+										// Accumulate completed prose in order — a multi-question
+										// turn commits [prose][elicitation] segments across several
+										// synthetic-user boundaries, and overwriting a single
+										// scalar would drop every explanation but the last.
+										intermediateTextBlocks.push({ type: "text", text: block.text });
 									} else if (block.type === "thinking" && block.thinking) {
 										lastThinkingContent = block.thinking;
+										intermediateTextBlocks.push({ type: "thinking", thinking: block.thinking });
 									} else if (block.type === "toolCall" || block.type === "serverToolUse") {
 										// Collect tool blocks for externalToolExecution rendering
 										intermediateToolBlocks.push(block);
@@ -2641,6 +2650,7 @@ async function pumpSdkMessages(
 							const result = msg as SDKResultMessage;
 							const finalContent = buildFinalAssistantContent({
 								intermediateToolBlocks,
+								intermediateTextBlocks,
 								pendingContent: builder?.message.content,
 								toolResultsById,
 								lastThinkingContent,
