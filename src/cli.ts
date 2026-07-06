@@ -16,6 +16,7 @@ import chalk from 'chalk'
 import { checkForGsdBrowserUpdates, checkForUpdates } from './update-check.js'
 import { shouldBypassManagedResourceMismatchGate } from './cli-policy.js'
 import { shouldRedirectAutoToHeadless } from './cli-auto-routing.js'
+import { resolvePrintModeExitCode } from './print-mode-exit.js'
 import { printHelp, printSubcommandHelp } from './help-text.js'
 import { applySecurityOverrides } from './security-overrides.js'
 import { validateConfiguredModel } from './startup-model-validation.js'
@@ -778,7 +779,7 @@ if (isPrintMode) {
   // Honor any exit code a slash command or extension handler set during the
   // turn (e.g. a machine-readable verdict for headless orchestrators); default
   // to 0 when none was set.
-  process.exit(process.exitCode ?? 0)
+  process.exit(resolvePrintModeExitCode(process.exitCode))
 }
 
 // ---------------------------------------------------------------------------
