@@ -775,7 +775,10 @@ if (isPrintMode) {
     mode: mode as 'text' | 'json',
     messages: cliFlags.messages,
   })
-  process.exit(0)
+  // Honor any exit code a slash command or extension handler set during the
+  // turn (e.g. a machine-readable verdict for headless orchestrators); default
+  // to 0 when none was set.
+  process.exit(process.exitCode ?? 0)
 }
 
 // ---------------------------------------------------------------------------
