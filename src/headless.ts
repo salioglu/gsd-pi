@@ -61,6 +61,10 @@ import {
   loadContext,
   bootstrapGsdProject,
 } from './headless-context.js'
+import {
+  captureMilestoneExecutionSnapshot,
+  isMilestoneExecutableInDb,
+} from './headless-milestone-readiness.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -981,6 +985,10 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     })
   }
 
+  const preRunMilestoneSnapshot = isNewMilestone && options.auto
+    ? captureMilestoneExecutionSnapshot(process.cwd())
+    : null
+
   // Send the command
   const command = buildHeadlessSlashCommand(options)
   if (!options.json) {
@@ -998,8 +1006,21 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     await completionPromise
   }
 
-  // Auto-mode chaining: if --auto and milestone creation succeeded, send /gsd auto
-  if (isNewMilestone && options.auto && milestoneReady && !blocked && exitCode === EXIT_SUCCESS) {
+  // Auto-mode chaining: if --auto and milestone creation succeeded, send /gsd auto.
+  //
+  // The chain decision is DB-authoritative. `milestoneReady` (regex on a notify
+  // string) is only a fast path — it fires on just one of several planning
+  // success branches, so "planning succeeded" frequently does not imply the
+  // "ready" text was emitted. When the fast path misses, fall back to querying
+  // the milestone readiness changed by this command and chain if it is executable
+  // (issue #1295).
+  const dbMilestoneReady = preRunMilestoneSnapshot
+    ? isMilestoneExecutableInDb(process.cwd(), { changedSince: preRunMilestoneSnapshot })
+    : false
+  const shouldChainAuto =
+    isNewMilestone && options.auto && !blocked && exitCode === EXIT_SUCCESS &&
+    (milestoneReady || dbMilestoneReady)
+  if (shouldChainAuto) {
     if (!options.json) {
       process.stderr.write('[headless] Milestone ready — chaining into auto-mode...\n')
     }
