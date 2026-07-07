@@ -213,6 +213,7 @@ test('handleReassessRoadmap succeeds when modifying only pending slices', async 
 test('handleReassessRoadmap writes legacy-layout reassessment to S##-ASSESSMENT.md', async () => {
   const base = mkdtempSync(join(tmpdir(), 'gsd-reassess-legacy-'));
   mkdirSync(join(base, '.gsd', 'milestones', 'M005-3qxqd7', 'slices', 'S04'), { recursive: true });
+  mkdirSync(join(base, '.gsd', 'phases', '05-3qxqd7-legacy-milestone'), { recursive: true });
   openDatabase(join(base, '.gsd', 'gsd.db'));
 
   try {
@@ -243,12 +244,14 @@ test('handleReassessRoadmap writes legacy-layout reassessment to S##-ASSESSMENT.
 
     const correctPath = join(base, '.gsd', 'milestones', 'M005-3qxqd7', 'slices', 'S04', 'S04-ASSESSMENT.md');
     const wrongFlatNameInLegacyDir = join(base, '.gsd', 'milestones', 'M005-3qxqd7', 'slices', 'S04', '05-04-ASSESSMENT.md');
+    const wrongFlatPhasePath = join(base, '.gsd', 'phases', '05-3qxqd7-legacy-milestone', '05-04-ASSESSMENT.md');
     assert.match(
       result.assessmentPath.replace(/\\/g, '/'),
       /\/\.gsd\/milestones\/M005-3qxqd7\/slices\/S04\/S04-ASSESSMENT\.md$/,
     );
     assert.ok(existsSync(correctPath), 'legacy ASSESSMENT should use S## filename inside slices/S##/');
     assert.equal(existsSync(wrongFlatNameInLegacyDir), false, 'legacy slice dir must not receive flat-phase assessment filename');
+    assert.equal(existsSync(wrongFlatPhasePath), false, 'legacy reassessment must not be diverted to a coexisting flat-phase dir');
 
     const assessment = getAssessment('.gsd/milestones/M005-3qxqd7/slices/S04/S04-ASSESSMENT.md');
     assert.ok(assessment, 'assessment row should use the legacy-layout path');
