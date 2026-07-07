@@ -18,6 +18,7 @@ import {
   updateMilestoneStatus,
   updateSliceStatus,
   getMilestoneSlices,
+  getSliceTasks,
   _getAdapter,
 } from './gsd-db.js';
 import { openWorkflowDatabasePath } from './db-workspace.js';
@@ -795,8 +796,14 @@ export function migrateHierarchyToDb(
     // authority for this milestone) so the upsert can echo them back instead of
     // flipping an open slice closed from a stale checkbox.
     const existingSliceStatus = new Map<string, string>();
+    const existingTaskStatus = new Map<string, string>();
     if (!milestoneStatusAuthoritative) {
-      for (const s of getMilestoneSlices(milestoneId)) existingSliceStatus.set(s.id, s.status);
+      for (const s of getMilestoneSlices(milestoneId)) {
+        existingSliceStatus.set(s.id, s.status);
+        for (const t of getSliceTasks(milestoneId, s.id)) {
+          existingTaskStatus.set(`${s.id}/${t.id}`, t.status);
+        }
+      }
     }
 
     // Insert milestone (FK parent — must come first). INSERT OR IGNORE: an
@@ -962,12 +969,20 @@ export function migrateHierarchyToDb(
           );
         }
 
+        // #027: same scope guard as slices — out-of-scope milestones echo existing
+        // DB task status so stale plan checkboxes cannot re-complete reopened tasks.
+        const taskRowExists = existingTaskStatus.has(`${sliceEntry.id}/${taskEntry.id}`);
+        const taskStatusAuthoritative = milestoneStatusAuthoritative || !taskRowExists;
+        const effectiveTaskStatus = taskStatusAuthoritative
+          ? taskStatus
+          : existingTaskStatus.get(`${sliceEntry.id}/${taskEntry.id}`)!;
+
         insertTask({
           id: taskEntry.id,
           sliceId: sliceEntry.id,
           milestoneId: milestoneId,
           title: taskEntry.title,
-          status: taskStatus,
+          status: effectiveTaskStatus,
           planning: {
             files: taskEntry.files ?? [],
             verify: taskEntry.verify ?? '',
