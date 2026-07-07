@@ -17,6 +17,7 @@ import {
   insertVerificationEvidence,
   insertGateRow,
   getGateResults,
+  saveReworkBrief,
   updateMilestoneStatus,
   updateSliceStatus,
   SCHEMA_VERSION,
@@ -833,6 +834,131 @@ console.log('\n=== complete-task: closes Q5/Q6/Q7 gates (pass vs omitted) ===');
   // No task-scoped gates remain pending for the loop to stall on.
   const stillPending = getGateResults('M001', 'S01', 'task').filter((g) => g.status === 'pending');
   assertEq(stillPending.length, 0, 'no task gates should remain pending after completion');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: unresolved blocking rework findings reject completion
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: rejects unresolved blocking rework findings ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+  const { basePath } = createTempProject();
+
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Test task', status: 'pending' });
+
+  saveReworkBrief({
+    briefId: 'RB-001',
+    milestoneId: 'M001',
+    sliceId: 'S01',
+    taskId: 'T01',
+    findings: [{
+      findingId: 'F1',
+      severity: 'blocking',
+      description: 'Compile regression',
+      requiredFix: 'Fix compile error',
+      verificationCommands: ['pnpm run typecheck:extensions'],
+    }],
+  });
+
+  const result = await handleCompleteTask(makeValidParams(), basePath);
+  assertTrue('error' in result, 'completion should reject unresolved blocking rework findings');
+  if ('error' in result) {
+    assertMatch(result.error, /unresolved blocking rework finding/i, 'error should explain unresolved rework');
+    assertMatch(result.error, /F1/, 'error should name the unresolved finding id');
+  }
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+
+console.log('\n=== complete-task: accepts resolved blocking rework evidence ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+  const { basePath } = createTempProject();
+
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Test task', status: 'pending' });
+  saveReworkBrief({
+    briefId: 'RB-001',
+    milestoneId: 'M001',
+    sliceId: 'S01',
+    taskId: 'T01',
+    findings: [{
+      findingId: 'F1',
+      severity: 'blocking',
+      description: 'Compile regression',
+      requiredFix: 'Fix compile error',
+      verificationCommands: ['pnpm run typecheck:extensions'],
+    }],
+  });
+
+  const result = await handleCompleteTask({
+    ...makeValidParams(),
+    reworkResolution: [{
+      findingId: 'F1',
+      status: 'resolved',
+      evidence: 'Fixed compile error and reran pnpm run typecheck:extensions.',
+    }],
+  }, basePath);
+
+  assertTrue(!('error' in result), 'completion should accept resolved blocking rework evidence');
+  assertEq(getTask('M001', 'S01', 'T01')?.status, 'complete', 'task should complete after resolving rework');
+  const finding = _getAdapter()!.prepare("SELECT status, evidence FROM rework_brief_findings WHERE brief_id = 'RB-001' AND finding_id = 'F1'").get() as { status: string; evidence: string };
+  assertEq(finding.status, 'resolved', 'finding status should be updated');
+  assertMatch(finding.evidence, /Fixed compile error/, 'resolution evidence should be persisted');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+console.log('\n=== complete-task: accepts deferred blocking rework with decision reference ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+  const { basePath } = createTempProject();
+
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Test task', status: 'pending' });
+  saveReworkBrief({
+    briefId: 'RB-001',
+    milestoneId: 'M001',
+    sliceId: 'S01',
+    taskId: 'T01',
+    findings: [{
+      findingId: 'F1',
+      severity: 'blocking',
+      description: 'Compile regression',
+      requiredFix: 'Fix compile error',
+      verificationCommands: ['pnpm run typecheck:extensions'],
+    }],
+  });
+
+  const result = await handleCompleteTask({
+    ...makeValidParams(),
+    reworkResolution: [{
+      findingId: 'F1',
+      status: 'deferred-with-override',
+      evidence: 'Maintainer accepted temporary deferral.',
+      decisionRef: 'DEC-2026-07-07-rework-deferral',
+    }],
+  }, basePath);
+
+  assertTrue(!('error' in result), 'completion should accept deferred blocking rework with decision reference');
+  const finding = _getAdapter()!.prepare("SELECT status, decision_ref FROM rework_brief_findings WHERE brief_id = 'RB-001' AND finding_id = 'F1'").get() as { status: string; decision_ref: string };
+  assertEq(finding.status, 'deferred-with-override', 'finding status should record the override');
+  assertEq(finding.decision_ref, 'DEC-2026-07-07-rework-deferral', 'decision reference should be persisted');
 
   cleanupDir(basePath);
   cleanup(dbPath);

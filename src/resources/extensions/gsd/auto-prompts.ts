@@ -28,7 +28,7 @@ import type { GSDPreferences } from "./preferences.js";
 import { join, basename, relative, sep } from "node:path";
 import { existsSync } from "node:fs";
 import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary, type MinimalModelRegistry } from "./context-budget.js";
-import { getGateResults, getPendingGates, getPendingGatesForTurn } from "./gsd-db.js";
+import { getBlockingReworkFindingsForTask, getGateResults, getPendingGates, getPendingGatesForTurn } from "./gsd-db.js";
 import {
   GATE_REGISTRY,
   assertGateCoverage,
@@ -104,6 +104,34 @@ function resolvePromptBudgets(): ReturnType<typeof computeBudgets> {
  */
 function resolveSummaryBudgetChars(): number {
   return resolvePromptBudgets().summaryBudgetChars;
+}
+
+
+function renderBlockingReworkFindingsBlock(mid: string, sid: string, tid: string): string {
+  const findings = getBlockingReworkFindingsForTask(mid, sid, tid)
+    .filter((finding) => finding.status === "pending");
+  if (findings.length === 0) return "";
+
+  const lines = [
+    "## Blocking Rework Findings (non-optional)",
+    "",
+    "This task has structured blocking rework findings. Address every finding before calling `gsd_task_complete`. Include `reworkResolution` entries with each `findingId`, `status: \"resolved\"`, and concrete evidence. If deferring a finding, use `status: \"deferred-with-override\"` with concrete evidence and `decisionRef`.",
+    "",
+  ];
+  for (const finding of findings) {
+    lines.push(`### ${finding.finding_id} (${finding.severity})`);
+    lines.push(`- Status: ${finding.status}`);
+    lines.push(`- Finding: ${finding.description}`);
+    lines.push(`- Required fix: ${finding.required_fix}`);
+    if (finding.verification_commands.length > 0) {
+      lines.push("- Required verification:");
+      for (const command of finding.verification_commands) {
+        lines.push(`  - \`${command}\``);
+      }
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trim();
 }
 
 function formatProjectClassificationForPlanning(classification: ProjectClassification): string {
@@ -2743,6 +2771,15 @@ export async function buildExecuteTaskPrompt(
     }
   } catch (reopenErr) {
     logWarning("prompt", `reopen reason injection failed: ${(reopenErr as Error).message}`);
+  }
+
+  const reworkFindingsBlock = renderBlockingReworkFindingsBlock(mid, sid, tid);
+  if (reworkFindingsBlock) {
+    const block = reworkFindingsBlock + "\n\n---\n\n";
+    phaseAnchorSection = phaseAnchorSection
+      ? `${block}${phaseAnchorSection}`
+      : block;
+    trackPromptContext(contextTelemetry, "rework-findings", "inline", reworkFindingsBlock);
   }
 
   // ADR-011 Phase 2: inject any resolved-but-unapplied escalation override

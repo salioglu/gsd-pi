@@ -29,6 +29,8 @@ import {
   deleteVerificationEvidence,
   saveGateResult,
   getPendingGatesForTurn,
+  getUnresolvedBlockingReworkFindingsForTask,
+  applyReworkResolutions,
 } from "../gsd-db.js";
 import { getWorkflowDatabasePath, ensureWorkflowDbAtPath } from "../db-workspace.js";
 import { getGatesForTurn } from "../gate-registry.js";
@@ -185,6 +187,38 @@ export function normalizeListParam(value: unknown): string[] {
  * Build a TaskRow-shaped object from CompleteTaskParams so the unified
  * renderSummaryContent() can be used at completion time (#2720).
  */
+
+function normalizeReworkResolution(params: CompleteTaskParams): Array<{
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+  findingId: string;
+  status: "resolved" | "deferred-with-override";
+  evidence: string;
+  decisionRef?: string;
+}> {
+  return (params.reworkResolution ?? []).map((resolution) => ({
+    milestoneId: params.milestoneId,
+    sliceId: params.sliceId,
+    taskId: params.taskId,
+    findingId: resolution.findingId,
+    status: resolution.status,
+    evidence: resolution.evidence,
+    decisionRef: resolution.decisionRef,
+  }));
+}
+
+function unresolvedReworkError(missingFindingIds: string[]): string {
+  const plural = missingFindingIds.length === 1 ? "finding" : "findings";
+  return `unresolved blocking rework ${plural}: ${missingFindingIds.join(", ")} — provide reworkResolution entries with status resolved and evidence, or status deferred-with-override with evidence and decisionRef, before completing the task`;
+}
+
+function satisfiesBlockingReworkFinding(resolution: ReturnType<typeof normalizeReworkResolution>[number]): boolean {
+  if (resolution.evidence.trim().length === 0) return false;
+  if (resolution.status === "resolved") return true;
+  return (resolution.decisionRef ?? "").trim().length > 0;
+}
+
 function paramsToTaskRow(params: CompleteTaskParams, completedAt: string): TaskRow {
   return {
     milestone_id: params.milestoneId,
@@ -282,6 +316,8 @@ export async function handleCompleteTask(
   // no escalation recorded, and the loop would silently advance past it.
   // The filesystem write happens later (after side effects) because that's
   // the cheapest ordering and validation is where 99% of failures live.
+  const reworkResolutions = normalizeReworkResolution(params);
+
   let validatedEscalationArtifact: ReturnType<typeof buildEscalationArtifact> | null = null;
   let escalationWriteEnabled = false;
   if (params.escalation) {
@@ -323,6 +359,20 @@ export async function handleCompleteTask(
     }
 
     const existingTask = getTask(params.milestoneId, params.sliceId, params.taskId);
+    const unresolvedRework = getUnresolvedBlockingReworkFindingsForTask(params.milestoneId, params.sliceId, params.taskId);
+    const resolvedFindingIds = new Set(
+      reworkResolutions
+        .filter(satisfiesBlockingReworkFinding)
+        .map((resolution) => resolution.findingId),
+    );
+    const missingFindingIds = unresolvedRework
+      .filter((finding) => !resolvedFindingIds.has(finding.finding_id))
+      .map((finding) => finding.finding_id);
+    if (missingFindingIds.length > 0) {
+      guardError = unresolvedReworkError(missingFindingIds);
+      return;
+    }
+
     if (existingTask && isClosedStatus(existingTask.status)) {
       // Stale-turn path: a timed-out turn that was superseded by recovery
       // can still reach this code when its LLM call eventually returns and
@@ -377,6 +427,10 @@ export async function handleCompleteTask(
       keyDecisions: params.keyDecisions ?? [],
       fullSummaryMd: summaryMd,
     });
+
+    if (reworkResolutions.length > 0) {
+      applyReworkResolutions(reworkResolutions);
+    }
 
     for (const evidence of (params.verificationEvidence ?? [])) {
       insertVerificationEvidence({
