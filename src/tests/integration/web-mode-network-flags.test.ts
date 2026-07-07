@@ -148,6 +148,136 @@ test('launchWebMode omits GSD_WEB_ALLOWED_ORIGINS when none provided', async (t)
   assert.equal(spawnEnv!.GSD_WEB_ALLOWED_ORIGINS, undefined)
 })
 
+// ─── no-auth loopback interlock ──────────────────────────────────────
+
+function standaloneStub(prefix: string): string {
+  const tmp = mkdtempSync(join(tmpdir(), prefix))
+  const standaloneRoot = join(tmp, 'dist', 'web', 'standalone')
+  mkdirSync(standaloneRoot, { recursive: true })
+  writeFileSync(join(standaloneRoot, 'server.js'), 'console.log("stub")\n')
+  return tmp
+}
+
+test('launchWebMode refuses --no-auth on non-loopback host without override', async (t) => {
+  const tmp = standaloneStub('gsd-web-interlock-')
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }) });
+
+  const status = await webMode.launchWebMode(
+    {
+      cwd: '/tmp/project',
+      projectSessionsDir: '/tmp/.gsd/sessions',
+      agentDir: '/tmp/.gsd/agent',
+      packageRoot: tmp,
+      host: '0.0.0.0',
+      noAuth: true,
+    },
+    {
+      initResources: () => {},
+      resolvePort: async () => 45000,
+      env: {},
+      spawn: () => { throw new Error('spawn should not be reached') },
+      waitForBootReady: async () => undefined,
+      openBrowser: () => {},
+      stderr: { write: () => true },
+    },
+  )
+
+  assert.equal(status.ok, false)
+  if (status.ok) throw new Error('expected failure')
+  assert.match(status.failureReason, /refusing to disable auth/)
+})
+
+test('launchWebMode allows --no-auth on non-loopback host with explicit override', async (t) => {
+  const tmp = standaloneStub('gsd-web-interlock-override-')
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }) });
+
+  const status = await webMode.launchWebMode(
+    {
+      cwd: '/tmp/project',
+      projectSessionsDir: '/tmp/.gsd/sessions',
+      agentDir: '/tmp/.gsd/agent',
+      packageRoot: tmp,
+      host: '0.0.0.0',
+      noAuth: true,
+    },
+    {
+      initResources: () => {},
+      resolvePort: async () => 45000,
+      env: { GSD_WEB_ALLOW_UNAUTHENTICATED_LAN: '1' },
+      spawn: (_command, _args, options) => {
+        void (options as { env: Record<string, string> }).env
+        return { pid: 99999, once: () => undefined, unref: () => {} } as any
+      },
+      waitForBootReady: async () => undefined,
+      openBrowser: () => {},
+      stderr: { write: () => true },
+    },
+  )
+
+  // May succeed; if it fails for sandbox reasons, it must NOT be the interlock.
+  if (!status.ok) assert.doesNotMatch(status.failureReason, /refusing to disable auth/)
+})
+
+test('launchWebMode allows --no-auth on loopback host (warning path preserved)', async (t) => {
+  const tmp = standaloneStub('gsd-web-interlock-loopback-')
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }) });
+
+  const status = await webMode.launchWebMode(
+    {
+      cwd: '/tmp/project',
+      projectSessionsDir: '/tmp/.gsd/sessions',
+      agentDir: '/tmp/.gsd/agent',
+      packageRoot: tmp,
+      host: '127.0.0.1',
+      noAuth: true,
+    },
+    {
+      initResources: () => {},
+      resolvePort: async () => 45000,
+      env: {},
+      spawn: (_command, _args, options) => {
+        void (options as { env: Record<string, string> }).env
+        return { pid: 99999, once: () => undefined, unref: () => {} } as any
+      },
+      waitForBootReady: async () => undefined,
+      openBrowser: () => {},
+      stderr: { write: () => true },
+    },
+  )
+
+  if (!status.ok) assert.doesNotMatch(status.failureReason, /refusing to disable auth/)
+})
+
+test('launchWebMode does not fire interlock for IPv6 loopback ::1', async (t) => {
+  const tmp = standaloneStub('gsd-web-interlock-ipv6-')
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }) });
+
+  const status = await webMode.launchWebMode(
+    {
+      cwd: '/tmp/project',
+      projectSessionsDir: '/tmp/.gsd/sessions',
+      agentDir: '/tmp/.gsd/agent',
+      packageRoot: tmp,
+      host: '::1',
+      noAuth: true,
+    },
+    {
+      initResources: () => {},
+      resolvePort: async () => 45000,
+      env: {},
+      spawn: (_command, _args, options) => {
+        void (options as { env: Record<string, string> }).env
+        return { pid: 99999, once: () => undefined, unref: () => {} } as any
+      },
+      waitForBootReady: async () => undefined,
+      openBrowser: () => {},
+      stderr: { write: () => true },
+    },
+  )
+
+  if (!status.ok) assert.doesNotMatch(status.failureReason, /refusing to disable auth/)
+})
+
 // ─── runWebCliBranch end-to-end forwarding ───────────────────────────
 
 test('runWebCliBranch forwards --host, --port, --allowed-origins to launchWebMode', async (t) => {

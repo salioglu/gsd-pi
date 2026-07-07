@@ -402,6 +402,11 @@ function isWebNoAuthEnabled(env: NodeJS.ProcessEnv): boolean {
   return env.GSD_WEB_NO_AUTH === '1'
 }
 
+function isLoopbackHost(host: string): boolean {
+  const h = host.trim().toLowerCase()
+  return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]' || h.startsWith('127.')
+}
+
 function buildSpawnSpec(
   resolution: ResolvedWebHostBootstrap,
   host: string,
@@ -641,9 +646,28 @@ export async function launchWebMode(
   // without a clean shutdown (e.g. terminal closed, crash).
   cleanupStaleInstance(options.cwd, stderr, deps.registryPath)
 
-  const port = options.port ?? await (deps.resolvePort ?? reserveWebPort)(host)
   const baseEnv = deps.env ?? process.env
   const noAuth = options.noAuth ?? isWebNoAuthEnabled(baseEnv)
+  if (noAuth && !isLoopbackHost(host) && baseEnv.GSD_WEB_ALLOW_UNAUTHENTICATED_LAN !== '1') {
+    const failure: WebModeLaunchFailure = {
+      mode: 'web',
+      ok: false,
+      cwd: options.cwd,
+      projectSessionsDir: options.projectSessionsDir,
+      host,
+      port: null,
+      url: null,
+      hostKind: 'unresolved',
+      hostPath: null,
+      hostRoot: null,
+      failureReason: `refusing to disable auth on non-loopback host ${host}: this exposes terminal and file APIs to the network. Bind to 127.0.0.1, keep token auth on, or set GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1 to override.`,
+      candidates: [],
+    }
+    emitLaunchStatus(stderr, failure)
+    return failure
+  }
+
+  const port = options.port ?? await (deps.resolvePort ?? reserveWebPort)(host)
   const authToken = noAuth ? null : randomBytes(32).toString('hex')
   const url = `http://${host}:${port}`
   const env: NodeJS.ProcessEnv = {
