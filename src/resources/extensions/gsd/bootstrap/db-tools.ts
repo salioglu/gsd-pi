@@ -771,12 +771,12 @@ export function registerDbTools(pi: ExtensionAPI): void {
     name: "gsd_plan_task",
     label: "Plan Task",
     description:
-      "Write task planning state to the GSD database, render tasks/T##-PLAN.md from DB, and clear caches after a successful render.",
-    promptSnippet: "Plan a task via DB write + task PLAN render + cache invalidation",
+      "Write task planning state to the GSD database, render the slice PLAN from DB, and clear caches after a successful render.",
+    promptSnippet: "Plan a task via DB write + slice PLAN render + cache invalidation",
     promptGuidelines: [
-      "Use gsd_plan_task for task planning instead of writing tasks/T##-PLAN.md directly.",
+      "Use gsd_plan_task for task planning instead of writing task PLAN files directly.",
       "Keep parameters flat and provide the full task planning payload.",
-      "The tool validates input, requires an existing parent slice, writes task planning data, renders the task PLAN file from DB, and clears both state and parse caches after success.",
+      "The tool validates input, requires an existing parent slice, writes task planning data, renders the slice PLAN file from DB, and clears both state and parse caches after success.",
       "Use the canonical name gsd_plan_task; gsd_task_plan is only an alias.",
     ],
     parameters: Type.Object({

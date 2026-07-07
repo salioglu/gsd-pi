@@ -2235,7 +2235,7 @@ export function registerWorkflowTools(
 
   server.tool(
     "gsd_plan_task",
-    "Write task planning state to the GSD database and render tasks/T##-PLAN.md from DB.",
+    "Write task planning state to the GSD database and render the slice PLAN from DB.",
     planTaskParams,
     async (args: Record<string, unknown>) => {
       const parsed = parseWorkflowArgs(planTaskSchema, args);
@@ -2256,7 +2256,7 @@ export function registerWorkflowTools(
 
   server.tool(
     "gsd_task_plan",
-    "Alias for gsd_plan_task. Write task planning state to the GSD database and render tasks/T##-PLAN.md from DB.",
+    "Alias for gsd_plan_task. Write task planning state to the GSD database and render the slice PLAN from DB.",
     planTaskParams,
     async (args: Record<string, unknown>) => {
       logAliasUsage("gsd_task_plan", "gsd_plan_task");
