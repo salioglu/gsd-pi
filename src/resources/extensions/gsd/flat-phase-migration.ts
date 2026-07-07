@@ -83,6 +83,40 @@ function expectedPhaseDirs(basePath: string): string[] {
   );
 }
 
+/**
+ * Return the most-recent existing `.gsd-backups/migrate-<ts>/` snapshot, or null.
+ *
+ * The flat-phase migration can re-fire on later dispatches when the legacy
+ * `.gsd/milestones/` layout reappears (e.g. a marker-key mismatch re-triggers a
+ * whole-tree re-import — issue #1292). The DB was already reconciled from that
+ * tree before the backup step runs, so re-snapshotting an identical legacy tree
+ * on every dispatch only leaks a fresh `migrate-<ts>/` directory each time. When
+ * a prior snapshot already exists we reuse it as the rollback fallback instead
+ * of creating a duplicate, bounding the accumulation to one recovery copy.
+ */
+function existingMigrateBackup(basePath: string): string | null {
+  const backupRoot = join(basePath, ".gsd-backups");
+  if (!existsSync(backupRoot)) return null;
+  try {
+    let latest: { path: string; mtimeMs: number } | null = null;
+    for (const entry of readdirSync(backupRoot)) {
+      if (!entry.startsWith("migrate-")) continue;
+      const dirPath = join(backupRoot, entry);
+      try {
+        const st = statSync(dirPath);
+        if (!st.isDirectory()) continue;
+        if (!hasLegacyMilestoneSubdirs(dirPath)) continue;
+        if (!latest || st.mtimeMs > latest.mtimeMs) latest = { path: dirPath, mtimeMs: st.mtimeMs };
+      } catch {
+        // Non-fatal: skip unreadable entries.
+      }
+    }
+    return latest?.path ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function hasLegacyMilestoneSubdirs(dirPath: string): boolean {
   if (!existsSync(dirPath)) return false;
   try {
@@ -98,6 +132,7 @@ function rollbackPartialMigration(
   basePath: string,
   backupDir: string,
   migratingPath?: string,
+  backupCreatedThisRun = true,
 ): void {
   // Remove the partially-written phases/ dir.
   try {
@@ -113,7 +148,8 @@ function rollbackPartialMigration(
   // preserved migrating tree (the sole surviving data source) and must never be
   // removed here. Deleting the backup after a successful rollback keeps the gate
   // from leaking one .gsd-backups/migrate-<ts>/ per session_start.
-  const isDisposableBackup = Boolean(backupDir) && backupDir !== migratingPath;
+  const isDisposableBackup =
+    Boolean(backupDir) && backupDir !== migratingPath && backupCreatedThisRun;
   const cleanupBackup = (): void => {
     if (!isDisposableBackup || !existsSync(backupDir)) return;
     try {
@@ -244,16 +280,34 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
   }
 
   let backupDir = migratingPath;
+  let backupCreatedThisRun = false;
   if (!resumingInterrupted) {
-    // 2. Backup (only reached when the DB has rows and migration will proceed)
-    const ts = Date.now();
-    backupDir = join(basePath, ".gsd-backups", `migrate-${ts}`);
-    try {
-      mkdirSync(join(basePath, ".gsd-backups"), { recursive: true });
-      cpSync(milestonesPath, backupDir, { recursive: true });
-    } catch (err) {
-      logWarning("migration", `flat-phase migration backup failed: ${(err as Error).message}`);
-      throw err;
+    // 2. Backup (only reached when the DB has rows and migration will proceed).
+    // migrateFromMarkdown above already reconciled the legacy tree into the DB,
+    // so its content is safely persisted. If a prior successful migration
+    // already snapshotted the legacy tree, a re-fire of this gate (issue #1292:
+    // marker-key mismatch re-importing the whole tree at dispatch boundaries)
+    // must not leak a fresh .gsd-backups/migrate-<ts>/ every dispatch. Treat it
+    // as a marker-refresh re-projection: reuse the existing snapshot as the
+    // rollback fallback instead of creating a duplicate.
+    const priorBackup = existingMigrateBackup(basePath);
+    if (priorBackup) {
+      backupDir = priorBackup;
+      logWarning(
+        "migration",
+        `flat-phase migration re-fired; reusing existing backup ${priorBackup} instead of re-snapshotting (issue #1292)`,
+      );
+    } else {
+      const ts = Date.now();
+      backupDir = join(basePath, ".gsd-backups", `migrate-${ts}`);
+      try {
+        mkdirSync(join(basePath, ".gsd-backups"), { recursive: true });
+        cpSync(milestonesPath, backupDir, { recursive: true });
+        backupCreatedThisRun = true;
+      } catch (err) {
+        logWarning("migration", `flat-phase migration backup failed: ${(err as Error).message}`);
+        throw err;
+      }
     }
 
     if (existsSync(migratingPath)) {
@@ -277,7 +331,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
     removePathWithRetries(phasesPath);
   } catch (err) {
     logWarning("migration", `failed to clear stale phases/ before render: ${(err as Error).message}`);
-    rollbackPartialMigration(basePath, backupDir, migratingPath);
+    rollbackPartialMigration(basePath, backupDir, migratingPath, backupCreatedThisRun);
     throw err;
   }
 
@@ -299,7 +353,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
     }
   } catch (err) {
     logWarning("migration", `flat-phase render failed: ${(err as Error).message}`);
-    rollbackPartialMigration(basePath, backupDir, migratingPath);
+    rollbackPartialMigration(basePath, backupDir, migratingPath, backupCreatedThisRun);
     throw err;
   }
 
@@ -309,7 +363,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
       "migration",
       `flat-phase render had ${renderResult.errors.length} error(s): ${renderResult.errors.join("; ")}`,
     );
-    rollbackPartialMigration(basePath, backupDir, migratingPath);
+    rollbackPartialMigration(basePath, backupDir, migratingPath, backupCreatedThisRun);
     throw new Error(
       `flat-phase migration render failed: ${renderResult.errors.slice(0, 3).join("; ")}`,
     );
@@ -322,7 +376,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
       "migration",
       `flat-phase migration missing ${missingPhaseDirs.length} expected phase dir(s): ${missingPhaseDirs.join(", ")}`,
     );
-    rollbackPartialMigration(basePath, backupDir, migratingPath);
+    rollbackPartialMigration(basePath, backupDir, migratingPath, backupCreatedThisRun);
     throw new Error("flat-phase migration verification failed: missing rendered phase directories");
   }
   if (db.slices > 0 && renderResult.rendered === 0) {
@@ -330,7 +384,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
       "migration",
       "flat-phase migration verification failed: render produced no artifacts for populated DB",
     );
-    rollbackPartialMigration(basePath, backupDir, migratingPath);
+    rollbackPartialMigration(basePath, backupDir, migratingPath, backupCreatedThisRun);
     throw new Error("flat-phase migration verification failed: no artifacts rendered");
   }
 
@@ -340,7 +394,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
     deleteArtifactsByPathPrefix("milestones/");
   } catch (err) {
     logWarning("migration", `flat-phase migration could not prune legacy artifact rows: ${(err as Error).message}`);
-    rollbackPartialMigration(basePath, backupDir, migratingPath);
+    rollbackPartialMigration(basePath, backupDir, migratingPath, backupCreatedThisRun);
     throw err;
   }
 
