@@ -665,6 +665,12 @@ export async function launchWebMode(
   // Kill any stale server instance for this project before reserving a port.
   // This prevents EADDRINUSE when the previous `gsd --web` was terminated
   // without a clean shutdown (e.g. terminal closed, crash).
+  //
+  // Keep this AFTER the no-auth interlock above: cleanup kills and unregisters
+  // the existing web server for this cwd, so running it before a refused launch
+  // would tear down a healthy server and leave the project with none. The
+  // interlock must have no side effects. (regression guard: see the "refusal
+  // does not clean up an existing instance" test)
   cleanupStaleInstance(options.cwd, stderr, deps.registryPath)
 
   const port = options.port ?? await (deps.resolvePort ?? reserveWebPort)(host)
