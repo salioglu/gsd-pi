@@ -92,6 +92,35 @@ test("writePlanningDirectory is idempotent: writing twice produces stable conten
   assert.equal(roadmap2, roadmap1);
 });
 
+test("writePlanningDirectory does not emit an ingestible PLAN.md for a task-less (sketch) slice", async () => {
+  // Regression for #1285: a milestone-level sketch slice has zero DB tasks.
+  // The projection must not write a placeholder NN-01-PLAN.md — the reverse
+  // transform maps one task per plan file, so a placeholder would materialize
+  // a phantom "Plan NN" task and make auto-mode skip planning.
+  const base = makeTmp();
+  insertSlice({
+    milestoneId: "M001", id: "S02", title: "Sketch slice", status: "pending",
+    risk: "medium", depends: ["S01"], demo: "designed", sequence: 2,
+  });
+  // S02 intentionally has no tasks.
+
+  await writePlanningDirectory(base, "flat-phases");
+
+  const phaseDirs = readdirSync(join(base, ".planning", "phases"), { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name);
+  const sketchDir = phaseDirs.find((d) => /^02-/.test(d));
+  assert.ok(sketchDir, `expected a 02- phase dir for the sketch slice, got ${JSON.stringify(phaseDirs)}`);
+
+  const planFiles = readdirSync(join(base, ".planning", "phases", sketchDir!))
+    .filter((f) => f.endsWith("PLAN.md"));
+  assert.equal(planFiles.length, 0, `sketch slice should have no PLAN.md, got ${JSON.stringify(planFiles)}`);
+
+  // The slice remains discoverable via ROADMAP.md.
+  const roadmap = readFileSync(join(base, ".planning", "ROADMAP.md"), "utf-8");
+  assert.match(roadmap, /Sketch slice/);
+});
+
 test("writePlanningDirectory throws for unsupported layouts", async () => {
   const base = makeTmp();
   await assert.rejects(() => writePlanningDirectory(base, "multi-milestone"), /not yet supported/);
