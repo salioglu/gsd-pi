@@ -155,6 +155,24 @@ function isInsideFlatProjectionBackup(backupDir: string, src: string): boolean {
   return src === phaseBackupDir || src.startsWith(`${phaseBackupDir}/`) || src.startsWith(`${phaseBackupDir}\\`);
 }
 
+function restoreFlatProjectionFromBackup(basePath: string, backupDir: string): void {
+  const phaseBackupDir = join(backupDir, "__phases");
+  if (!existsSync(phaseBackupDir)) return;
+  const phasesPath = join(basePath, ".gsd", LAYOUT_SEGMENTS.level1);
+  try {
+    if (existsSync(phasesPath)) {
+      removePathWithRetries(phasesPath);
+    }
+    mkdirSync(join(basePath, ".gsd"), { recursive: true });
+    cpSync(phaseBackupDir, phasesPath, { recursive: true });
+  } catch (restoreErr) {
+    logWarning(
+      "migration",
+      `rollback: could not restore ${LAYOUT_SEGMENTS.level1}/ from backup: ${(restoreErr as Error).message}`,
+    );
+  }
+}
+
 function pruneStaleFlatPhaseArtifactRows(basePath: string): number {
   const projectionRoot = gsdProjectionRoot(basePath);
   let pruned = 0;
@@ -208,6 +226,7 @@ function rollbackPartialMigration(
   try {
     if (migratingPath && existsSync(migratingPath) && !existsSync(milestonesPath)) {
       movePathWithCopyDeleteFallback(migratingPath, milestonesPath);
+      restoreFlatProjectionFromBackup(basePath, backupDir);
       cleanupBackup();
       return;
     }
@@ -216,6 +235,7 @@ function rollbackPartialMigration(
         recursive: true,
         filter: (src) => !isInsideFlatProjectionBackup(backupDir, src),
       });
+      restoreFlatProjectionFromBackup(basePath, backupDir);
       cleanupBackup();
     }
     if (migratingPath && existsSync(migratingPath)) {
@@ -366,6 +386,25 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
     } catch (err) {
       logWarning("migration", `failed to rename legacy milestones/ before render: ${(err as Error).message}`);
       throw err;
+    }
+  } else {
+    const priorBackup = existingMigrateBackup(basePath);
+    if (priorBackup) {
+      backupDir = priorBackup;
+    } else {
+      const ts = Date.now();
+      backupDir = join(basePath, ".gsd-backups", `migrate-${ts}`);
+      try {
+        mkdirSync(join(basePath, ".gsd-backups"), { recursive: true });
+        cpSync(migratingPath, backupDir, { recursive: true });
+        backupCreatedThisRun = true;
+      } catch (err) {
+        logWarning(
+          "migration",
+          `flat-phase migration backup failed during resume: ${(err as Error).message}`,
+        );
+        throw err;
+      }
     }
   }
 
