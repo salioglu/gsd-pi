@@ -41,7 +41,7 @@ import {
 } from "./db-decision-requirement-rows.js";
 import { rowToGate } from "./db-gate-rows.js";
 import { rowToArtifact, rowToMilestone, type ArtifactRow, type MilestoneRow } from "./db-milestone-artifact-rows.js";
-import { isClosedStatus } from "./status-guards.js";
+import { isClosedStatus, toStatus } from "./status-guards.js";
 import { rowToSlice, rowToTask, type SliceRow, type TaskRow } from "./db-task-slice-rows.js";
 
 // Connection ownership, lifecycle, schema/migrations and transaction
@@ -464,6 +464,11 @@ export function insertTask(t: {
   preserveCompletionMetadata?: boolean;
 }): void {
   if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  // Stamp completed_at for every terminal-complete alias (complete/done/closed),
+  // not just two literals — a task imported as "closed" is completed and must
+  // carry a timestamp. NOT for "skipped": a skipped task was never completed
+  // (cascade writers set its completed_at = NULL).
+  const isCompleteAlias = t.status != null && toStatus(t.status) === "complete";
   getDbOrNull()!.prepare(
     `INSERT INTO tasks (
       milestone_id, slice_id, id, title, status, one_liner, narrative,
@@ -515,7 +520,7 @@ export function insertTask(t: {
     ":narrative": t.narrative ?? "",
     ":verification_result": t.verificationResult ?? "",
     ":duration": t.duration ?? "",
-    ":completed_at": t.status === "done" || t.status === "complete" ? new Date().toISOString() : null,
+    ":completed_at": isCompleteAlias ? new Date().toISOString() : null,
     ":blocker_discovered": t.blockerDiscovered ? 1 : 0,
     ":deviations": t.deviations ?? "",
     ":known_issues": t.knownIssues ?? "",
@@ -531,7 +536,7 @@ export function insertTask(t: {
     ":observability_impact": t.planning?.observabilityImpact ?? "",
     ":full_plan_md": t.planning?.fullPlanMd ?? "",
     ":sequence": t.sequence ?? 0,
-    ":preserve_completion": t.preserveCompletionMetadata && (t.status === "complete" || t.status === "done") ? 1 : 0,
+    ":preserve_completion": t.preserveCompletionMetadata && isCompleteAlias ? 1 : 0,
     ":target_repositories": JSON.stringify(t.planning?.targetRepositories ?? []),
     ":raw_target_repositories":
       t.planning && "targetRepositories" in t.planning
