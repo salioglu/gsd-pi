@@ -1208,6 +1208,21 @@ export interface AssessmentData {
   completedSliceId?: string;
 }
 
+function existingLegacySliceAssessmentPath(
+  basePath: string,
+  milestoneId: string,
+  sliceId: string,
+): string | null {
+  if (!isLegacyMilestonesLayout(basePath)) return null;
+  const legacyBase = legacyMilestonesDir(basePath);
+  const milestoneDirName = resolveDir(legacyBase, milestoneId);
+  if (!milestoneDirName) return null;
+  const slicesDir = join(legacyBase, milestoneDirName, "slices");
+  const sliceDirName = resolveDir(slicesDir, sliceId);
+  if (!sliceDirName) return null;
+  return join(slicesDir, sliceDirName, `${sliceId}-ASSESSMENT.md`);
+}
+
 export async function renderReplanFromDb(
   basePath: string,
   milestoneId: string,
@@ -1258,13 +1273,14 @@ export async function renderAssessmentFromDb(
   sliceId: string,
   assessmentData: AssessmentData,
 ): Promise<{ assessmentPath: string; content: string }> {
-  const absPath = targetSliceFile(
-    basePath,
-    milestoneId,
-    sliceId,
-    "ASSESSMENT",
-    getMilestone(milestoneId)?.title,
-  );
+  const absPath = existingLegacySliceAssessmentPath(basePath, milestoneId, sliceId)
+    ?? targetSliceFile(
+      basePath,
+      milestoneId,
+      sliceId,
+      "ASSESSMENT",
+      getMilestone(milestoneId)?.title,
+    );
   mkdirSync(dirname(absPath), { recursive: true });
   const artifactPath = toArtifactPath(absPath, basePath);
 
