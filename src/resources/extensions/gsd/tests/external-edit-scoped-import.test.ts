@@ -11,8 +11,10 @@ import { tmpdir } from "node:os";
 
 import {
   closeDatabase,
+  getSliceTasks,
   getSlice,
   openDatabase,
+  updateTaskStatus,
   updateSliceStatus,
 } from "../gsd-db.ts";
 import { migrateHierarchyToDb, milestoneIdsFromEntities } from "../md-importer.ts";
@@ -64,6 +66,30 @@ function writeRoadmap(base: string, mid: string, sliceTitle: string, done: boole
   return content;
 }
 
+function planContent(taskDone: boolean): string {
+  return [
+    "# S01: Slice Plan",
+    "",
+    "**Goal:** Exercise scoped task status imports.",
+    "",
+    "## Tasks",
+    "",
+    `- [${taskDone ? "x" : " "}] **T01: Scoped Task** \`est:10m\``,
+    "  Task body.",
+    "",
+  ].join("\n");
+}
+
+function writePlan(base: string, mid: string, taskDone: boolean): void {
+  const dir = join(base, ".gsd", "milestones", mid, "slices", "S01");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "S01-PLAN.md"), planContent(taskDone), "utf-8");
+}
+
+function taskStatus(mid: string): string | undefined {
+  return getSliceTasks(mid, "S01").find((task) => task.id === "T01")?.status;
+}
+
 /**
  * Build two legacy-layout milestones (M001, M002) each with one checked slice,
  * import them so both slices land `complete`, then reopen M002/S01 to `pending`
@@ -78,6 +104,25 @@ function seedTwoMilestonesWithReopenedB(base: string): void {
   assert.equal(getSlice("M002", "S01")?.status, "complete");
   updateSliceStatus("M002", "S01", "pending");
   assert.equal(getSlice("M002", "S01")?.status, "pending", "precondition: B/S01 reopened");
+}
+
+/**
+ * Same as seedTwoMilestonesWithReopenedB, but with checked task boxes too. The
+ * reopened DB task is the authority for out-of-scope milestones.
+ */
+function seedTwoMilestonesWithReopenedBTask(base: string): void {
+  writeRoadmap(base, "M001", "Alpha Slice", true);
+  writePlan(base, "M001", true);
+  writeRoadmap(base, "M002", "Beta Slice", true);
+  writePlan(base, "M002", true);
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  migrateHierarchyToDb(base);
+  assert.equal(getSlice("M002", "S01")?.status, "complete");
+  assert.equal(taskStatus("M002"), "complete");
+  updateSliceStatus("M002", "S01", "pending");
+  updateTaskStatus("M002", "S01", "T01", "pending");
+  assert.equal(getSlice("M002", "S01")?.status, "pending", "precondition: B/S01 reopened");
+  assert.equal(taskStatus("M002"), "pending", "precondition: B/S01/T01 reopened");
 }
 
 test("milestoneIdsFromEntities derives milestone ids from DB entity ids (layout-independent)", () => {
@@ -106,6 +151,27 @@ test("scoped import preserves a reopened out-of-scope slice (the #027 bug, direc
     getSlice("M002", "S01")?.status,
     "pending",
     "reopened out-of-scope slice must NOT be reverted to complete by a stale checkbox",
+  );
+});
+
+test("scoped import preserves reopened tasks in an out-of-scope slice", (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  seedTwoMilestonesWithReopenedBTask(base);
+
+  // Only M001 drifted; M002's stale checked roadmap and plan boxes must not
+  // re-complete either its reopened slice or its reopened task.
+  migrateHierarchyToDb(base, { statusAuthoritativeMilestones: new Set(["M001"]) });
+
+  assert.equal(
+    getSlice("M002", "S01")?.status,
+    "pending",
+    "reopened out-of-scope slice must stay pending",
+  );
+  assert.equal(
+    taskStatus("M002"),
+    "pending",
+    "reopened out-of-scope task must NOT be reverted to complete by a stale plan checkbox",
   );
 });
 
