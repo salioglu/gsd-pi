@@ -81,7 +81,7 @@ Each row = one prompt file. Columns show which DB tables it touches and how.
 | `discuss` / `guided-discuss-milestone` | milestones, artifacts | artifacts (CONTEXT) | M##-CONTEXT.md |
 | `discuss-headless` | milestones, artifacts | milestones, slices, decisions, artifacts | M##-CONTEXT.md, DECISIONS.md |
 | `research-milestone` | milestones, artifacts | artifacts (RESEARCH) | M##-RESEARCH.md |
-| `plan-milestone` | milestones, slices | milestones (UPDATE planning), slices (INSERT), optional single-slice metadata via `gsd_plan_slice`, optional single-slice tasks via `gsd_plan_task`, decisions | ROADMAP.md; S##-PLAN.md/T##-PLAN.md for single-slice fast path |
+| `plan-milestone` | milestones, slices | milestones (UPDATE planning), slices (INSERT), optional single-slice metadata via `gsd_plan_slice`, optional single-slice tasks via `gsd_plan_task`, decisions | ROADMAP.md; NN-MM-PLAN.md with embedded tasks for single-slice fast path |
 | `queue` | milestones | milestones (INSERT queued), artifacts (CONTEXT) | PROJECT.md, QUEUE.md |
 
 ### Slice Planning Phase
@@ -91,14 +91,14 @@ Each row = one prompt file. Columns show which DB tables it touches and how.
 | `parallel-research-slices` | slices, artifacts | artifacts (RESEARCH per slice) | S##-RESEARCH.md × N |
 | `guided-discuss-slice` | slices, artifacts | artifacts (CONTEXT) | S##-CONTEXT.md |
 | `research-slice` / `guided-research-slice` | slices, memories | artifacts (RESEARCH), memories (hit_count++) | S##-RESEARCH.md |
-| `plan-slice` | slices, tasks, memories | slices metadata via `gsd_plan_slice`, per-task rows via `gsd_plan_task`, memories (hit_count++) | S##-PLAN.md, T##-PLAN.md |
-| `refine-slice` | slices (is_sketch=1), tasks | slices metadata and full task replacement/update via `gsd_plan_slice` | S##-PLAN.md |
+| `plan-slice` | slices, tasks, memories | slices metadata via `gsd_plan_slice`, per-task rows via `gsd_plan_task`, memories (hit_count++) | NN-MM-PLAN.md with embedded task planning |
+| `refine-slice` | slices (is_sketch=1), tasks | slices metadata and full task replacement/update via `gsd_plan_slice` | NN-MM-PLAN.md with embedded task planning |
 
 ### Execution Phase
 
 | Prompt | DB Reads | DB Writes | Disk Artifact Written |
 |--------|----------|-----------|----------------------|
-| `execute-task` | tasks, slices, milestones, memories, quality_gates | tasks (UPDATE status, narrative, summary), verification_evidence (INSERT), memories (hit_count++) | T##-SUMMARY.md; S##-PLAN.md checkbox |
+| `execute-task` | tasks, slices, milestones, memories, quality_gates | tasks (UPDATE status, narrative, summary), verification_evidence (INSERT), memories (hit_count++) | T##-SUMMARY.md; NN-MM-PLAN.md checkbox |
 | `guided-resume-task` | tasks, slices | tasks (UPDATE status, summary), verification_evidence (INSERT) | T##-SUMMARY.md |
 | `reactive-execute` | tasks | tasks (via N× execute-task subagents; recovery may mark summary-present tasks complete and missing-summary tasks skipped) | T##-SUMMARY.md × N; S##-REACTIVE-BLOCKER.md when batch summaries remain missing after retries |
 | `quick-task` | — | — (no DB; writes summaryPath directly) | {{summaryPath}} |
@@ -123,9 +123,9 @@ Each row = one prompt file. Columns show which DB tables it touches and how.
 
 | Prompt | DB Reads | DB Writes | Disk Artifact Written |
 |--------|----------|-----------|----------------------|
-| `replan-slice` | slices, tasks | slices, tasks, replan_history, quality_gates | S##-PLAN.md, S##-REPLAN.md |
+| `replan-slice` | slices, tasks | slices, tasks, replan_history, quality_gates | NN-MM-PLAN.md, NN-MM-REPLAN.md |
 | `rethink` | milestones, slices, artifacts | slices (UPDATE status=skipped), milestones (UPDATE sequence; repaired from QUEUE-ORDER.json during state derivation) | QUEUE-ORDER.json, PARKED.md |
-| `rewrite-docs` | decisions, requirements, artifacts | decisions, requirements, artifacts | DECISIONS.md, REQUIREMENTS.md, task/slice plans |
+| `rewrite-docs` | decisions, requirements, artifacts | decisions, requirements, artifacts | DECISIONS.md, REQUIREMENTS.md, slice plans with embedded task planning |
 | `doctor-heal` | slices, tasks, artifacts | artifacts (repair CONTEXT/SUMMARY/UAT) | repairs existing artifacts |
 | `review-migration` | milestones, slices, tasks, artifacts, decisions, requirements | — (read-only audit) | — |
 | `scan` | — | — | STACK.md, INTEGRATIONS.md, ARCHITECTURE.md |
@@ -248,7 +248,7 @@ execute-task prompt fires
         └─► UPDATE quality_gates SET status='evaluated', verdict (if gate was open)
         └─► INSERT INTO gate_runs (audit)
         └─► Write T##-SUMMARY.md to disk
-        └─► Toggle checkbox in S##-PLAN.md
+        └─► Toggle checkbox in NN-MM-PLAN.md
         └─► If summary or plan projection write fails:
               DELETE verification_evidence for the task
               UPDATE tasks SET status='pending'
