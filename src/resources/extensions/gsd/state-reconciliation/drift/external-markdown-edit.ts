@@ -72,13 +72,28 @@ async function repairExternalMarkdownEdit(
     // Dynamic imports break a module-init cycle: this handler ← registry ←
     // state.ts ← guided-flow.ts ← md-importer.ts ← (this handler's old static
     // import). Deferring to repair time keeps module load cycle-free.
-    const { migrateHierarchyToDb } = await import("../../md-importer.js");
+    const { migrateHierarchyToDb, milestoneIdsFromEntities } = await import("../../md-importer.js");
     const { invalidateStateCache } = await import("../../state.js");
-    // Scoped re-import. migrateHierarchyToDb walks the whole tree but is a
-    // cheap upsert; per-entity scoping would require decomposing it, which is
-    // out of scope for v1. The cost is bounded by tree size and runs at most
-    // once per reconcile pass (MAX_PASSES=2).
-    migrateHierarchyToDb(ctx.basePath);
+    // #027: migrateHierarchyToDb walks the whole tree (a cheap upsert), so
+    // without scoping every projection rides along with markdown *status*
+    // authority. That lets an unrelated file that is stale from gsd-pi's own
+    // miss silently revert a reopened slice/milestone. Scope status authority to
+    // exactly the milestone(s) this drifted file projects.
+    //
+    // Step 1: the marker's `entities` are DB ids (`M001`, `M001/S01`,
+    // `M001/S01/T01`), so the milestone id is always the first `/`-segment —
+    // layout-independent (legacy `milestones/<MID>/…` and flat `phases/NN-slug/…`
+    // both resolve the same way), no projectionPath parsing needed. An empty set
+    // (no resolvable entities) preserves DB status everywhere: fail toward
+    // protecting the DB, not toward markdown authority.
+    const statusAuthoritativeMilestones = milestoneIdsFromEntities(record.entities);
+    if (statusAuthoritativeMilestones.size === 0) {
+      logWarning(
+        "reconcile",
+        `external-markdown-edit: no milestone scope resolved for ${record.projectionPath}; preserving DB status for all milestones`,
+      );
+    }
+    migrateHierarchyToDb(ctx.basePath, { statusAuthoritativeMilestones });
     invalidateStateCache();
   } catch (err) {
     logWarning(
