@@ -1419,6 +1419,15 @@ export function deleteArtifactsByPathPrefix(prefix: string): number {
   });
 }
 
+/** List artifact rows whose paths share a DB-relative prefix. */
+export function getArtifactsByPathPrefix(prefix: string): ArtifactRow[] {
+  if (!getDbOrNull()!) return [];
+  const rows = getDbOrNull()!.prepare(
+    "SELECT * FROM artifacts WHERE path LIKE :prefix ORDER BY path",
+  ).all({ ":prefix": `${prefix}%` });
+  return rows.map(rowToArtifact);
+}
+
 /**
  * Drop hierarchy rows in dependency order inside a transaction. Used by
  * `gsd recover --confirm` to rebuild engine state from markdown.

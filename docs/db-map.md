@@ -706,15 +706,15 @@ remain outside manifest restore.
 | `gsd_summary_save` | milestones, slices, tasks | artifacts | M##/S##/T## artifact files |
 | `gsd_milestone_generate_id` | milestones | milestones (INSERT OR IGNORE, queued) | — |
 | `gsd_plan_milestone` | milestones, slices | milestones, slices | ROADMAP.md |
-| `gsd_plan_slice` | milestones, slices, tasks | slices metadata; tasks only when a non-empty `tasks` payload performs full replacement/update | S##-PLAN.md and task plans when tasks exist |
-| `gsd_plan_task` | slices, tasks | one task planning row, task gate seeds | T##-PLAN.md; re-renders S##-PLAN.md |
-| `gsd_task_complete` | tasks, slices | tasks, verification_evidence | T##-SUMMARY.md; toggles checkbox in S##-PLAN.md |
+| `gsd_plan_slice` | milestones, slices, tasks | slices metadata; tasks only when a non-empty `tasks` payload performs full replacement/update | NN-MM-PLAN.md with embedded task planning when tasks exist |
+| `gsd_plan_task` | slices, tasks | one task planning row, task gate seeds | re-renders NN-MM-PLAN.md; task PLAN paths resolve to the slice plan |
+| `gsd_task_complete` | tasks, slices | tasks, verification_evidence | T##-SUMMARY.md; toggles checkbox in NN-MM-PLAN.md |
 | `gsd_slice_complete` | tasks, slices | slices, tasks (cascade skipped) | S##-SUMMARY.md, S##-UAT.md; toggles checkpoint in ROADMAP.md |
 | `gsd_uat_result_save` | slices, artifacts | artifacts, assessments, quality_gates, gate_runs | S##-ASSESSMENT.md; UAT attempt JSON |
 | `gsd_complete_milestone` | milestones, slices, tasks | milestones | M##-SUMMARY.md |
 | `gsd_validate_milestone` | milestones, slices, tasks | assessments, quality_gates, gate_runs | VALIDATION.md |
 | `gsd_reassess_roadmap` | milestones, slices | milestones, slices, assessments | ROADMAP.md, ASSESSMENT.md |
-| `gsd_replan_slice` | slices, tasks | slices, tasks, replan_history, quality_gates | S##-PLAN.md, S##-REPLAN.md |
+| `gsd_replan_slice` | slices, tasks | slices, tasks, replan_history, quality_gates | NN-MM-PLAN.md, NN-MM-REPLAN.md |
 | `gsd_skip_slice` | slices, tasks | slices, tasks | STATE.md (via rebuildState) |
 | `gsd_task_reopen` | tasks, slices, milestones | tasks | deletes T##-SUMMARY.md |
 | `gsd_slice_reopen` | slices, tasks, milestones | slices, tasks | deletes S##-SUMMARY.md, UAT, all T##-SUMMARY.md |
@@ -723,7 +723,7 @@ remain outside manifest restore.
 | `capture_thought` | memories | memories | KNOWLEDGE.md projection for Patterns/Lessons (both backfilled and newly captured) |
 | `memory_query` | memories, memories_fts, memory_embeddings | memories (hit_count++) | — |
 
-`gsd_task_complete` treats the task summary and slice plan projection as closeout-critical. If writing `T##-SUMMARY.md` or re-rendering `S##-PLAN.md` fails, the tool returns an error after deleting the task's verification evidence and reverting its task row to `pending`; it does not leave a committed `complete` task with a stale plan projection.
+`gsd_task_complete` treats the task summary and slice plan projection as closeout-critical. If writing `T##-SUMMARY.md` or re-rendering `NN-MM-PLAN.md` fails, the tool returns an error after deleting the task's verification evidence and reverting its task row to `pending`; it does not leave a committed `complete` task with a stale plan projection.
 
 ---
 
