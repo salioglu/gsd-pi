@@ -1099,7 +1099,9 @@ export const DISPATCH_RULES: DispatchRule[] = [
       if (state.phase !== "pre-planning") return null;
       if (isRegistryMilestoneComplete(state, mid)) return null;
       const contextBasePath = resolveWorktreeProjectRoot(basePath, session?.originalBasePath);
-      const contextFile = resolveMilestoneFile(contextBasePath, mid, "CONTEXT");
+      const contextFile =
+        resolveMilestoneFile(basePath, mid, "CONTEXT") ??
+        (contextBasePath !== basePath ? resolveMilestoneFile(contextBasePath, mid, "CONTEXT") : null);
       const hasContext = !!(contextFile && (await loadFile(contextFile)));
       if (hasContext) return null; // fall through to next rule
       if (prefs?.planning_depth === "deep") return null;
