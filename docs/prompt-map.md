@@ -312,10 +312,10 @@ STATE.md
               │              │ writes NN-MM-PLAN.md with embedded task planning
               │              │
               ├── [task]  reactive-execute ──────────► N× subagent (execute-task)
-              │    OR                                     │ writes T##-SUMMARY.md or S##-REACTIVE-BLOCKER.md
+              │    OR                                     │ writes S##-T##-SUMMARY.md or S##-REACTIVE-BLOCKER.md
               ├── [task]  execute-task                    │
               │              │ reads DB task plan + NN-MM-PLAN.md excerpt
-              │              │ writes T##-SUMMARY.md
+              │              │ writes S##-T##-SUMMARY.md
               │              │
               ├── [gate]  gate-evaluate ────────────► N× subagent
               │              │ writes gate results
@@ -391,7 +391,7 @@ guided-discuss-slice         →  .gsd/phases/<NN-slug>/<NN>-<MM>-CONTEXT.md
 plan-slice / refine-slice    →  .gsd/phases/<NN-slug>/<NN>-<MM>-PLAN.md
                                  (task planning is embedded; no separate task plan file)
 
-execute-task                 →  .gsd/phases/<NN-slug>/T##-SUMMARY.md
+execute-task                 →  .gsd/phases/<NN-slug>/S##-T##-SUMMARY.md
 gate-evaluate                →  gate results (DB + artifact)
 run-uat                      →  .gsd/phases/<NN-slug>/<NN>-<MM>-ASSESSMENT.md
 complete-slice               →  .gsd/phases/<NN-slug>/<NN>-<MM>-SUMMARY.md
@@ -435,7 +435,7 @@ LLM sees: "load these skill files and follow their rules for this unit"
 | `gsd_plan_milestone` | milestones table, slices table |
 | `gsd_plan_slice` | slices table; tasks table only when a non-empty `tasks` payload performs full replacement/update |
 | `gsd_plan_task` | one task planning row; embedded task planning in the slice plan projection |
-| `gsd_task_complete` | tasks table, T##-SUMMARY.md |
+| `gsd_task_complete` | tasks table, S##-T##-SUMMARY.md (legacy T##-SUMMARY.md readable) |
 | `gsd_slice_complete` | slices table, S##-SUMMARY.md |
 | `gsd_complete_milestone` | milestones table, M##-SUMMARY.md |
 | `gsd_validate_milestone` | milestones table (validation verdict) |
