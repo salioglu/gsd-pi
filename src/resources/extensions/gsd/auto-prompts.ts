@@ -3578,7 +3578,9 @@ export async function buildReplanSlicePrompt(
   let blockerTaskId = "";
   const summaryLoc = resolveTaskSummariesLocation(base, mid, sid);
   if (summaryLoc) {
-    const summaryFiles = resolveTaskFiles(summaryLoc.dir, "SUMMARY").sort();
+    const summaryFiles = resolveTaskFiles(summaryLoc.dir, "SUMMARY")
+      .filter((file) => summaryFileBelongsToSlice(file, base, mid, sid))
+      .sort();
     for (const file of summaryFiles) {
       const absPath = join(summaryLoc.dir, file);
       const content = await loadFile(absPath);
