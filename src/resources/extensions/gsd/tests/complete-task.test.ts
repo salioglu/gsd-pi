@@ -509,6 +509,77 @@ console.log('\n=== complete-task: disabled hard-blocker escalation rolls back co
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// complete-task: rollback reverts applied rework resolutions
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: rollback reverts applied rework resolutions ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  const { basePath } = createTempProject();
+  writeProjectPreferences(basePath, 'phases:\n  mid_execution_escalation: false\n');
+
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Test task', status: 'pending' });
+  saveReworkBrief({
+    briefId: 'RB-001',
+    milestoneId: 'M001',
+    sliceId: 'S01',
+    taskId: 'T01',
+    findings: [{
+      findingId: 'F1',
+      severity: 'blocking',
+      description: 'Compile regression',
+      requiredFix: 'Fix compile error',
+      verificationCommands: ['pnpm run typecheck:extensions'],
+    }],
+  });
+
+  // Completion resolves the blocking finding but then rolls back because the
+  // hard-blocker escalation is disabled. The rollback must also revert the
+  // finding. Otherwise a retry would see no unresolved blocking findings and
+  // silently skip the blocking gate.
+  const result = await withWorkingDirectory(basePath, () => handleCompleteTask({
+    ...makeValidParams(),
+    blockerDiscovered: true,
+    reworkResolution: [{
+      findingId: 'F1',
+      status: 'resolved',
+      evidence: 'Fixed compile error and reran pnpm run typecheck:extensions.',
+    }],
+    escalation: {
+      question: 'Should execution pause for the hard blocker?',
+      options: makeEscalationOptions(),
+      recommendation: 'pause',
+      recommendationRationale: 'The blocker should not be silently advanced.',
+      continueWithDefault: false,
+    },
+  }, basePath));
+
+  assertTrue('error' in result, 'completion should roll back when hard-blocker escalation is disabled');
+  assertEq(getTask('M001', 'S01', 'T01')?.status, 'pending', 'task status should roll back to pending');
+
+  const finding = _getAdapter()!.prepare(
+    "SELECT status, evidence, decision_ref FROM rework_brief_findings WHERE brief_id = 'RB-001' AND finding_id = 'F1'"
+  ).get() as { status: string; evidence: string; decision_ref: string };
+  assertEq(finding.status, 'pending', 'rework finding should revert to pending after rollback');
+  assertEq(finding.evidence, '', 'rework finding evidence should be cleared after rollback');
+
+  // Retry-safety invariant: the blocking gate must fire again because the
+  // finding is unresolved once more.
+  const retry = await withWorkingDirectory(basePath, () => handleCompleteTask(makeValidParams(), basePath));
+  assertTrue('error' in retry, 'retry without reworkResolution should be blocked again');
+  if ('error' in retry) {
+    assertMatch(retry.error, /unresolved blocking rework finding/i, 'retry should re-trigger the blocking gate');
+  }
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // complete-task: soft escalation with mid-execution escalation disabled
 // ═══════════════════════════════════════════════════════════════════════════
 

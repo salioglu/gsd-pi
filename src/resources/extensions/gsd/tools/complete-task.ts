@@ -30,7 +30,9 @@ import {
   saveGateResult,
   getPendingGatesForTurn,
   getUnresolvedBlockingReworkFindingsForTask,
+  getBlockingReworkFindingsForTask,
   applyReworkResolutions,
+  type ReworkFindingStatus,
 } from "../gsd-db.js";
 import { getWorkflowDatabasePath, ensureWorkflowDbAtPath } from "../db-workspace.js";
 import { getGatesForTurn } from "../gate-registry.js";
@@ -219,6 +221,38 @@ function satisfiesBlockingReworkFinding(resolution: ReturnType<typeof normalizeR
   return (resolution.decisionRef ?? "").trim().length > 0;
 }
 
+/**
+ * Snapshot of a rework finding's status/evidence as it existed *before* this
+ * completion applied its reworkResolution. Captured inside the completion
+ * transaction so the compensating rollback paths can restore the exact prior
+ * state.
+ */
+type ReworkFindingSnapshot = {
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+  findingId: string;
+  status: ReworkFindingStatus;
+  evidence: string;
+  decisionRef?: string;
+};
+
+/**
+ * Restore rework findings to their pre-completion state.
+ *
+ * The completion transaction flips blocking findings to resolved/
+ * deferred-with-override via applyReworkResolutions. When a later projection
+ * or escalation write fails and we compensate by reverting the task to
+ * `pending`, we must also revert those findings. Otherwise a retry sees no
+ * unresolved blocking findings (getUnresolvedBlockingReworkFindingsForTask
+ * only returns `pending` rows) and completes the task with the blocking gate
+ * silently skipped.
+ */
+function revertAppliedReworkResolutions(snapshot: ReworkFindingSnapshot[]): void {
+  if (snapshot.length === 0) return;
+  applyReworkResolutions(snapshot);
+}
+
 function paramsToTaskRow(params: CompleteTaskParams, completedAt: string): TaskRow {
   return {
     milestone_id: params.milestoneId,
@@ -305,6 +339,7 @@ export async function handleCompleteTask(
   let guardError: string | null = null;
   let summaryMd = "";
   let repairTaskSummaryRow: TaskRow | null = null;
+  let appliedReworkSnapshot: ReworkFindingSnapshot[] = [];
   const rollbackDbPath = getWorkflowDatabasePath();
 
   // ── ADR-011 Phase 2: validate escalation payload BEFORE any side effects ─
@@ -429,6 +464,25 @@ export async function handleCompleteTask(
     });
 
     if (reworkResolutions.length > 0) {
+      // Snapshot the pre-resolution state of the findings we're about to
+      // change so a compensating rollback can restore them exactly (see
+      // revertAppliedReworkResolutions).
+      const resolvedFindingIdsForSnapshot = new Set(reworkResolutions.map((r) => r.findingId));
+      appliedReworkSnapshot = getBlockingReworkFindingsForTask(
+        params.milestoneId,
+        params.sliceId,
+        params.taskId,
+      )
+        .filter((finding) => resolvedFindingIdsForSnapshot.has(finding.finding_id))
+        .map((finding) => ({
+          milestoneId: params.milestoneId,
+          sliceId: params.sliceId,
+          taskId: params.taskId,
+          findingId: finding.finding_id,
+          status: finding.status,
+          evidence: finding.evidence,
+          decisionRef: finding.decision_ref,
+        }));
       applyReworkResolutions(reworkResolutions);
     }
 
@@ -513,6 +567,7 @@ export async function handleCompleteTask(
       ensureWorkflowDbAtPath(rollbackDbPath);
       deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
       updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, "pending");
+      revertAppliedReworkResolutions(appliedReworkSnapshot);
       invalidateStateCache();
       rollbackSucceeded = true;
     } catch (rollbackErr) {
@@ -613,6 +668,7 @@ export async function handleCompleteTask(
         try {
           deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
           updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, 'pending');
+          revertAppliedReworkResolutions(appliedReworkSnapshot);
           invalidateStateCache();
           logWarning(
             "tool",
@@ -634,6 +690,7 @@ export async function handleCompleteTask(
       try {
         deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
         updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, 'pending');
+        revertAppliedReworkResolutions(appliedReworkSnapshot);
         invalidateStateCache();
         logWarning(
           "tool",

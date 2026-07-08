@@ -24,10 +24,32 @@ function validateFinding(finding: ReworkBriefFindingInput, index: number): Rewor
   }
   if (!isNonEmptyString(finding.description)) throw new Error(`findings[${index}].description is required`);
   if (!isNonEmptyString(finding.requiredFix)) throw new Error(`findings[${index}].requiredFix is required`);
+
+  const status = finding.status ?? "pending";
+  if (status !== "pending" && status !== "resolved" && status !== "deferred-with-override") {
+    throw new Error(`findings[${index}].status must be pending, resolved, or deferred-with-override`);
+  }
+
+  // A blocking finding is only enforced by gsd_task_complete while it is
+  // `pending` (getUnresolvedBlockingReworkFindingsForTask returns pending rows
+  // only). Persisting a blocking finding as resolved/deferred-with-override
+  // at save time therefore bypasses the completion gate entirely, so require
+  // the same justification a reworkResolution would (evidence for `resolved`,
+  // evidence + decisionRef for `deferred-with-override`). Advisory findings do
+  // not gate completion, so their status is left as-is.
+  if (finding.severity === "blocking" && status !== "pending") {
+    if (!isNonEmptyString(finding.evidence)) {
+      throw new Error(`findings[${index}].evidence is required when a blocking finding is saved as ${status}`);
+    }
+    if (status === "deferred-with-override" && !isNonEmptyString(finding.decisionRef)) {
+      throw new Error(`findings[${index}].decisionRef is required when a blocking finding is saved as deferred-with-override`);
+    }
+  }
+
   return {
     ...finding,
     verificationCommands: validateStringArray(finding.verificationCommands, `findings[${index}].verificationCommands`),
-    status: finding.status ?? "pending",
+    status,
   };
 }
 
