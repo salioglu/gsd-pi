@@ -49,6 +49,7 @@ commit `58dc840f`. Plans 018–024 planned against commit `7cca07ae`.
 | 032 | Relocate integration-branch META out of `milestones/<MID>/` so it can't poison layout detection | P1 | M | — | DONE |
 | 033 | Fixtures: zero false-positive stale-render drift for flat-phase (multi-slice + remediation, two cycles) | P2 | M | 032 | TODO |
 | 034 | Re-enable the stale-render drift detector for flat-phase projects | P2 | S | 032, 033 | TODO |
+| 035 | Stop advertising duplicate alias tool schemas to the model | P1 | M | — | DONE |
 
 All of 009–017 implemented, tested, and committed on branch `chore/audit-fixes-009-017`
 (2026-07-01). Notable deviations recorded in the plan files: 009 skipped the
