@@ -46,6 +46,7 @@ import {
   applyMigrationV27ArtifactHash,
   applyMigrationV28MemoryLastHitAt,
   applyMigrationV29RepositoryTargets,
+  applyMigrationV30ReworkBriefs,
 } from "../db-migration-steps.js";
 import {
   isMemoriesFtsAvailableSchema,
@@ -93,7 +94,7 @@ const providerLoader = createSqliteProviderLoader({
   nodeVersion: process.versions.node,
   writeStderr: (message: string) => process.stderr.write(message),
 });
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 30;
 function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): void {
   const conservativeFilePragmas = fileBacked && _isLikelyWslDrvFsPathForTest(dbPath);
   if (fileBacked) db.exec(conservativeFilePragmas ? "PRAGMA journal_mode=DELETE" : "PRAGMA journal_mode=WAL");
@@ -142,6 +143,8 @@ function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): 
         db.exec("CREATE INDEX IF NOT EXISTS idx_memory_sources_scope ON memory_sources(scope)");
         db.exec("CREATE INDEX IF NOT EXISTS idx_memory_relations_from ON memory_relations(from_id)");
         db.exec("CREATE INDEX IF NOT EXISTS idx_memory_relations_to ON memory_relations(to_id)");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_rework_briefs_task ON rework_briefs(milestone_id, slice_id, task_id)");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_rework_findings_status ON rework_brief_findings(brief_id, severity, status)");
 
         recordSchemaVersion(db, SCHEMA_VERSION);
       }
@@ -375,6 +378,11 @@ function migrateSchema(db: DbAdapter, dbPath: string | null): void {
     if (currentVersion < 29) {
       applyMigrationV29RepositoryTargets(db);
       recordSchemaVersion(db, 29);
+    }
+
+    if (currentVersion < 30) {
+      applyMigrationV30ReworkBriefs(db);
+      recordSchemaVersion(db, 30);
     }
 
     if (_migrationFaultForTest) throw new Error("migration fault injected for test");

@@ -898,6 +898,188 @@ export function insertReplanHistory(entry: {
   });
 }
 
+
+export type ReworkFindingSeverity = "blocking" | "advisory";
+export type ReworkFindingStatus = "pending" | "resolved" | "deferred-with-override";
+
+export interface ReworkBriefFindingInput {
+  findingId: string;
+  severity: ReworkFindingSeverity;
+  description: string;
+  requiredFix: string;
+  verificationCommands: string[];
+  status?: ReworkFindingStatus;
+  evidence?: string;
+  decisionRef?: string;
+}
+
+export interface ReworkBriefFindingRow {
+  brief_id: string;
+  finding_id: string;
+  severity: ReworkFindingSeverity;
+  description: string;
+  required_fix: string;
+  verification_commands: string[];
+  status: ReworkFindingStatus;
+  evidence: string;
+  decision_ref: string;
+}
+
+function reworkBriefIdFromTask(milestoneId: string, sliceId: string, taskId: string): string {
+  return `RB-${milestoneId}-${sliceId}-${taskId}`;
+}
+
+function normalizeReworkStatus(status: unknown): ReworkFindingStatus {
+  const normalized = String(status ?? "pending");
+  if (normalized === "resolved" || normalized === "deferred-with-override") {
+    return normalized;
+  }
+  return "pending";
+}
+
+function rowToReworkFinding(row: Record<string, unknown>): ReworkBriefFindingRow {
+  let verificationCommands: string[] = [];
+  try {
+    const parsed = JSON.parse(String(row["verification_commands"] ?? "[]"));
+    verificationCommands = Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    verificationCommands = [];
+  }
+  return {
+    brief_id: String(row["brief_id"] ?? ""),
+    finding_id: String(row["finding_id"] ?? ""),
+    severity: String(row["severity"] ?? "blocking") === "advisory" ? "advisory" : "blocking",
+    description: String(row["description"] ?? ""),
+    required_fix: String(row["required_fix"] ?? ""),
+    verification_commands: verificationCommands,
+    status: normalizeReworkStatus(row["status"]),
+    evidence: String(row["evidence"] ?? ""),
+    decision_ref: String(row["decision_ref"] ?? ""),
+  };
+}
+
+export function saveReworkBrief(entry: {
+  briefId?: string;
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+  findings: ReworkBriefFindingInput[];
+}): { briefId: string } {
+  if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  const briefId = entry.briefId?.trim() || reworkBriefIdFromTask(entry.milestoneId, entry.sliceId, entry.taskId);
+  const now = new Date().toISOString();
+  transaction(() => {
+    getDbOrNull()!.prepare(
+      `INSERT INTO rework_briefs (id, milestone_id, slice_id, task_id, created_at, updated_at)
+       VALUES (:id, :mid, :sid, :tid, :created_at, :updated_at)
+       ON CONFLICT(id) DO UPDATE SET
+         milestone_id = :mid,
+         slice_id = :sid,
+         task_id = :tid,
+         updated_at = :updated_at`,
+    ).run({
+      ":id": briefId,
+      ":mid": entry.milestoneId,
+      ":sid": entry.sliceId,
+      ":tid": entry.taskId,
+      ":created_at": now,
+      ":updated_at": now,
+    });
+    getDbOrNull()!.prepare("DELETE FROM rework_brief_findings WHERE brief_id = :id").run({ ":id": briefId });
+    const stmt = getDbOrNull()!.prepare(
+      `INSERT INTO rework_brief_findings (
+         brief_id, finding_id, severity, description, required_fix, verification_commands,
+         status, evidence, decision_ref, updated_at
+       ) VALUES (
+         :brief_id, :finding_id, :severity, :description, :required_fix, :verification_commands,
+         :status, :evidence, :decision_ref, :updated_at
+       )`,
+    );
+    for (const finding of entry.findings) {
+      stmt.run({
+        ":brief_id": briefId,
+        ":finding_id": finding.findingId,
+        ":severity": finding.severity,
+        ":description": finding.description,
+        ":required_fix": finding.requiredFix,
+        ":verification_commands": JSON.stringify(finding.verificationCommands),
+        ":status": finding.status ?? "pending",
+        ":evidence": finding.evidence ?? "",
+        ":decision_ref": finding.decisionRef ?? "",
+        ":updated_at": now,
+      });
+    }
+  });
+  return { briefId };
+}
+
+export function getBlockingReworkFindingsForTask(
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+): ReworkBriefFindingRow[] {
+  if (!getDbOrNull()!) return [];
+  const rows = getDbOrNull()!.prepare(
+    `SELECT f.*
+     FROM rework_brief_findings f
+     JOIN rework_briefs b ON b.id = f.brief_id
+     WHERE b.milestone_id = :mid
+       AND b.slice_id = :sid
+       AND b.task_id = :tid
+       AND f.severity = 'blocking'
+     ORDER BY b.created_at, f.finding_id`,
+  ).all({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId }) as Array<Record<string, unknown>>;
+  return rows.map(rowToReworkFinding);
+}
+
+export function getUnresolvedBlockingReworkFindingsForTask(
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+): ReworkBriefFindingRow[] {
+  return getBlockingReworkFindingsForTask(milestoneId, sliceId, taskId)
+    .filter((finding) => finding.status === "pending");
+}
+
+export function applyReworkResolutions(resolutions: Array<{
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+  findingId: string;
+  status: ReworkFindingStatus;
+  evidence: string;
+  decisionRef?: string;
+}>): void {
+  if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  const now = new Date().toISOString();
+  const stmt = getDbOrNull()!.prepare(
+    `UPDATE rework_brief_findings
+     SET status = :status,
+         evidence = :evidence,
+         decision_ref = :decision_ref,
+         updated_at = :updated_at
+     WHERE finding_id = :finding_id
+       AND brief_id IN (
+         SELECT id FROM rework_briefs
+         WHERE milestone_id = :mid AND slice_id = :sid AND task_id = :tid
+       )`,
+  );
+  transaction(() => {
+    for (const resolution of resolutions) {
+      stmt.run({
+        ":status": resolution.status,
+        ":evidence": resolution.evidence,
+        ":decision_ref": resolution.decisionRef ?? "",
+        ":updated_at": now,
+        ":finding_id": resolution.findingId,
+        ":mid": resolution.milestoneId,
+        ":sid": resolution.sliceId,
+        ":tid": resolution.taskId,
+      });
+    }
+  });
+}
+
 export function insertAssessment(entry: {
   path: string;
   milestoneId: string;

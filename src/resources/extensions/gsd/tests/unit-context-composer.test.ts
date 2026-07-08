@@ -43,6 +43,8 @@ import {
   insertMilestone,
   upsertMilestonePlanning,
   insertSlice,
+  insertTask,
+  saveReworkBrief,
 } from "../gsd-db.ts";
 
 // ─── Pure composer tests ──────────────────────────────────────────────────
@@ -516,6 +518,38 @@ test("#4782 phase 2: buildReassessRoadmapPrompt emits composer-shaped context wi
   // Slice context is optional and not present in this fixture — must not
   // leave a stray empty section
   assert.ok(!prompt.includes("Slice Context (from discussion)"));
+});
+
+
+test("execute-task prompt injects unresolved blocking rework findings", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+  invalidateAllCaches();
+
+  seed(base, "M001");
+  writeArtifacts(base);
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Task", status: "pending" });
+  saveReworkBrief({
+    briefId: "RB-001",
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    findings: [{
+      findingId: "F1",
+      severity: "blocking",
+      description: "Compile regression",
+      requiredFix: "Restore typecheck",
+      verificationCommands: ["pnpm run typecheck:extensions"],
+    }],
+  });
+
+  const prompt = await buildExecuteTaskPrompt("M001", "S01", "First", "T01", "Task", base);
+
+  assert.match(prompt, /Blocking Rework Findings \(non-optional\)/);
+  assert.match(prompt, /F1/);
+  assert.match(prompt, /Compile regression/);
+  assert.match(prompt, /pnpm run typecheck:extensions/);
+  assert.match(prompt, /reworkResolution/);
 });
 
 test("execute-task prompt omits on-demand slice research when the artifact is absent", async (t) => {

@@ -54,6 +54,11 @@ function rawColumnNames(raw: RawDb, table: string): string[] {
   return raw.prepare(`PRAGMA table_info(${table})`).all().map((r) => r['name'] as string);
 }
 
+function rawHasTable(raw: RawDb, table: string): boolean {
+  const row = raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+  return Boolean(row);
+}
+
 function rawMaxVersion(raw: RawDb): number | null {
   const row = raw.prepare('SELECT MAX(version) as v FROM schema_version').get();
   return (row?.['v'] as number | null) ?? null;
@@ -97,8 +102,8 @@ describe('db-engine migrate guards', () => {
       closeDatabase();
 
       // Rewind the DB to v(SCHEMA_VERSION-1): stamp the prior version and drop
-      // the columns the last migration adds, so the re-run has real work to redo.
-      const startVersion = SCHEMA_VERSION - 1;
+      // the objects the last migration adds, so the re-run has real work to redo.
+      const startVersion = SCHEMA_VERSION - 2;
       const raw = openRawSqliteForTest(dbPath);
       raw.exec('DELETE FROM schema_version');
       raw.exec(`INSERT INTO schema_version (version, applied_at) VALUES (${startVersion}, '2026-01-01T00:00:00Z')`);
@@ -132,6 +137,8 @@ describe('db-engine migrate guards', () => {
       try {
         assert.equal(rawMaxVersion(after), SCHEMA_VERSION);
         assert.ok(rawColumnNames(after, 'slices').includes('target_repositories'));
+        assert.equal(rawHasTable(after, 'rework_briefs'), true);
+        assert.equal(rawHasTable(after, 'rework_brief_findings'), true);
       } finally {
         after.close();
       }
