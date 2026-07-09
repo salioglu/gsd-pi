@@ -65,6 +65,10 @@ const NETWORK_RE = /network|ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|web
 // transient errors so auto-mode can retry with reduced budget or fall back to a larger-context model.
 // See: https://github.com/open-gsd/gsd-pi/issues/4528
 const SERVER_RE = /internal(?: server)?[ _-]?error|server[ _-]?error|500|502|503|overloaded|server_error|api_error|service.?unavailable|context (?:window|length) exceed|context window exceed/i;
+// Provider adapters throw this when an upstream stop reason reaches Pi before
+// the adapter knows how to map it. Keep the match scoped so plain "unknown"
+// runtime errors still pause for inspection instead of being retried forever.
+const PROVIDER_STOP_REASON_RE = /unhandled stop reason:\s*(?:abort|unknown)\b/i;
 // ECONNRESET/ECONNREFUSED are in NETWORK_RE (same-model retry first).
 const CONNECTION_RE = /terminated|\babort\b|connection.?(?:refused|error)|other side closed|EPIPE|network.?(?:is\s+)?unavailable|stream_exhausted(?:_without_result)?/i;
 // Catch-all for V8 JSON.parse errors: all modern variants end with "in JSON at position \d+".
@@ -103,7 +107,7 @@ const UNSUPPORTED_MODEL_SCOPE_RE = /\b(?:account|plan|tier|subscription)\b/i;
  *  3. Network (ECONNRESET, ETIMEDOUT, socket hang up, fetch failed, dns)
  *  4. Stream truncation (malformed JSON from mid-stream cut)
  *  5. Server (500/502/503, overloaded, server_error)
- *  6. Connection (terminated, abort, ECONNREFUSED, EPIPE, other side closed)
+ *  6. Connection (terminated, abort/unknown stop reason, ECONNREFUSED, EPIPE, other side closed)
  *  7. Model error (400 invalid argument / payload rejected for this model)
  *  8. Unknown
  */
@@ -161,6 +165,13 @@ export function classifyError(errorMsg: string, retryAfterMs?: number): ErrorCla
     const resetMatch = errorMsg.match(RESET_DELAY_RE);
     const delayMs = resetMatch ? Number(resetMatch[1]) * 1000 : 60_000;
     return { kind: "rate-limit", retryAfterMs: delayMs };
+  }
+
+  // Provider stop-reason adapter gaps are usually request/stream failures from
+  // the current model. Treat the scoped adapter message as fallback-eligible,
+  // but keep generic unknown errors on the indefinite pause path.
+  if (PROVIDER_STOP_REASON_RE.test(errorMsg)) {
+    return { kind: "connection", retryAfterMs: retryAfterMs ?? 15_000 };
   }
 
   // 3. Network errors — same-model retry candidate
