@@ -28,6 +28,7 @@ import type { GSDPreferences } from "./preferences.js";
 import { join, basename, relative, sep } from "node:path";
 import { existsSync } from "node:fs";
 import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary, type MinimalModelRegistry } from "./context-budget.js";
+import type { TokenProvider } from "./token-counter.js";
 import { getBlockingReworkFindingsForTask, getGateResults, getPendingGates, getPendingGatesForTurn } from "./gsd-db.js";
 import {
   GATE_REGISTRY,
@@ -91,11 +92,27 @@ function resolvePromptBudgets(): ReturnType<typeof computeBudgets> {
     const prefs = loadEffectiveGSDPreferences();
     const sessionWindow = prefs?.preferences.context_window_override;
     const windowTokens = resolveExecutorContextWindow(undefined, prefs?.preferences, sessionWindow);
-    return computeBudgets(windowTokens);
+    return computeBudgets(windowTokens, resolveExecutionProvider(prefs?.preferences));
   } catch (e) {
     logWarning("prompt", `resolvePromptBudgets failed: ${(e as Error).message}`);
     return computeBudgets(200_000);
   }
+}
+
+/**
+ * Best-effort provider for the chars/token ratio: the executor's configured
+ * model profile is the only provider source reachable here (the runtime
+ * `sessionProvider` that reaches `formatExecutorConstraints` isn't threaded to
+ * `capPreamble`/summary callers). Undefined when no explicit provider is set —
+ * `computeBudgets` then uses the 4.0 default, i.e. today's behavior.
+ */
+function resolveExecutionProvider(prefs?: { models?: { execution?: unknown } }): TokenProvider | undefined {
+  const exec = prefs?.models?.execution;
+  if (exec && typeof exec === "object" && "provider" in exec) {
+    const provider = (exec as { provider?: unknown }).provider;
+    if (typeof provider === "string" && provider) return provider as TokenProvider;
+  }
+  return undefined;
 }
 
 /**
@@ -236,7 +253,7 @@ function formatCloseoutReviewInstructions(validationContent: string | null, vali
   ].join("\n");
 }
 
-function capPreamble(preamble: string): string {
+export function capPreamble(preamble: string): string {
   // Cap inlined context at min(static ceiling, scaled inline budget).
   // The ceiling bounds repeated auto prompt payloads; the scaled
   // budget tightens the cap for small-window users whose true safe limit is
@@ -244,6 +261,41 @@ function capPreamble(preamble: string): string {
   const budget = Math.min(MAX_PREAMBLE_CHARS, resolvePromptBudgets().inlineContextBudgetChars);
   if (preamble.length <= budget) return preamble;
   return truncateAtSectionBoundary(preamble, budget).content;
+}
+
+/**
+ * Cap the execute-task inline blocks against one shared budget in priority
+ * order. Unlike `capPreamble` (single concatenated preamble), execute-task
+ * feeds these blocks into separate, non-contiguous template placeholders, so
+ * they can't be joined and re-split — the budget is spent block-by-block.
+ *
+ * The task plan is the authoritative execution contract: it is never truncated
+ * here (it consumes budget first, whole). Remaining budget flows to the slice
+ * excerpt, then templates, each truncated at section boundaries so the lowest-
+ * priority context drops whole trailing sections first. When the task plan
+ * alone meets or exceeds the budget, the trailing blocks are dropped rather
+ * than the task plan being cut.
+ */
+function capExecuteTaskInlineBlocks(
+  taskPlan: string,
+  slicePlan: string,
+  templates: string,
+  budgetChars: number,
+): { taskPlan: string; slicePlan: string; templates: string } {
+  let remaining = budgetChars - taskPlan.length;
+  if (remaining <= 0) {
+    return { taskPlan, slicePlan: "", templates: "" };
+  }
+  const cappedSlice = slicePlan.length <= remaining
+    ? slicePlan
+    : truncateAtSectionBoundary(slicePlan, remaining).content;
+  remaining -= cappedSlice.length;
+  const cappedTemplates = remaining <= 0
+    ? ""
+    : templates.length <= remaining
+      ? templates
+      : truncateAtSectionBoundary(templates, remaining).content;
+  return { taskPlan, slicePlan: cappedSlice, templates: cappedTemplates };
 }
 
 type PromptContextMode = "inline" | "excerpt" | "on-demand" | "skipped";
@@ -405,7 +457,7 @@ function formatExecutorConstraints(
     // so DEFAULT_CONTEXT_WINDOW stays the single source of truth.
     windowTokens = resolveExecutorContextWindow(undefined, undefined, sessionContextWindow, sessionProvider);
   }
-  const budgets = computeBudgets(windowTokens);
+  const budgets = computeBudgets(windowTokens, sessionProvider as TokenProvider | undefined);
   const { min, max } = budgets.taskCountRange;
   const execWindowK = Math.round(windowTokens / 1000);
   const perTaskBudgetK = Math.round(budgets.inlineContextBudgetChars / 1000);
@@ -2725,7 +2777,7 @@ export async function buildExecuteTaskPrompt(
   // Compute verification budget for the executor's context window (issue #707)
   const prefs = loadEffectiveGSDPreferences();
   const contextWindow = resolveExecutorContextWindow(opts.modelRegistry, prefs?.preferences, opts.sessionContextWindow, opts.sessionProvider);
-  const budgets = computeBudgets(contextWindow);
+  const budgets = computeBudgets(contextWindow, opts.sessionProvider as TokenProvider | undefined);
   const verificationBudget = `~${Math.round(budgets.verificationBudgetChars / 1000)}K chars`;
 
   // Truncate carry-forward section when it exceeds 40% of inline context budget.
@@ -2842,10 +2894,26 @@ export async function buildExecuteTaskPrompt(
       }
     },
   });
-  const taskPlanInline = requireComposedArtifactBlock(contractedContext.blocks, "execute-task", "task-plan");
-  const slicePlanExcerpt = requireComposedArtifactBlock(contractedContext.blocks, "execute-task", "slice-plan");
+  const rawTaskPlanInline = requireComposedArtifactBlock(contractedContext.blocks, "execute-task", "task-plan");
+  const rawSlicePlanExcerpt = requireComposedArtifactBlock(contractedContext.blocks, "execute-task", "slice-plan");
   const contractedCarryForward = requireComposedArtifactBlock(contractedContext.blocks, "execute-task", "prior-task-summaries");
-  const contractedTemplates = requireComposedArtifactBlock(contractedContext.blocks, "execute-task", "templates");
+  const rawContractedTemplates = requireComposedArtifactBlock(contractedContext.blocks, "execute-task", "templates");
+  // Cap the static inline blocks against one shared budget so a small-window
+  // executor can't overflow (the sibling builders cap via `capPreamble`;
+  // execute-task's blocks feed separate template slots, so they share a budget
+  // block-by-block). Carry-forward already has its own truncation above.
+  const inlineBudget = Math.min(MAX_PREAMBLE_CHARS, budgets.inlineContextBudgetChars);
+  const { taskPlan: taskPlanInline, slicePlan: slicePlanExcerpt, templates: contractedTemplates } =
+    capExecuteTaskInlineBlocks(rawTaskPlanInline, rawSlicePlanExcerpt, rawContractedTemplates, inlineBudget);
+  const inlineDropped = (rawTaskPlanInline.length + rawSlicePlanExcerpt.length + rawContractedTemplates.length)
+    - (taskPlanInline.length + slicePlanExcerpt.length + contractedTemplates.length);
+  trackPromptContext(
+    contextTelemetry,
+    "inline-cap",
+    inlineDropped > 0 ? "excerpt" : "skipped",
+    null,
+    inlineDropped > 0 ? `dropped ${inlineDropped} chars (budget ${inlineBudget})` : "within budget",
+  );
   const onDemandResult = renderExecuteTaskOnDemandContext(base, mid, sid, contractedContext.onDemand);
   const onDemandContext = onDemandResult.text;
   trackPromptContext(

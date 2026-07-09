@@ -46,6 +46,7 @@ commit `58dc840f`. Plans 018–024 planned against commit `7cca07ae`.
 | 028 | Six small state/DB correctness fixes (status aliases, gate atomicity, claim locking, derive-cache lock, lease test) | P1 | S | — | DONE |
 | 029 | Reject path-traversal keys in the compat marker before drift detectors read them | P1 | S | — | DONE |
 | 030 | Stop the write-gate's cross-process read-merge-write from losing an armed gate | P2 | M | — | DONE |
+| 039 | Close prompt-budget enforcement gaps (execute-task cap, discuss-slice cap, provider ratio) | P2 | M | — | DONE (execute-task keeps authoritative task plan whole per STOP cond., caps trailing blocks; discuss-slice reuses capPreamble; provider passed at all 3 computeBudgets sites) |
 
 All of 009–017 implemented, tested, and committed on branch `chore/audit-fixes-009-017`
 (2026-07-01). Notable deviations recorded in the plan files: 009 skipped the
