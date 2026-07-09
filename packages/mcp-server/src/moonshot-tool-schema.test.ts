@@ -52,5 +52,8 @@ test("createMcpServer advertises Moonshot-safe inputSchema for every tool", asyn
 		);
 	}
 
-	assert.ok(toolCount >= 50, `expected broad MCP tool surface, got ${toolCount}`);
+	// Canonical-only by default since plan 035 (the 17 backwards-compat alias
+	// tools are no longer advertised); floor guards against a vacuous pass on an
+	// empty/near-empty surface, not an exact count.
+	assert.ok(toolCount >= 40, `expected broad MCP tool surface, got ${toolCount}`);
 });
