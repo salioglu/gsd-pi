@@ -16,6 +16,7 @@ import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
 import {
   resolveMilestoneFile, resolveSliceFile, resolveSlicePath,
   resolveTasksDir, resolveTaskFiles, resolveTaskFile,
+  taskIdFromTaskFileName,
   relMilestoneFile, relSliceFile, relSlicePath, relMilestonePath,
   relTaskFile, resolveGsdRootFile, relGsdRootFile, resolveRuntimeFile,
 } from "./paths.js";
@@ -1431,6 +1432,18 @@ function resolveTaskSummariesLocation(
   return { dir: slicePath, relPrefix: sRel };
 }
 
+function summaryFileBelongsToSlice(
+  fileName: string,
+  base: string,
+  mid: string,
+  sid: string,
+): boolean {
+  const tid = taskIdFromTaskFileName(fileName, "SUMMARY");
+  if (!tid) return false;
+  const resolved = resolveTaskFile(base, mid, sid, tid, "SUMMARY");
+  return resolved !== null && basename(resolved) === fileName;
+}
+
 export async function getPriorTaskSummaryPaths(
   mid: string, sid: string, currentTid: string, base: string,
 ): Promise<string[]> {
@@ -1442,7 +1455,10 @@ export async function getPriorTaskSummaryPaths(
 
   return summaryFiles
     .filter(f => {
-      const num = parseInt(f.replace(/^T/, ""), 10);
+      if (!summaryFileBelongsToSlice(f, base, mid, sid)) return false;
+      const tid = taskIdFromTaskFileName(f, "SUMMARY");
+      if (!tid) return false;
+      const num = parseInt(tid.replace(/^T/, ""), 10);
       return num < currentNum;
     })
     .map(f => `${loc.relPrefix}/${f}`);
@@ -1475,8 +1491,9 @@ export async function getDependencyTaskSummaryPaths(
 
   return summaryFiles
     .filter((f) => {
-      // Extract task ID from filename: "T02-SUMMARY.md" → "T02"
-      const tid = f.replace(/-SUMMARY\.md$/i, "").toUpperCase();
+      if (!summaryFileBelongsToSlice(f, base, mid, sid)) return false;
+      const tid = taskIdFromTaskFileName(f, "SUMMARY");
+      if (!tid) return false;
       return depSet.has(tid);
     })
     .map((f) => `${loc.relPrefix}/${f}`);
@@ -2941,12 +2958,14 @@ export async function buildCompleteSlicePrompt(
           trackPromptContext(contextTelemetry, "prior-task-summaries", "skipped", null, "missing tasks dir");
           return null;
         }
-        const summaryFiles = resolveTaskFiles(loc.dir, "SUMMARY").sort();
+        const summaryFiles = resolveTaskFiles(loc.dir, "SUMMARY")
+          .filter((file) => summaryFileBelongsToSlice(file, base, mid, sid))
+          .sort();
         const blocks: string[] = [];
         for (const file of summaryFiles) {
           const absPath = join(loc.dir, file);
           const relPath = `${loc.relPrefix}/${file}`;
-          const taskId = file.replace(/-SUMMARY\.md$/i, "");
+          const taskId = taskIdFromTaskFileName(file, "SUMMARY") ?? file.replace(/-SUMMARY\.md$/i, "");
           blocks.push(await buildTaskSummaryExcerpt(absPath, relPath, taskId));
         }
         const body = blocks.length > 0 ? blocks.join("\n\n---\n\n") : null;
@@ -3559,7 +3578,9 @@ export async function buildReplanSlicePrompt(
   let blockerTaskId = "";
   const summaryLoc = resolveTaskSummariesLocation(base, mid, sid);
   if (summaryLoc) {
-    const summaryFiles = resolveTaskFiles(summaryLoc.dir, "SUMMARY").sort();
+    const summaryFiles = resolveTaskFiles(summaryLoc.dir, "SUMMARY")
+      .filter((file) => summaryFileBelongsToSlice(file, base, mid, sid))
+      .sort();
     for (const file of summaryFiles) {
       const absPath = join(summaryLoc.dir, file);
       const content = await loadFile(absPath);
@@ -3567,7 +3588,7 @@ export async function buildReplanSlicePrompt(
       const summary = parseSummary(content);
       const relPath = `${summaryLoc.relPrefix}/${file}`;
       if (summary.frontmatter.blocker_discovered) {
-        blockerTaskId = summary.frontmatter.id || file.replace(/-SUMMARY\.md$/i, "");
+        blockerTaskId = summary.frontmatter.id || taskIdFromTaskFileName(file, "SUMMARY") || file.replace(/-SUMMARY\.md$/i, "");
         inlined.push(await buildTaskSummaryExcerpt(absPath, relPath, blockerTaskId, { blocker: true }));
       }
     }
