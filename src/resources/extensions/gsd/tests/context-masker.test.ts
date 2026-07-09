@@ -43,25 +43,35 @@ test("masks nothing when message count is within keepRecentTurns", () => {
   assert.deepEqual((result[2].content as any)[0].text, "file contents");
 });
 
-test("masks tool results older than keepRecentTurns", () => {
+test("masks tool results older than a full quantization block", () => {
+  // With keepRecentTurns=2, masking is quantized in blocks of 2 turns: nothing
+  // is masked until a full block (2 turns) of excess history accumulates.
   const mask = createObservationMask(2);
   const messages = [
     userMsg("turn 1"),
-    toolResult("old tool output"),
+    toolResult("turn 1 tool output"),
     assistantMsg("response 1"),
     userMsg("turn 2"),
-    toolResult("newer tool output"),
+    toolResult("turn 2 tool output"),
     assistantMsg("response 2"),
     userMsg("turn 3"),
-    toolResult("newest tool output"),
+    toolResult("turn 3 tool output"),
     assistantMsg("response 3"),
+    userMsg("turn 4"),
+    toolResult("turn 4 tool output"),
+    assistantMsg("response 4"),
+    userMsg("turn 5"),
+    toolResult("turn 5 tool output"),
+    assistantMsg("response 5"),
   ];
   const result = mask(messages as any);
-  // Old tool result (before boundary) should be masked
+  // First block (turns 1-2) is masked
   assert.equal((result[1].content as any)[0].text, MASK_TEXT);
-  // Recent tool results (within keep window) should be preserved
-  assert.equal((result[4].content as any)[0].text, "newer tool output");
-  assert.equal((result[7].content as any)[0].text, "newest tool output");
+  assert.equal((result[4].content as any)[0].text, MASK_TEXT);
+  // Remaining turns (3-5) are within the unmasked window
+  assert.equal((result[7].content as any)[0].text, "turn 3 tool output");
+  assert.equal((result[10].content as any)[0].text, "turn 4 tool output");
+  assert.equal((result[13].content as any)[0].text, "turn 5 tool output");
 });
 
 test("never masks assistant messages", () => {
@@ -124,6 +134,67 @@ test("masks toolResult by role, not by type field", () => {
   ];
   const result = mask(messages as any);
   assert.equal((result[1].content as any)[0].text, MASK_TEXT);
+});
+
+function buildTurns(count: number) {
+  const messages: unknown[] = [];
+  for (let i = 1; i <= count; i++) {
+    messages.push(userMsg(`turn ${i}`));
+    messages.push(toolResult(`turn ${i} tool output`));
+    messages.push(assistantMsg(`response ${i}`));
+  }
+  return messages;
+}
+
+function maskedTextsByTurn(mask: (m: any) => any[], messages: unknown[], turnCount: number): (string | undefined)[] {
+  const result = mask(messages as any);
+  const texts: (string | undefined)[] = [];
+  for (let i = 0; i < turnCount; i++) {
+    const toolResultIndex = i * 3 + 1;
+    texts.push((result[toolResultIndex].content as any)[0].text);
+  }
+  return texts;
+}
+
+test("quantized mask invariant: at least keepRecentTurns most recent turns are always unmasked", () => {
+  const N = 3;
+  const mask = createObservationMask(N);
+  for (let totalTurns = 1; totalTurns <= 20; totalTurns++) {
+    const messages = buildTurns(totalTurns);
+    const texts = maskedTextsByTurn(mask, messages, totalTurns);
+    for (let i = Math.max(0, totalTurns - N); i < totalTurns; i++) {
+      assert.notEqual(texts[i], MASK_TEXT, `turn ${i + 1} of ${totalTurns} should be unmasked`);
+    }
+  }
+});
+
+test("quantized mask invariant: at most 2*keepRecentTurns-1 turns are unmasked", () => {
+  const N = 3;
+  const mask = createObservationMask(N);
+  for (let totalTurns = 1; totalTurns <= 20; totalTurns++) {
+    const messages = buildTurns(totalTurns);
+    const texts = maskedTextsByTurn(mask, messages, totalTurns);
+    const unmaskedCount = texts.filter((t) => t !== MASK_TEXT).length;
+    assert.ok(unmaskedCount <= 2 * N - 1, `expected <= ${2 * N - 1} unmasked turns at total=${totalTurns}, got ${unmaskedCount}`);
+  }
+});
+
+test("quantized mask invariant: prefix is byte-stable except at block rollover", () => {
+  const N = 3;
+  const mask = createObservationMask(N);
+  let previousTexts: (string | undefined)[] = [];
+  for (let totalTurns = 1; totalTurns <= 20; totalTurns++) {
+    const messages = buildTurns(totalTurns);
+    const texts = maskedTextsByTurn(mask, messages, totalTurns);
+    // Compare the shared prefix (turns 1..totalTurns-1) against the previous turn's run.
+    let changedCount = 0;
+    for (let i = 0; i < previousTexts.length; i++) {
+      if (previousTexts[i] !== texts[i]) changedCount++;
+    }
+    // A block rollover flips at most N turns from unmasked to masked; otherwise 0 should change.
+    assert.ok(changedCount === 0 || changedCount <= N, `turn ${totalTurns}: ${changedCount} prefix turns changed status`);
+    previousTexts = texts;
+  }
 });
 
 test("truncates recent bash result user messages", () => {

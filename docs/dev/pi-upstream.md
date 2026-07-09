@@ -98,6 +98,8 @@ Every row must have a matching entry in `scripts/pi-upstream.json` → `patchAll
 | Tool argument normalization tests | `packages/pi-ai/src/utils/tests/normalize-tool-arguments.test.ts` | Regression coverage for shared validation/transcript argument normalization |
 | **Claude tool schemas** | `packages/pi-ai/src/providers/google-shared.ts` | Cloud Code Assist / Claude `input_schema` sanitization (`toClaudeInputSchemaRoot`, `normalizeClaudeToolSchemaForGoogle`) |
 | **Claude schema tests** | `packages/pi-ai/test/google-shared-convert-tools.test.ts`, `src/resources/extensions/gsd/tests/claude-tool-schema-golden.test.ts` | Golden B regression |
+| OAuth cache breakpoint | `packages/pi-ai/src/providers/anthropic.ts` (`buildParams`) | Drop `cache_control` from the constant Claude Code identity block when a real system prompt follows — the trailing breakpoint already covers it; saves one of Anthropic's 4 cache breakpoints |
+| OAuth cache breakpoint test | `packages/pi-ai/test/cache-retention.test.ts` | Regression coverage for single-breakpoint OAuth system array |
 | Theme path | `packages/pi-coding-agent/src/theme/` | Shared theme (not under `modes/`) |
 | Copy assets | `packages/pi-coding-agent/scripts/copy-assets.cjs` | Theme + LSP assets |
 | Root staging | `scripts/copy-themes.cjs`, `scripts/copy-export-html.cjs` | Bun binary / pkg layout |

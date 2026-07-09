@@ -75,6 +75,26 @@ function findTurnBoundary(messages: MaskableMessage[], keepRecentTurns: number):
   return 0;
 }
 
+function countRealUserTurns(messages: MaskableMessage[]): number {
+  let count = 0;
+  for (const m of messages) {
+    if (m.role === "user" && !isBashResultUserMessage(m)) count++;
+  }
+  return count;
+}
+
+/**
+ * Quantizes how many recent turns stay unmasked so the boundary only moves
+ * forward once per full block of `keepRecentTurns` new turns, instead of
+ * every turn. Keeps the masked prefix byte-stable within a block, which is
+ * what lets the LLM provider's prompt cache survive across turns.
+ */
+function quantizedKeepTurns(totalTurns: number, keepRecentTurns: number): number {
+  if (keepRecentTurns <= 0 || totalTurns < 2 * keepRecentTurns) return totalTurns;
+  const maskedTurns = Math.floor((totalTurns - keepRecentTurns) / keepRecentTurns) * keepRecentTurns;
+  return totalTurns - maskedTurns;
+}
+
 /**
  * Detect user messages that originated from bashExecution.
  * After convertToLlm, these are {role: "user", content: [{type:"text", text:"Ran `cmd`\n..."}]}.
@@ -95,7 +115,8 @@ function isMaskableMessage(m: MaskableMessage): boolean {
 
 export function createObservationMask(keepRecentTurns: number = 8) {
   return (messages: MaskableMessage[]): MaskableMessage[] => {
-    const boundary = findTurnBoundary(messages, keepRecentTurns);
+    const totalTurns = countRealUserTurns(messages);
+    const boundary = findTurnBoundary(messages, quantizedKeepTurns(totalTurns, keepRecentTurns));
     if (boundary === 0) return messages;
 
     return messages.map((m, i) => {
@@ -126,6 +147,14 @@ function findResponsesTurnBoundary(items: ResponsesInputItem[], keepRecentTurns:
   return 0;
 }
 
+function countResponsesRealUserTurns(items: ResponsesInputItem[]): number {
+  let count = 0;
+  for (const item of items) {
+    if (item.role === "user" && !isResponsesBashResultUserItem(item)) count++;
+  }
+  return count;
+}
+
 /**
  * Observation masking for OpenAI/Codex Responses API payloads.
  *
@@ -135,7 +164,8 @@ function findResponsesTurnBoundary(items: ResponsesInputItem[], keepRecentTurns:
  */
 export function createResponsesInputObservationMask(keepRecentTurns: number = 8) {
   return (items: ResponsesInputItem[]): ResponsesInputItem[] => {
-    const boundary = findResponsesTurnBoundary(items, keepRecentTurns);
+    const totalTurns = countResponsesRealUserTurns(items);
+    const boundary = findResponsesTurnBoundary(items, quantizedKeepTurns(totalTurns, keepRecentTurns));
     if (boundary === 0) return items;
 
     return items.map((item, i) => {
