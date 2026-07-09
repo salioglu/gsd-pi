@@ -77,6 +77,15 @@ test("zero-tool provider classifier treats weekly limit wording as transient rat
   assert.equal(result.kind, "rate-limit");
 });
 
+test("zero-tool provider classifier identifies pseudo tool-call serialization drift", () => {
+  const result = _classifyZeroToolProviderMessageForTest(
+    'bash<arg_key>command</arg_key><arg_value>ls -la /tmp && echo "---SRC---"</arg_value></tool_call>',
+  ) as any;
+  assert.ok(result, "pseudo tool-call text should be recognized");
+  assert.equal(result.kind, "pseudo-tool-call");
+  assert.match(result.snippet, /bash<arg_key>command<\/arg_key>/);
+});
+
 test("classifyError treats extra-usage phrasing as transient rate-limit (#4397)", () => {
   const result = classifyError("You are out of extra usage. Please wait before retrying.");
   assert.ok(isTransient(result));

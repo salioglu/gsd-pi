@@ -56,8 +56,27 @@ const ZERO_TOOL_PROVIDER_ERROR_PREFIX_RE =
   /^(?:api error(?::|$|\s*\()|provider error(?::|$|\s*\()|request failed\b|(?:http\s*)?(?:429|500|502|503)\b|\b(?:econnreset|etimedout|econnrefused|epipe)\b|socket hang up\b|fetch failed\b|(?:network|connection|server) error(?::|$)|connection (?:reset|refused)(?::|$|\s+by\b)|dns\b.*(?:fail|error|timeout)|unexpected eof\b|stream idle timeout\b|partial response received\b|stream_exhausted\b|terminated(?::|$)|(?:connection|stream|request)\b.{0,40}\bterminated\b|other side closed\b|rate.?limit(?:ed| exceeded| reached| error)|too many requests\b|you(?:'ve| have) (?:hit|reached) your (?:\w+ )?limit\b|.*\b(?:usage|session|weekly|daily|monthly|quota) limit\b|limit\b.{0,40}\bresets?\b|out of extra usage\b|service.?unavailable\b|internal(?: server)? error(?::|$)|internal(?:[_-]server)?[_-]error\b|server[_-]error\b|(?:provider|server|api|model|codex|claude|openai|anthropic|gemini)\b.{0,80}\boverloaded\b|overloaded\b.{0,80}\b(?:provider|server|api|model)\b|context (?:window|length) exceed|context window exceed)/i;
 const ZERO_TOOL_PROVIDER_ERROR_SIGNAL_RE =
   /(?:\b(?:http|status(?: code)?|code|error:)\s*(?:429|500|502|503)\b|\b(?:api|provider) error\s*[:(]?\s*(?:429|500|502|503)\b|\b(?:typeerror|error):\s*(?:fetch failed\b|socket hang up\b|terminated(?::|$)|connection (?:reset|refused)(?::|$|\s+by\b)|(?:network|connection|server) error(?::|$)|stream idle timeout\b|partial response received\b|unexpected eof\b)|\b(?:server_error|api_error|stream_exhausted(?:_without_result)?)\b|\b(?:econnreset|etimedout|econnrefused|epipe)\b|context (?:window|length) exceed|context window exceed)/i;
+const ZERO_TOOL_PSEUDO_TOOL_CALL_RE =
+  /<arg_key>[\s\S]*?<\/arg_key>\s*<arg_value>[\s\S]*?<\/arg_value>[\s\S]*?<\/tool_call>/i;
+const ZERO_TOOL_PSEUDO_TOOL_CALL_SNIPPET_CHARS = 200;
 
-function classifyZeroToolProviderMessage(message: string): ReturnType<typeof classifyError> | null {
+type ZeroToolProviderMessageClass =
+  | ReturnType<typeof classifyError>
+  | { kind: "pseudo-tool-call"; snippet: string };
+
+function zeroToolMessageSnippet(message: string): string {
+  const compact = message.trim().replace(/\s+/g, " ");
+  if (compact.length <= ZERO_TOOL_PSEUDO_TOOL_CALL_SNIPPET_CHARS) return compact;
+  return `${compact.slice(0, ZERO_TOOL_PSEUDO_TOOL_CALL_SNIPPET_CHARS - 3)}...`;
+}
+
+function classifyZeroToolProviderMessage(message: string): ZeroToolProviderMessageClass | null {
+  if (ZERO_TOOL_PSEUDO_TOOL_CALL_RE.test(message)) {
+    return {
+      kind: "pseudo-tool-call",
+      snippet: zeroToolMessageSnippet(message),
+    };
+  }
   const firstLine = message.trim().split(/\r?\n/, 1)[0]?.trim() ?? "";
   if (
     !firstLine ||
@@ -768,7 +787,25 @@ export async function runUnitPhase(
       if (lastUnit && lastUnit.toolCalls === 0) {
         const lastAssistantMessage = lastAssistantText(s.lastUnitAgentEndMessages);
         const providerMessageClass = classifyZeroToolProviderMessage(lastAssistantMessage);
-        if (providerMessageClass && isTransient(providerMessageClass)) {
+        if (providerMessageClass?.kind === "pseudo-tool-call") {
+          debugLog("runUnitPhase", {
+            phase: "zero-tool-serialization-drift",
+            unitType,
+            unitId,
+            snippet: providerMessageClass.snippet,
+          });
+          ctx.ui.notify(
+            `${unitType} ${unitId} completed with 0 tool calls - provider serialization drift: model emitted pseudo-tool-call text. Snippet: ${providerMessageClass.snippet}`,
+            "error",
+          );
+          await deps.pauseAuto(ctx, pi);
+          return { action: "break", reason: "zero-tool-serialization-drift" };
+        }
+        if (
+          providerMessageClass &&
+          providerMessageClass.kind !== "pseudo-tool-call" &&
+          isTransient(providerMessageClass)
+        ) {
           const retryAfterMs = "retryAfterMs" in providerMessageClass ? providerMessageClass.retryAfterMs : 15_000;
           await pauseAutoForProviderError(
             ctx.ui,
