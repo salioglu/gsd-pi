@@ -744,7 +744,7 @@ remain outside manifest restore.
 | `gsd_plan_milestone` | milestones, slices | milestones, slices | ROADMAP.md |
 | `gsd_plan_slice` | milestones, slices, tasks | slices metadata; tasks only when a non-empty `tasks` payload performs full replacement/update | NN-MM-PLAN.md with embedded task planning when tasks exist |
 | `gsd_plan_task` | slices, tasks | one task planning row, task gate seeds | re-renders NN-MM-PLAN.md; task PLAN paths resolve to the slice plan |
-| `gsd_task_complete` | tasks, slices, rework_briefs, rework_brief_findings | tasks, verification_evidence, rework_brief_findings | T##-SUMMARY.md; toggles checkbox in NN-MM-PLAN.md |
+| `gsd_task_complete` | tasks, slices, rework_briefs, rework_brief_findings | tasks, verification_evidence, rework_brief_findings | S##-T##-SUMMARY.md; toggles checkbox in NN-MM-PLAN.md; reads legacy T##-SUMMARY.md |
 | `gsd_slice_complete` | tasks, slices | slices, tasks (cascade skipped) | S##-SUMMARY.md, S##-UAT.md; toggles checkpoint in ROADMAP.md |
 | `gsd_uat_result_save` | slices, artifacts | artifacts, assessments, quality_gates, gate_runs | S##-ASSESSMENT.md; UAT attempt JSON |
 | `gsd_complete_milestone` | milestones, slices, tasks | milestones | M##-SUMMARY.md |
@@ -754,8 +754,8 @@ remain outside manifest restore.
 | `gsd_replan_task` | slices, tasks | one pending task planning row, replan_history | re-renders the task/slice PLAN projection |
 | `gsd_rework_brief_save` | rework_briefs, rework_brief_findings | rework_briefs, rework_brief_findings | — |
 | `gsd_skip_slice` | slices, tasks | slices, tasks | STATE.md (via rebuildState) |
-| `gsd_task_reopen` | tasks, slices, milestones | tasks | deletes T##-SUMMARY.md |
-| `gsd_slice_reopen` | slices, tasks, milestones | slices, tasks | deletes S##-SUMMARY.md, UAT, all T##-SUMMARY.md |
+| `gsd_task_reopen` | tasks, slices, milestones | tasks | deletes S##-T##-SUMMARY.md and legacy T##-SUMMARY.md |
+| `gsd_slice_reopen` | slices, tasks, milestones | slices, tasks | deletes S##-SUMMARY.md, UAT, all S##-T##-SUMMARY.md and legacy T##-SUMMARY.md |
 | `gsd_milestone_reopen` | milestones, slices, tasks | milestones, slices, tasks | deletes all summaries |
 | `gsd_save_gate_result` | quality_gates | quality_gates, gate_runs (same transaction) | — |
 | `capture_thought` | memories | memories | KNOWLEDGE.md projection for Patterns/Lessons (both backfilled and newly captured) |
@@ -765,7 +765,7 @@ remain outside manifest restore.
 
 `gsd_rework_brief_save` persists structured findings for a task. MCP callers may omit `projectDir`; the server defaults it to the current project/worktree root. Required fields are `milestoneId`, `sliceId`, `taskId`, and non-empty `findings`. Each finding requires `findingId`, `severity` (`blocking` or `advisory`), `description`, `requiredFix`, and `verificationCommands`; optional fields are `status`, `evidence`, and `decisionRef`.
 
-`gsd_task_complete` treats the task summary and slice plan projection as closeout-critical. If writing `T##-SUMMARY.md` or re-rendering `NN-MM-PLAN.md` fails, the tool returns an error after deleting the task's verification evidence and reverting its task row to `pending`; it does not leave a committed `complete` task with a stale plan projection. It also rejects completion when the task has pending blocking rework findings. To complete such a task, the caller must include `reworkResolution` entries with `findingId`, `status: "resolved"`, and non-empty `evidence`, or `status: "deferred-with-override"` with non-empty `evidence` and a `decisionRef`.
+`gsd_task_complete` treats the task summary and slice plan projection as closeout-critical. In flat-phase layout it writes `S##-T##-SUMMARY.md` at the phase root so duplicate task IDs in different slices cannot collide; readers still accept legacy flat `T##-SUMMARY.md` summaries. If writing the task summary or re-rendering `NN-MM-PLAN.md` fails, the tool returns an error after deleting the task's verification evidence and reverting its task row to `pending`; it does not leave a committed `complete` task with a stale plan projection. It also rejects completion when the task has pending blocking rework findings. To complete such a task, the caller must include `reworkResolution` entries with `findingId`, `status: "resolved"`, and non-empty `evidence`, or `status: "deferred-with-override"` with non-empty `evidence` and a `decisionRef`.
 
 ---
 

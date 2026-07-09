@@ -26,6 +26,7 @@ import {
   buildPlanMilestonePrompt,
   buildPlanSlicePrompt,
   buildSkillActivationBlock,
+  capPreamble,
 } from "./auto-prompts.js";
 import { deriveState, isGhostMilestone } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
@@ -1199,7 +1200,9 @@ function resolveDiscussSliceBasePath(basePath: string, milestoneId: string): str
  * slice summaries so the agent can ask grounded UX/behaviour questions
  * without wasting a turn reading files.
  */
-async function buildDiscussSlicePrompt(
+// Exported for tests (`prompt-budget-enforcement.test.ts`) — verifies the
+// inlined-context cap. Not part of the public flow surface otherwise.
+export async function buildDiscussSlicePrompt(
   mid: string,
   sid: string,
   sTitle: string,
@@ -1262,8 +1265,12 @@ async function buildDiscussSlicePrompt(
     }
   }
 
+  // Cap the inlined block: it grows unbounded with each completed slice's full
+  // SUMMARY. `capPreamble` truncates at `### ` section boundaries — roadmap and
+  // milestone context come first (survive), completed-slice summaries come last
+  // (dropped first) when the executor's window can't hold everything.
   const inlinedContext = inlined.length > 0
-    ? `## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`
+    ? capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`)
     : `## Inlined Context\n\n_(no context files found yet — go in blind and ask broad questions)_`;
 
   const sliceDirPath = `.gsd/milestones/${mid}/slices/${sid}`;

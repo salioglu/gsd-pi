@@ -89,7 +89,7 @@ The same unit dispatches repeatedly.
 
 ### Reactive execute writes `S##-REACTIVE-BLOCKER.md`
 
-A parallel `reactive-execute` batch exhausted artifact retries while one or more dispatched tasks were still missing `T##-SUMMARY.md`.
+A parallel `reactive-execute` batch exhausted artifact retries while one or more dispatched tasks were still missing task summaries. In flat-phase projects, GSD expects `S##-T##-SUMMARY.md` and still accepts legacy `T##-SUMMARY.md` as a fallback.
 
 **Fix:** Inspect `S##-REACTIVE-BLOCKER.md` and the skipped task list. GSD marks tasks with summaries complete, marks missing-summary tasks skipped, and advances instead of pausing or re-dispatching the same batch.
 

@@ -28,14 +28,16 @@ See [CHANGELOG.md](./CHANGELOG.md) for release-by-release fixes and [Legacy Rele
 ## Latest Release Highlights
 
 <!-- release-highlights:start -->
-Latest release: **v1.8.1**
+Latest release: **v1.9.0**
 
-- **doctor:** Extract state checks.
-- **doctor:** Extract history and workspace checks.
-- **issue:** Unregistered-milestone false positive: flat-phase ID extractor derives bare M### from descriptive slug, missing suffixed DB row (M###-abcdef) (#1282).
-- **issue:** [Bug] reconcile triggers mass re-projection of all historical PLAN.md files, resetting completed task checkboxes to unchecked (#1279).
-- **issue:** [Bug]: `migrateHierarchyToDb` imports a `[sketch]` slice's stub PLAN tasks as real DB rows, flipping planning→executing.
-- **issue:** [Bug]: `sketchFlagHandler` clears `is_sketch` on mere PLAN-file existence, including a stub or leftover PLAN.
+- **gsd:** Add task rework briefs.
+- **web:** Delete unused chart.tsx and recharts.
+- **deps:** Move ajv to devDependencies.
+- **daemon:** Dedupe @anthropic-ai/sdk to ^0.91.1.
+- **deps:** Override hono to >=4.12.25.
+- **gsd:** Batch plan-v2 task queries and skip unchanged graph writes.
+- **gsd:** Open the worker DB once per parallel-monitor tick.
+- **gsd:** Batch parallel-eligibility task queries.
 
 <!-- release-highlights:end -->
 

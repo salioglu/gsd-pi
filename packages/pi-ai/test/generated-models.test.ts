@@ -65,6 +65,25 @@ describe("models.generated.ts", () => {
 		}
 	});
 
+	test("includes GPT-5.6 for OpenAI and OpenAI Codex providers", () => {
+		const openai = MODELS.openai["gpt-5.6"];
+		expect(openai).toBeDefined();
+		expect(openai.api).toBe("openai-responses");
+		expect(openai.name).toBe("GPT-5.6");
+		expect(openai.contextWindow).toBe(272_000);
+		expect(openai.maxTokens).toBe(128_000);
+		expect(openai.thinkingLevelMap).toMatchObject({ off: "none", xhigh: "xhigh" });
+
+		const codex = MODELS["openai-codex"]["gpt-5.6"];
+		expect(codex).toBeDefined();
+		expect(codex.api).toBe("openai-codex-responses");
+		expect(codex.name).toBe("GPT-5.6");
+		expect(codex.baseUrl).toBe("https://chatgpt.com/backend-api");
+		expect(codex.contextWindow).toBe(272_000);
+		expect(codex.maxTokens).toBe(128_000);
+		expect(codex.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", minimal: "low" });
+	});
+
 	test("includes Anthropic Vertex models from the generated catalog", () => {
 		const models = MODELS["anthropic-vertex"];
 
@@ -107,6 +126,28 @@ describe("models.generated.ts", () => {
 				maxTokens: 131072,
 			});
 		}
+	});
+
+	test("includes Grok 4.5 as a first-class xAI model", () => {
+		const model = MODELS.xai["grok-4.5"];
+
+		expect(model).toMatchObject({
+			id: "grok-4.5",
+			name: "Grok 4.5",
+			api: "openai-completions",
+			provider: "xai",
+			baseUrl: "https://api.x.ai/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 2,
+				output: 6,
+				cacheRead: 0.5,
+				cacheWrite: 0,
+			},
+			contextWindow: 500000,
+			maxTokens: 30000,
+		});
 	});
 
 	test("keeps GitHub Copilot Claude 4.6 context at Copilot's 200K limit", () => {

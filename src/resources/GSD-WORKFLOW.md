@@ -367,7 +367,7 @@ When verification finds gaps, include a **Gaps** section with what's missing, im
 ### Phase 6: Summarize
 
 **Purpose:** Record what happened for downstream tasks.
-**Produces:** `T##-SUMMARY.md`, and when slice completes, `S##-SUMMARY.md`.
+**Produces:** `S##-T##-SUMMARY.md` in flat-phase projects, and when slice completes, `S##-SUMMARY.md`. Legacy flat `T##-SUMMARY.md` task summaries are still readable.
 
 **Task summary format:**
 ```markdown
@@ -494,7 +494,7 @@ It is NOT the source of truth. It's a convenience dashboard.
 **Sources of truth:**
 - `ROADMAP.md` → which slices exist and which are done
 - `<NN>-<MM>-PLAN.md` → which tasks exist within a slice and what each task must do
-- `T##-SUMMARY.md` → what happened during a task
+- `S##-T##-SUMMARY.md` → what happened during a task in flat-phase projects (legacy `T##-SUMMARY.md` is still readable)
 - `S##-SUMMARY.md` and `M###-SUMMARY.md` → compressed slice and milestone outcomes
 
 **Update `STATE.md`** after every significant action:

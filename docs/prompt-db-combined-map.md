@@ -98,9 +98,9 @@ Each row = one prompt file. Columns show which DB tables it touches and how.
 
 | Prompt | DB Reads | DB Writes | Disk Artifact Written |
 |--------|----------|-----------|----------------------|
-| `execute-task` | tasks, slices, milestones, memories, quality_gates | tasks (UPDATE status, narrative, summary), verification_evidence (INSERT), memories (hit_count++) | T##-SUMMARY.md; NN-MM-PLAN.md checkbox |
-| `guided-resume-task` | tasks, slices | tasks (UPDATE status, summary), verification_evidence (INSERT) | T##-SUMMARY.md |
-| `reactive-execute` | tasks | tasks (via N× execute-task subagents; recovery may mark summary-present tasks complete and missing-summary tasks skipped) | T##-SUMMARY.md × N; S##-REACTIVE-BLOCKER.md when batch summaries remain missing after retries |
+| `execute-task` | tasks, slices, milestones, memories, quality_gates | tasks (UPDATE status, narrative, summary), verification_evidence (INSERT), memories (hit_count++) | S##-T##-SUMMARY.md; NN-MM-PLAN.md checkbox; legacy T##-SUMMARY.md readable |
+| `guided-resume-task` | tasks, slices | tasks (UPDATE status, summary), verification_evidence (INSERT) | S##-T##-SUMMARY.md; legacy T##-SUMMARY.md readable |
+| `reactive-execute` | tasks | tasks (via N× execute-task subagents; recovery may mark summary-present tasks complete and missing-summary tasks skipped) | S##-T##-SUMMARY.md × N; S##-REACTIVE-BLOCKER.md when batch summaries remain missing after retries |
 | `quick-task` | — | — (no DB; writes summaryPath directly) | {{summaryPath}} |
 
 ### Quality Gate Phase
@@ -247,12 +247,12 @@ execute-task prompt fires
         └─► INSERT INTO verification_evidence (command, exit_code, verdict, duration_ms)
         └─► UPDATE quality_gates SET status='evaluated', verdict (if gate was open)
         └─► INSERT INTO gate_runs (audit; same transaction as the gate verdict)
-        └─► Write T##-SUMMARY.md to disk
+        └─► Write S##-T##-SUMMARY.md to disk
         └─► Toggle checkbox in NN-MM-PLAN.md
         └─► If summary or plan projection write fails:
               DELETE verification_evidence for the task
               UPDATE tasks SET status='pending'
-              remove attempted T##-SUMMARY.md
+              remove attempted S##-T##-SUMMARY.md
               return an error instead of a stale success
 
 complete-slice prompt fires (after all tasks complete)

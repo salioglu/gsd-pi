@@ -65,7 +65,7 @@ HEAD `43033bb9`; top 5 by leverage planned per the non-interactive rule).
 | 036 | Stabilize the prompt-cache prefix (quantize observation mask) + surface cacheRetention | P1 | M | — | DONE |
 | 037 | Keep only the latest GSD context injection in the model payload (memory-block dedupe) | P1 | M | 036 | TODO |
 | 038 | Stop spending reasoning tokens / double calls on compaction summaries | P2 | S | — | TODO |
-| 039 | Close prompt-budget enforcement gaps (execute-task cap, discuss-slice cap, provider ratio) | P2 | M | — | TODO |
+| 039 | Close prompt-budget enforcement gaps (execute-task cap, discuss-slice cap, provider ratio) | P2 | M | — | DONE (execute-task keeps authoritative task plan whole per STOP cond., caps trailing blocks; discuss-slice reuses capPreamble; provider passed at all 3 computeBudgets sites) |
 
 All of 009–017 implemented, tested, and committed on branch `chore/audit-fixes-009-017`
 (2026-07-01). Notable deviations recorded in the plan files: 009 skipped the
