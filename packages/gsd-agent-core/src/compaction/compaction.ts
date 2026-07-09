@@ -746,7 +746,8 @@ export async function generateSummary(
 
 	let runningSummary = previousSummary;
 	let degenerateRetriesUsed = 0;
-	for (const chunk of chunks) {
+	for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+		const chunk = chunks[chunkIndex]!;
 		const summaryBeforeChunk = runningSummary;
 		let chunkSummary = await summarizeOnce(
 			chunk,
@@ -777,6 +778,17 @@ export async function generateSummary(
 
 		if (!isDegenerateSummary(chunkSummary)) {
 			runningSummary = chunkSummary;
+		} else if (
+			chunkInputSize >= 100 &&
+			chunkIndex > 0 &&
+			chunkIndex < chunks.length - 1 &&
+			summaryBeforeChunk !== undefined &&
+			!isDegenerateSummary(summaryBeforeChunk)
+		) {
+			// A later chunk already folded into runningSummary; this chunk's
+			// messages are lost. Continuing would summarize remaining chunks
+			// against a briefing that skipped this segment.
+			break;
 		}
 	}
 
