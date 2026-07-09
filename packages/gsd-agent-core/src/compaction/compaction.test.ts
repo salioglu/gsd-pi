@@ -847,3 +847,128 @@ describe("(#038) degenerate-chunk retry is bounded per compaction", () => {
 		);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Degenerate middle-chunk handling — must not drop the tail or leave a hole
+// ---------------------------------------------------------------------------
+
+describe("degenerate middle-chunk handling", () => {
+	it("keeps summarizing later chunks when a middle chunk degenerates against a non-degenerate previousSummary", async () => {
+		// Bug: the previous mitigation broke out of the loop as soon as a middle
+		// chunk degenerated while summaryBeforeChunk was non-degenerate. But when
+		// runningSummary is still just the carried-in previousSummary (no chunk in
+		// THIS run folded in yet), that break dropped every remaining chunk, so
+		// newer history never reached the briefing.
+		const messages: AgentMessage[] = [
+			makeBranchSummaryMessage(80_000),
+			makeBranchSummaryMessage(80_000),
+			makeBranchSummaryMessage(80_000),
+		];
+		const model = makeModel(1_000);
+		const reserveTokens = 200;
+		const previousSummary =
+			"Prior compaction briefing carried in from the last run — long enough to clear the degenerate-output threshold so it stands in as summaryBeforeChunk.";
+
+		// chunk0 + its single retry degenerate, chunk1 degenerate (retry budget
+		// spent), chunk2 produces the only real summary. The tail chunk must be
+		// summarized, so TAIL_CONTENT must survive into the final briefing.
+		let callIndex = 0;
+		const responses = [
+			"empty conversation", // chunk0 initial → degenerate
+			"empty conversation", // chunk0 retry → degenerate (spends the one retry)
+			"empty conversation", // chunk1 → degenerate, no retry left
+			"## Done\n- TAIL_CONTENT: recovered the final chunk's history even though an earlier chunk degenerated — proves no early break.",
+		];
+		const mockComplete = mock.fn(async () => {
+			const r = responses[Math.min(callIndex, responses.length - 1)];
+			callIndex++;
+			return makeFakeResponse(r);
+		});
+
+		const summary = await generateSummary(
+			messages,
+			model,
+			reserveTokens,
+			undefined,
+			undefined,
+			undefined,
+			previousSummary,
+			mockComplete,
+		);
+
+		assert.equal(
+			mockComplete.mock.callCount(),
+			4,
+			"expected 4 calls: chunk0 + one retry + chunk1 + chunk2 (no early break)",
+		);
+		assert.ok(
+			summary.includes("TAIL_CONTENT"),
+			`final summary must include the tail chunk's content (no early break), got: ${JSON.stringify(summary)}`,
+		);
+		assert.ok(!isDegenerateSummary(summary), "final summary must not be degenerate");
+	});
+
+	it("carries a degenerate chunk's messages into the next chunk, bounded by the per-chunk budget", async () => {
+		// Chunk0 = [a, b] fills the budget; chunk1 = [c] leaves headroom. When
+		// chunk0 degenerates, its messages are carried into chunk1's input up to
+		// the budget: the oldest (a) is dropped to avoid overflow, but the newest
+		// (b) is folded into chunk1's summarization so its content is not lost.
+		// estimateSerializedTokens caps user content at 2000 chars and returns
+		// ceil(chars/4), so 1600 chars → 400 tokens and 1000 chars → 250 tokens.
+		const a = { role: "user", content: `AAA_DROPPED${"x".repeat(1589)}` } as unknown as AgentMessage; // 400 tokens
+		const b = { role: "user", content: `CARRIED_B${"y".repeat(1591)}` } as unknown as AgentMessage; // 400 tokens
+		const c = { role: "user", content: `CCC${"z".repeat(997)}` } as unknown as AgentMessage; // 250 tokens
+		const messages: AgentMessage[] = [a, b, c];
+		// contextWindow - reserve - maxTokens(=0.8*reserve capped at model.maxTokens)
+		// = 1160 - 200 - 160 = 800-token chunk budget. a+b = 800 fill chunk0;
+		// c = 250 is chunk1 with 550 tokens of headroom. Carrying [a,b] (800) into
+		// chunk1 overflows, so a (oldest, 400) is dropped and b (400) is kept:
+		// 400 + 250 = 650 ≤ 800.
+		const model = makeModel(1_160);
+		const reserveTokens = 200;
+
+		const seenPrompts: string[] = [];
+		let callIndex = 0;
+		const responses = [
+			"", // chunk0 initial → degenerate
+			"", // chunk0 retry → degenerate (input is substantial, so it retries once)
+			"## Done\n- Real summary for the second chunk, comfortably over the hundred character degenerate threshold so it lands.",
+		];
+		const mockComplete = mock.fn(async (_model: any, context: any) => {
+			const userMsg = context.messages?.[0];
+			const text =
+				typeof userMsg?.content === "string" ? userMsg.content : userMsg?.content?.[0]?.text ?? "";
+			seenPrompts.push(text);
+			const r = responses[Math.min(callIndex, responses.length - 1)];
+			callIndex++;
+			return makeFakeResponse(r);
+		});
+
+		const summary = await generateSummary(
+			messages,
+			model,
+			reserveTokens,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockComplete,
+		);
+
+		assert.equal(
+			mockComplete.mock.callCount(),
+			3,
+			"expected 3 calls: chunk0 + one retry + chunk1 (carrying b forward)",
+		);
+		const chunk1Prompt = seenPrompts[2] ?? "";
+		assert.ok(
+			chunk1Prompt.includes("CARRIED_B"),
+			"chunk1 summarization must include the carried-forward message b from the degenerate chunk0",
+		);
+		assert.ok(
+			!chunk1Prompt.includes("AAA_DROPPED"),
+			"the oldest carried message must be dropped to keep the merged input within the chunk budget",
+		);
+		assert.ok(!isDegenerateSummary(summary), "final summary must not be degenerate");
+	});
+});
