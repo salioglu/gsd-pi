@@ -329,6 +329,26 @@ test("filterSupersededContextInjections returns the array unchanged when no inje
   assert.equal(result, messages);
 });
 
+test("filterSupersededContextInjections preserves forensics opening prompt across follow-up reinjection", () => {
+  const forensicsOpening =
+    "Debug GSD itself. Trace the symptom to root cause in current source and produce a filing-ready GitHub issue.";
+  const messages = [
+    userMsg(forensicsOpening),
+    assistantMsg("I found the root cause in auto-loop.ts."),
+    userMsg("yes, create the issue"),
+    userMsg(`${GSD_CONTEXT_MESSAGE_SENTINEL}\n${forensicsOpening}`),
+    assistantMsg("Creating the issue now."),
+    userMsg("also add the stack trace"),
+    userMsg(`${GSD_CONTEXT_MESSAGE_SENTINEL}\n${forensicsOpening}\n\n## Follow-up\nalso add the stack trace`),
+  ];
+
+  const result = filterSupersededContextInjections(messages as any);
+
+  assert.equal(result.length, messages.length - 1);
+  assert.equal((result[0] as any).content[0].text, forensicsOpening);
+  assert.match((result[5] as any).content[0].text, /Follow-up/);
+});
+
 test("filterSupersededResponsesContextInjections keeps only the latest injection in payload.input", () => {
   const items = [
     { role: "user", content: [{ type: "input_text", text: "turn 1" }] },
