@@ -1,3 +1,5 @@
+import { GSD_CONTEXT_MESSAGE_SENTINEL } from "./constants.js";
+
 /**
  * Observation masking for GSD auto-mode sessions.
  *
@@ -248,4 +250,68 @@ export function truncateResponsesInputResultItems(items: ResponsesInputItem[], m
     }
     return item;
   });
+}
+
+// GSD injects at most one context message per turn (memory/guided/forensics —
+// see buildContextMessage in bootstrap/system-context.ts), marked with
+// GSD_CONTEXT_MESSAGE_SENTINEL. convertToLlm strips the distinguishing
+// customType before the payload reaches this hook, so detection is by content
+// prefix instead. Pre-sentinel session history lacks the sentinel, so we also
+// match the stable *bracketed* GSD block labels those injections begin with,
+// letting resumed sessions dedupe older memory/guided blocks.
+//
+// Only GSD-specific bracketed markers belong here — never generic prose. A
+// message is dropped from the payload when it matches, so a natural-language
+// prefix (e.g. the forensics prompt "Debug GSD itself.") could silently delete
+// a real user message that happens to start the same way. Legacy forensics
+// injections without memory are therefore left un-deduped by design; those
+// with memory still match via the "[GSD Context Metadata]" wrapper.
+const LEGACY_GSD_CONTEXT_INJECTION_PREFIXES = [
+  "[GSD Context Metadata]",
+  "[MEMORY — Critical and prompt-relevant memories from the GSD memory store]",
+  "[GSD Guided Execute Context]",
+] as const;
+
+function isGsdContextInjectionText(text: string | undefined): boolean {
+  if (typeof text !== "string") return false;
+  if (text.startsWith(GSD_CONTEXT_MESSAGE_SENTINEL)) return true;
+  return LEGACY_GSD_CONTEXT_INJECTION_PREFIXES.some((prefix) => text.startsWith(prefix));
+}
+
+function isGsdContextInjectionMessage(m: MaskableMessage): boolean {
+  if (m.role !== "user") return false;
+  return isGsdContextInjectionText(firstTextFromContent(m.content));
+}
+
+/**
+ * Removes every GSD context-injection user message except the latest one.
+ * Each turn re-injects a near-identical memory/guided/forensics block; left
+ * in place they duplicate verbatim across an N-turn session. Removal (not
+ * masking) — an empty placeholder still costs tokens and shifts message
+ * positions, breaking cache byte-stability. Pure function: stored history is
+ * never mutated, only the outgoing payload array.
+ */
+export function filterSupersededContextInjections(messages: MaskableMessage[]): MaskableMessage[] {
+  let lastIndex = -1;
+  for (let i = 0; i < messages.length; i++) {
+    if (isGsdContextInjectionMessage(messages[i])) lastIndex = i;
+  }
+  if (lastIndex === -1) return messages;
+  return messages.filter((m, i) => i === lastIndex || !isGsdContextInjectionMessage(m));
+}
+
+function isResponsesGsdContextInjectionItem(item: ResponsesInputItem): boolean {
+  if (item.role !== "user") return false;
+  return isGsdContextInjectionText(firstTextFromContent(item.content));
+}
+
+export function filterSupersededResponsesContextInjections(
+  items: ResponsesInputItem[],
+): ResponsesInputItem[] {
+  let lastIndex = -1;
+  for (let i = 0; i < items.length; i++) {
+    if (isResponsesGsdContextInjectionItem(items[i])) lastIndex = i;
+  }
+  if (lastIndex === -1) return items;
+  return items.filter((item, i) => i === lastIndex || !isResponsesGsdContextInjectionItem(item));
 }
