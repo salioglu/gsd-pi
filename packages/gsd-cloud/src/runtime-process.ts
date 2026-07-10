@@ -190,7 +190,12 @@ function runtimeStartLockPath(configPath: string): string {
 async function acquireRuntimeStartLock(configPath: string): Promise<void> {
   const lockPath = runtimeStartLockPath(configPath);
   mkdirSync(dirname(lockPath), { recursive: true });
-  const deadline = Date.now() + BACKGROUND_RUNTIME_READY_TIMEOUT_MS + 10_000;
+  // Match worst-case `startBackgroundRuntime` hold time: stop prior runtime, wait for
+  // ready, and tear down the child if ready fails, plus one poll interval.
+  const deadline = Date.now()
+    + BACKGROUND_RUNTIME_READY_TIMEOUT_MS
+    + 2 * (STOP_GRACE_PERIOD_MS + FORCED_STOP_TIMEOUT_MS)
+    + STOP_POLL_INTERVAL_MS;
   while (Date.now() < deadline) {
     try {
       const fd = openSync(lockPath, "wx");
