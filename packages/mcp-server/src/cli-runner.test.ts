@@ -1,10 +1,10 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcess, type ChildProcessByStdio, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PassThrough, Writable } from 'node:stream';
+import { PassThrough, type Readable, Writable } from 'node:stream';
 
 import { runMcpServerCli } from './cli-runner.js';
 
@@ -14,6 +14,8 @@ class ExitError extends Error {
   }
 }
 
+type ChildProcessWithReadableOutput = ChildProcessByStdio<null, Readable, Readable>;
+
 function waitFor<T>(promise: Promise<T>, timeoutMs = 100): Promise<T> {
   return Promise.race([
     promise,
@@ -22,7 +24,7 @@ function waitFor<T>(promise: Promise<T>, timeoutMs = 100): Promise<T> {
 }
 
 function waitForChildExit(
-  child: ChildProcessWithoutNullStreams,
+  child: ChildProcess,
   timeoutMs = 5_000,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   return new Promise((resolve, reject) => {
@@ -55,7 +57,7 @@ function spawnMcpServer(projectDir: string, gsdHome: string): ChildProcessWithou
   });
 }
 
-function spawnBusyLoopingMcpServerParent(projectDir: string, gsdHome: string): ChildProcessWithoutNullStreams {
+function spawnBusyLoopingMcpServerParent(projectDir: string, gsdHome: string): ChildProcessWithReadableOutput {
   const runnerUrl = new URL('./cli-runner.js', import.meta.url).href;
   const childCode = `
     import { runMcpServerCli } from ${JSON.stringify(runnerUrl)};
@@ -131,7 +133,7 @@ async function waitForRegistryPid(gsdHome: string, pid: number | undefined, time
   throw new Error(`timed out waiting for registry pid=${pid}`);
 }
 
-function readSpawnedPid(child: ChildProcessWithoutNullStreams): Promise<number> {
+function readSpawnedPid(child: ChildProcessWithReadableOutput): Promise<number> {
   return new Promise((resolve, reject) => {
     let buffer = '';
     let settled = false;
@@ -706,7 +708,7 @@ describe('runMcpServerCli', () => {
   }, async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'mcp-busy-orphan-project-'));
     const gsdHome = mkdtempSync(join(tmpdir(), 'mcp-busy-orphan-home-'));
-    let parent: ChildProcessWithoutNullStreams | undefined;
+    let parent: ChildProcessWithReadableOutput | undefined;
     let childPid: number | undefined;
     const stderrChunks: string[] = [];
 

@@ -30,8 +30,8 @@ const CLEANUP_STEP_TIMEOUT_MS = 2 * 1000;
 const ORPHAN_PARENT_LOSS_CHECK_INTERVAL_MS = 10 * 1000;
 
 const ORPHAN_MONITOR_WORKER_SOURCE = `
-const { parentPort, workerData } = require('node:worker_threads');
-const { writeSync } = require('node:fs');
+import { writeSync } from 'node:fs';
+import { parentPort, workerData } from 'node:worker_threads';
 
 const lastActivityMs = new BigInt64Array(workerData.lastActivityMsBuffer);
 let stopped = false;
