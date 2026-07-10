@@ -1,4 +1,5 @@
-import { homedir } from "os";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { homedir, tmpdir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, it } from "vitest";
 import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
@@ -387,6 +388,59 @@ describe("skills", () => {
 				includeDefaults: true,
 			});
 			expect(withTilde.length).toBe(withoutTilde.length);
+		});
+
+		it("should omit gsd-core skills while retaining other installed skills", () => {
+			const tempRoot = mkdtempSync(join(tmpdir(), "gsd-core-skills-"));
+			const gsdCorePackageRoot = join(tempRoot, "gsd-core-package");
+			const gsdCoreInstallRoot = join(tempRoot, "gsd-core-install");
+			const otherInstallRoot = join(tempRoot, "other-install");
+
+			try {
+				mkdirSync(join(gsdCorePackageRoot, "skills", "gsd-plan-phase"), { recursive: true });
+				mkdirSync(join(gsdCorePackageRoot, "skills", "unrelated-skill"), { recursive: true });
+				writeFileSync(
+					join(gsdCorePackageRoot, "package.json"),
+					JSON.stringify({ name: "@opengsd/gsd-core" }),
+				);
+				mkdirSync(join(gsdCoreInstallRoot, "skills", "gsd-review"), { recursive: true });
+				writeFileSync(
+					join(gsdCoreInstallRoot, "gsd-file-manifest.json"),
+					JSON.stringify({ files: { "skills/gsd-review/SKILL.md": "checksum" } }),
+				);
+				mkdirSync(join(otherInstallRoot, "skills", "gsd-custom"), { recursive: true });
+				writeFileSync(
+					join(gsdCorePackageRoot, "skills", "gsd-plan-phase", "SKILL.md"),
+					"---\nname: gsd-plan-phase\ndescription: GSD Core plan skill.\n---\n",
+				);
+				writeFileSync(
+					join(gsdCorePackageRoot, "skills", "unrelated-skill", "SKILL.md"),
+					"---\nname: unrelated-skill\ndescription: Unrelated installed skill.\n---\n",
+				);
+				writeFileSync(
+					join(gsdCoreInstallRoot, "skills", "gsd-review", "SKILL.md"),
+					"---\nname: gsd-review\ndescription: Installed GSD Core review skill.\n---\n",
+				);
+				writeFileSync(
+					join(otherInstallRoot, "skills", "gsd-custom", "SKILL.md"),
+					"---\nname: gsd-custom\ndescription: Non-gsd-core skill.\n---\n",
+				);
+
+				const { skills } = loadSkills({
+					agentDir: emptyAgentDir,
+					cwd: emptyCwd,
+					skillPaths: [
+						join(gsdCorePackageRoot, "skills"),
+						join(gsdCoreInstallRoot, "skills"),
+						join(otherInstallRoot, "skills"),
+					],
+					includeDefaults: false,
+				});
+
+				expect(skills.map((skill) => skill.name).sort()).toEqual(["gsd-custom", "unrelated-skill"]);
+			} finally {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
 		});
 	});
 
