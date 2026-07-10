@@ -452,6 +452,11 @@ export interface LoadSkillsOptions {
  * (`resourcePrecedenceRank`): settings-entry before auto-discovered, project
  * before user, and bundled GSD before foreign (Claude / `~/.agents`) skills, so
  * bundled auto-mode skills win over same-named foreign skills.
+ *
+ * Legacy `gsd-*` skills owned by an `@opengsd/gsd-core` package checkout or
+ * listed in a gsd-core installer manifest are omitted, including through
+ * symlinks. Other skills in those roots and independently authored `gsd-*`
+ * skills remain eligible for loading.
  */
 export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	const { agentDir, skillPaths, includeDefaults } = options;
