@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, it } from "vitest";
@@ -438,6 +438,44 @@ describe("skills", () => {
 				});
 
 				expect(skills.map((skill) => skill.name).sort()).toEqual(["gsd-custom", "unrelated-skill"]);
+			} finally {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
+		});
+
+		it("should omit symlinked gsd-core skills while retaining unrelated symlinked skills", () => {
+			const tempRoot = mkdtempSync(join(tmpdir(), "gsd-core-symlinked-skills-"));
+			const gsdCoreRoot = join(tempRoot, "gsd-core");
+			const otherRoot = join(tempRoot, "other");
+			const linkedSkillsRoot = join(tempRoot, "linked-skills");
+			const directoryLinkType = process.platform === "win32" ? "junction" : "dir";
+
+			try {
+				const gsdCoreSkill = join(gsdCoreRoot, "skills", "gsd-plan-phase");
+				const otherSkill = join(otherRoot, "skills", "gsd-custom");
+				mkdirSync(gsdCoreSkill, { recursive: true });
+				mkdirSync(otherSkill, { recursive: true });
+				mkdirSync(linkedSkillsRoot);
+				writeFileSync(join(gsdCoreRoot, "package.json"), JSON.stringify({ name: "@opengsd/gsd-core" }));
+				writeFileSync(
+					join(gsdCoreSkill, "SKILL.md"),
+					"---\nname: gsd-plan-phase\ndescription: Symlinked GSD Core skill.\n---\n",
+				);
+				writeFileSync(
+					join(otherSkill, "SKILL.md"),
+					"---\nname: gsd-custom\ndescription: Unrelated symlinked skill.\n---\n",
+				);
+				symlinkSync(gsdCoreSkill, join(linkedSkillsRoot, "gsd-plan-phase"), directoryLinkType);
+				symlinkSync(otherSkill, join(linkedSkillsRoot, "gsd-custom"), directoryLinkType);
+
+				const { skills } = loadSkills({
+					agentDir: emptyAgentDir,
+					cwd: emptyCwd,
+					skillPaths: [linkedSkillsRoot],
+					includeDefaults: false,
+				});
+
+				expect(skills.map((skill) => skill.name)).toEqual(["gsd-custom"]);
 			} finally {
 				rmSync(tempRoot, { recursive: true, force: true });
 			}
