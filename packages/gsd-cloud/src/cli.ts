@@ -66,7 +66,7 @@ export async function handleCloudCommand(argv: string[], opts: {
   }
 
   if (command === "disconnect") {
-    stopBackgroundRuntime(configPath);
+    await stopBackgroundRuntime(configPath);
     clearCloudConfig(configPath);
     process.stdout.write(`${opts.binaryName}: background runtime stopped and cloud credentials removed.\n`);
     return;
@@ -93,7 +93,7 @@ export async function handleCloudCommand(argv: string[], opts: {
     }, projectDirs);
     process.stdout.write(`${opts.binaryName}: cloud runtime ${runtimeId} paired — connecting...\n`);
     if (values.foreground) {
-      stopBackgroundRuntime(configPath);
+      await stopBackgroundRuntime(configPath);
       await runCloudRuntime(config, opts.binaryName, values.verbose, projectDirs);
       return;
     }
@@ -130,7 +130,7 @@ export async function handleCloudCommand(argv: string[], opts: {
     const projectDirs = selectedProjectDirs(config.projects.scan_roots);
     config = saveCloudConfig(configPath, config.cloud, projectDirs);
     if (values.foreground) {
-      stopBackgroundRuntime(configPath);
+      await stopBackgroundRuntime(configPath);
       await runCloudRuntime(config, opts.binaryName, values.verbose, projectDirs);
       return;
     }

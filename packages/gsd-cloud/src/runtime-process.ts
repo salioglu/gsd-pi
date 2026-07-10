@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { CLOUD_RUNTIME_INITIAL_CONNECT_WINDOW_MS } from "./cloud-runtime.js";
 
 interface RuntimeProcessState {
   pid: number;
@@ -31,10 +32,16 @@ interface StartRuntimeOptions {
   readyTimeoutMs?: number;
 }
 
-const DEFAULT_READY_TIMEOUT_MS = 35_000;
+const PROCESS_STARTUP_GRACE_MS = 5_000;
+const FORCED_STOP_TIMEOUT_MS = 5_000;
+const STOP_GRACE_PERIOD_MS = 5_000;
+const STOP_POLL_INTERVAL_MS = 50;
+
+export const BACKGROUND_RUNTIME_READY_TIMEOUT_MS =
+  CLOUD_RUNTIME_INITIAL_CONNECT_WINDOW_MS + PROCESS_STARTUP_GRACE_MS;
 
 export async function startBackgroundRuntime(opts: StartRuntimeOptions): Promise<RuntimeProcessStatus> {
-  stopBackgroundRuntime(opts.configPath);
+  await stopBackgroundRuntime(opts.configPath);
 
   const statePath = runtimeStatePath(opts.configPath);
   const logFile = runtimeLogPath(opts.configPath);
@@ -59,10 +66,10 @@ export async function startBackgroundRuntime(opts: StartRuntimeOptions): Promise
   }
 
   try {
-    await waitUntilReady(child, opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS);
+    await waitUntilReady(child, opts.readyTimeoutMs ?? BACKGROUND_RUNTIME_READY_TIMEOUT_MS);
   } catch (error) {
-    child.kill("SIGTERM");
     if (child.connected) child.disconnect();
+    await terminateProcess(child.pid);
     throw error;
   }
 
@@ -82,15 +89,10 @@ export async function startBackgroundRuntime(opts: StartRuntimeOptions): Promise
   };
 }
 
-export function stopBackgroundRuntime(configPath: string): boolean {
+export async function stopBackgroundRuntime(configPath: string): Promise<boolean> {
   const state = readRuntimeState(configPath);
   if (!state) return false;
-  try {
-    process.kill(state.pid, "SIGTERM");
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ESRCH") throw error;
-  }
+  await terminateProcess(state.pid);
   removeRuntimeState(configPath);
   return true;
 }
@@ -178,6 +180,32 @@ function processIsRunning(pid: number): boolean {
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (processIsRunning(pid)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, STOP_POLL_INTERVAL_MS));
+  }
+  return true;
+}
+
+async function terminateProcess(pid: number): Promise<void> {
+  signalProcess(pid, "SIGTERM");
+  if (await waitForProcessExit(pid, STOP_GRACE_PERIOD_MS)) return;
+  signalProcess(pid, "SIGKILL");
+  if (!await waitForProcessExit(pid, FORCED_STOP_TIMEOUT_MS)) {
+    throw new Error(`background runtime PID ${pid} did not stop`);
+  }
+}
+
+function signalProcess(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
   }
 }
 
