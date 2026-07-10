@@ -6,6 +6,7 @@
 // the WS relay client driving the local GSD runtime through the Executor seam.
 
 import { parseArgs } from "node:util";
+import { realpathSync } from "node:fs";
 import { delimiter, resolve } from "node:path";
 import { resolveConfigPath, loadConfig } from "./config.js";
 import { Logger } from "./logger.js";
@@ -20,8 +21,10 @@ import { CloudRuntime } from "./cloud-runtime.js";
 import { selectExecutor } from "./executors/index.js";
 import {
   backgroundRuntimeStatus,
+  clearRuntimeState,
   startBackgroundRuntime,
   stopBackgroundRuntime,
+  writeRuntimeState,
 } from "./runtime-process.js";
 import type { DaemonConfig } from "./types.js";
 
@@ -94,7 +97,9 @@ export async function handleCloudCommand(argv: string[], opts: {
     process.stdout.write(`${opts.binaryName}: cloud runtime ${runtimeId} paired — connecting...\n`);
     if (values.foreground) {
       await stopBackgroundRuntime(configPath);
-      await runCloudRuntime(config, opts.binaryName, values.verbose, projectDirs);
+      await runCloudRuntime(config, opts.binaryName, values.verbose, projectDirs, {
+        registerConfigPath: configPath,
+      });
       return;
     }
     await startAndReportBackgroundRuntime(configPath, projectDirs, opts.binaryName);
@@ -131,7 +136,9 @@ export async function handleCloudCommand(argv: string[], opts: {
     config = saveCloudConfig(configPath, config.cloud, projectDirs);
     if (values.foreground) {
       await stopBackgroundRuntime(configPath);
-      await runCloudRuntime(config, opts.binaryName, values.verbose, projectDirs);
+      await runCloudRuntime(config, opts.binaryName, values.verbose, projectDirs, {
+        registerConfigPath: configPath,
+      });
       return;
     }
     await startAndReportBackgroundRuntime(configPath, projectDirs, opts.binaryName);
@@ -144,8 +151,10 @@ export async function handleCloudCommand(argv: string[], opts: {
       throw new Error("cloud runtime is not paired; run `login` first");
     }
     const projectDirs = selectedProjectDirs(config.projects.scan_roots);
-    await runCloudRuntime(config, opts.binaryName, values.verbose, projectDirs, () => {
-      process.send?.({ type: "ready" });
+    await runCloudRuntime(config, opts.binaryName, values.verbose, projectDirs, {
+      onConnected: () => {
+        process.send?.({ type: "ready" });
+      },
     });
     return;
   }
@@ -163,7 +172,7 @@ async function runCloudRuntime(
   binaryName: string,
   verbose: boolean,
   projectDirs: string[],
-  onConnected?: () => void,
+  opts: { onConnected?: () => void; registerConfigPath?: string } = {},
 ): Promise<void> {
   if (!config.cloud) throw new Error("cloud runtime is not configured");
   if (config.cloud.enabled === false) {
@@ -176,12 +185,25 @@ async function runCloudRuntime(
   });
   const executor = selectExecutor(logger, { projectDirs });
   const runtime = new CloudRuntime(config.cloud, executor, logger);
-  await runtime.start();
-  onConnected?.();
+  // A foreground session owns the runtime itself, so it records its own PID in
+  // the shared state file. That lets a later `connect`/`disconnect` find and
+  // stop it, just like a detached background runtime. Background `_run` children
+  // do not register here; their launcher records the child PID instead.
+  if (opts.registerConfigPath) {
+    writeRuntimeState(opts.registerConfigPath, process.pid, projectDirs);
+  }
+  try {
+    await runtime.start();
+  } catch (error) {
+    if (opts.registerConfigPath) clearRuntimeState(opts.registerConfigPath);
+    throw error;
+  }
+  opts.onConnected?.();
   process.stdout.write(`${binaryName}: connected to ${config.cloud.gateway_url}. Press Ctrl+C to stop.\n`);
 
   await new Promise<void>((resolve) => {
     const shutdown = () => {
+      if (opts.registerConfigPath) clearRuntimeState(opts.registerConfigPath);
       runtime.stop();
       void Promise.resolve(executor.close?.()).finally(() => {
         void logger.close().finally(() => resolve());
@@ -215,15 +237,32 @@ function selectedProjectDirs(savedProjectDirs: string[]): string[] {
     const savedPaths = uniqueResolvedPaths(savedProjectDirs);
     if (savedPaths.length > 0) return savedPaths;
   }
-  return [process.cwd()];
+  return [canonicalizePath(process.cwd())];
 }
 
 function uniqueResolvedPaths(paths: string[]): string[] {
   const resolved = paths
     .map((path) => path.trim())
     .filter(Boolean)
-    .map((path) => resolve(path));
+    .map((path) => canonicalizePath(path));
   return [...new Set(resolved)];
+}
+
+/**
+ * Resolve a project path to its canonical, symlink-free absolute form. The
+ * executor advertises project paths via `resolve()` alone, so canonicalizing
+ * here keeps the saved `scan_roots` and the advertised hello paths identical to
+ * the real directory (e.g. when the cwd or GSD_CLOUD_PROJECTS points through a
+ * symlink). Falls back to the plain resolved path when the target does not yet
+ * exist on disk.
+ */
+function canonicalizePath(path: string): string {
+  const resolved = resolve(path);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 export function formatUsage(binaryName: string): string {

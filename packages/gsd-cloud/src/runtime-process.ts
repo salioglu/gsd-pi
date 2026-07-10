@@ -64,29 +64,42 @@ export async function startBackgroundRuntime(opts: StartRuntimeOptions): Promise
     child.kill();
     throw new Error(`could not start the background runtime; see ${logFile}`);
   }
+  const pid = child.pid;
 
   try {
     await waitUntilReady(child, opts.readyTimeoutMs ?? BACKGROUND_RUNTIME_READY_TIMEOUT_MS);
   } catch (error) {
     if (child.connected) child.disconnect();
-    await terminateProcess(child.pid);
+    await terminateProcess(pid);
     throw error;
   }
 
-  const state: RuntimeProcessState = {
-    pid: child.pid,
-    projects: opts.projectDirs,
-  };
-  writePrivateJson(statePath, state);
+  writeRuntimeState(opts.configPath, pid, opts.projectDirs);
   if (child.connected) child.disconnect();
   child.unref();
 
   return {
     running: true,
-    pid: state.pid,
-    projects: state.projects,
+    pid,
+    projects: opts.projectDirs,
     log_file: logFile,
   };
+}
+
+/**
+ * Record a running runtime so a later launch can find and stop it. Used both by
+ * the detached launcher (child PID) and by a `--foreground` session (its own
+ * PID), so the two modes share one source of truth and never coexist on the
+ * same device token.
+ */
+export function writeRuntimeState(configPath: string, pid: number, projects: string[]): void {
+  const statePath = runtimeStatePath(configPath);
+  mkdirSync(dirname(statePath), { recursive: true });
+  writePrivateJson(statePath, { pid, projects } satisfies RuntimeProcessState);
+}
+
+export function clearRuntimeState(configPath: string): void {
+  removeRuntimeState(configPath);
 }
 
 export async function stopBackgroundRuntime(configPath: string): Promise<boolean> {

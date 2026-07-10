@@ -1,7 +1,7 @@
 // Project/App: Open GSD
 // File Purpose: Acceptance coverage for the detached gsd-cloud runtime lifecycle.
-import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -26,11 +26,16 @@ interface TestGateway {
   close: () => Promise<void>;
 }
 
-function runCli(args: string[], cwd: string, timeoutMs = 5_000): Promise<CliResult> {
+function runCli(
+  args: string[],
+  cwd: string,
+  timeoutMs = 12_000,
+  extraEnv: Record<string, string | undefined> = {},
+): Promise<CliResult> {
   return new Promise((resolveResult, reject) => {
     const child = spawn(process.execPath, [cliPath, ...args], {
       cwd,
-      env: { ...process.env, GSD_CLOUD_PROJECTS: undefined },
+      env: { ...process.env, GSD_CLOUD_PROJECTS: undefined, ...extraEnv },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -53,6 +58,25 @@ function runCli(args: string[], cwd: string, timeoutMs = 5_000): Promise<CliResu
       resolveResult({ code, stdout, stderr });
     });
   });
+}
+
+interface ForegroundCli {
+  child: ChildProcess;
+  exited: Promise<number | null>;
+}
+
+// Spawn a long-lived CLI process (e.g. `--foreground`) without waiting for exit,
+// so the test can inspect its state and then stop it.
+function spawnForegroundCli(args: string[], cwd: string): ForegroundCli {
+  const child = spawn(process.execPath, [cliPath, ...args], {
+    cwd,
+    env: { ...process.env, GSD_CLOUD_PROJECTS: undefined },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const exited = new Promise<number | null>((resolveExit) => {
+    child.once("exit", (code) => resolveExit(code));
+  });
+  return { child, exited };
 }
 
 async function createTestGateway(deviceFlow = false): Promise<TestGateway> {
@@ -190,6 +214,92 @@ test("login returns after approval and keeps the selected project connected", as
     assert.equal(statusBody.background?.running, false);
   } finally {
     await runCli(["disconnect", "--config", configPath], projectDir).catch(() => undefined);
+    await gateway.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("advertised project paths are canonicalized through symlinks", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-cloud-symlink-")));
+  const realProject = join(root, "real-project");
+  mkdirSync(join(realProject, ".gsd"), { recursive: true });
+  const linkProject = join(root, "link-project");
+  symlinkSync(realProject, linkProject);
+  const configPath = join(root, "daemon.yaml");
+  const gateway = await createTestGateway();
+
+  saveCloudConfig(configPath, {
+    gateway_url: gateway.baseUrl,
+    device_token: "test",
+    runtime_id: "fixture-runtime",
+    enabled: true,
+  });
+
+  try {
+    // Point the runtime at the symlink; the advertised path must be the real dir.
+    const connect = await runCli(
+      ["connect", "--config", configPath],
+      realProject,
+      5_000,
+      { GSD_CLOUD_PROJECTS: linkProject },
+    );
+    assert.equal(connect.code, 0, connect.stderr);
+
+    const message = await gateway.hello;
+    const projects = message.projects as Array<{ path: string }>;
+    assert.equal(projects.length, 1);
+    assert.equal(projects[0]?.path, realProject);
+
+    const status = await runCli(["status", "--config", configPath], realProject);
+    const statusBody = JSON.parse(status.stdout) as { projects?: string[] };
+    assert.deepEqual(statusBody.projects, [realProject]);
+  } finally {
+    await runCli(["disconnect", "--config", configPath], realProject).catch(() => undefined);
+    await gateway.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a foreground runtime registers its PID so disconnect can stop it", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-cloud-foreground-")));
+  const projectDir = join(root, "project");
+  const configPath = join(root, "daemon.yaml");
+  mkdirSync(join(projectDir, ".gsd"), { recursive: true });
+  const gateway = await createTestGateway();
+
+  saveCloudConfig(configPath, {
+    gateway_url: gateway.baseUrl,
+    device_token: "test",
+    runtime_id: "fixture-runtime",
+    enabled: true,
+  });
+
+  const foreground = spawnForegroundCli(["connect", "--foreground", "--config", configPath], projectDir);
+  try {
+    // Once the foreground runtime advertises its project it is fully connected.
+    await gateway.hello;
+
+    // The foreground session must record its own PID in the shared runtime state
+    // so status can see it and a later disconnect can find and stop it.
+    const status = await runCli(["status", "--config", configPath], projectDir);
+    const statusBody = JSON.parse(status.stdout) as {
+      background?: { running?: boolean; pid?: number | null };
+    };
+    assert.equal(statusBody.background?.running, true);
+    assert.equal(statusBody.background?.pid, foreground.child.pid);
+
+    const disconnect = await runCli(["disconnect", "--config", configPath], projectDir);
+    assert.equal(disconnect.code, 0, disconnect.stderr);
+
+    // disconnect must have terminated the foreground process.
+    const exitCode = await foreground.exited;
+    assert.equal(exitCode, 0);
+
+    const afterStatus = await runCli(["status", "--config", configPath], projectDir);
+    const afterBody = JSON.parse(afterStatus.stdout) as { background?: { running?: boolean } };
+    assert.equal(afterBody.background?.running, false);
+  } finally {
+    foreground.child.kill("SIGKILL");
     await gateway.close();
     rmSync(root, { recursive: true, force: true });
   }
