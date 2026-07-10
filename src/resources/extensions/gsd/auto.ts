@@ -3167,6 +3167,10 @@ export async function dispatchHookUnit(
   if (typeof cmdCtx?.newSession !== "function") {
     const message = "Auto-mode has no command context for dispatch.";
     ctx.ui.notify(message, "error");
+    const unitToCommit = previousCurrentUnit ?? s.currentUnit;
+    if (unitToCommit) {
+      await autoCommitUnit(s.basePath, unitToCommit.type, unitToCommit.id, ctx);
+    }
     await stopAuto(ctx, pi, message, { preserveWorktree: true });
     return false;
   }
