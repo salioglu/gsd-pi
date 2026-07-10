@@ -1,0 +1,195 @@
+// Project/App: Open GSD
+// File Purpose: Detached cloud runtime process lifecycle and status persistence.
+import { spawn, type ChildProcess } from "node:child_process";
+import {
+  chmodSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+
+interface RuntimeProcessState {
+  pid: number;
+  projects: string[];
+}
+
+export interface RuntimeProcessStatus {
+  running: boolean;
+  pid: number | null;
+  projects: string[];
+  log_file: string;
+}
+
+interface StartRuntimeOptions {
+  binaryPath: string;
+  configPath: string;
+  projectDirs: string[];
+  readyTimeoutMs?: number;
+}
+
+const DEFAULT_READY_TIMEOUT_MS = 35_000;
+
+export async function startBackgroundRuntime(opts: StartRuntimeOptions): Promise<RuntimeProcessStatus> {
+  stopBackgroundRuntime(opts.configPath);
+
+  const statePath = runtimeStatePath(opts.configPath);
+  const logFile = runtimeLogPath(opts.configPath);
+  mkdirSync(dirname(statePath), { recursive: true });
+  const logFd = openSync(logFile, "a", 0o600);
+  chmodSync(logFile, 0o600);
+  let child: ChildProcess;
+  try {
+    child = spawn(process.execPath, [opts.binaryPath, "_run", "--config", opts.configPath], {
+      cwd: opts.projectDirs[0] ?? process.cwd(),
+      detached: true,
+      env: process.env,
+      stdio: ["ignore", logFd, logFd, "ipc"],
+    });
+  } finally {
+    closeSync(logFd);
+  }
+
+  if (child.pid == null) {
+    child.kill();
+    throw new Error(`could not start the background runtime; see ${logFile}`);
+  }
+
+  try {
+    await waitUntilReady(child, opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS);
+  } catch (error) {
+    child.kill("SIGTERM");
+    if (child.connected) child.disconnect();
+    throw error;
+  }
+
+  const state: RuntimeProcessState = {
+    pid: child.pid,
+    projects: opts.projectDirs,
+  };
+  writePrivateJson(statePath, state);
+  if (child.connected) child.disconnect();
+  child.unref();
+
+  return {
+    running: true,
+    pid: state.pid,
+    projects: state.projects,
+    log_file: logFile,
+  };
+}
+
+export function stopBackgroundRuntime(configPath: string): boolean {
+  const state = readRuntimeState(configPath);
+  if (!state) return false;
+  try {
+    process.kill(state.pid, "SIGTERM");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH") throw error;
+  }
+  removeRuntimeState(configPath);
+  return true;
+}
+
+export function backgroundRuntimeStatus(configPath: string): RuntimeProcessStatus {
+  const state = readRuntimeState(configPath);
+  if (!state) {
+    return { running: false, pid: null, projects: [], log_file: runtimeLogPath(configPath) };
+  }
+  if (!processIsRunning(state.pid)) {
+    removeRuntimeState(configPath);
+    return {
+      running: false,
+      pid: null,
+      projects: state.projects,
+      log_file: runtimeLogPath(configPath),
+    };
+  }
+  return {
+    running: true,
+    pid: state.pid,
+    projects: state.projects,
+    log_file: runtimeLogPath(configPath),
+  };
+}
+
+function waitUntilReady(child: ChildProcess, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let timeout: ReturnType<typeof setTimeout>;
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      child.removeListener("error", onError);
+      child.removeListener("exit", onExit);
+      child.removeListener("message", onMessage);
+    };
+    const onError = (error: Error): void => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = (code: number | null): void => {
+      cleanup();
+      reject(new Error(`background runtime exited before connecting (exit ${code ?? "unknown"})`));
+    };
+    const onMessage = (message: unknown): void => {
+      if (!message || typeof message !== "object" || (message as { type?: unknown }).type !== "ready") return;
+      cleanup();
+      resolve();
+    };
+    timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`background runtime did not connect within ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.once("error", onError);
+    child.once("exit", onExit);
+    child.on("message", onMessage);
+  });
+}
+
+function runtimeStatePath(configPath: string): string {
+  return join(dirname(configPath), "cloud-runtime.json");
+}
+
+function runtimeLogPath(configPath: string): string {
+  return join(dirname(configPath), "cloud-runtime.log");
+}
+
+function readRuntimeState(configPath: string): RuntimeProcessState | null {
+  try {
+    const value = JSON.parse(readFileSync(runtimeStatePath(configPath), "utf8")) as Partial<RuntimeProcessState>;
+    const pid = value.pid;
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 || !Array.isArray(value.projects)) return null;
+    return {
+      pid,
+      projects: value.projects.filter((project): project is string => typeof project === "string"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function processIsRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function removeRuntimeState(configPath: string): void {
+  try {
+    unlinkSync(runtimeStatePath(configPath));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function writePrivateJson(path: string, value: unknown): void {
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  chmodSync(path, 0o600);
+}
