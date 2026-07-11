@@ -357,24 +357,33 @@ In `"parent"` mode, slice/task `targetRepositories` default to the declared chil
   - `"replace"` requires `prompt`.
   - `"skip"` is valid with no additional fields.
 
+- `planning_subagent_registry`: object — optional classification for custom planning agents. Each key is an agent id and must set:
+  - `read_only_specialist`: boolean — set to `true` to classify the custom agent as safe for planning dispatch.
+
 - `planning_subagents`: object — project-local widening for read-only planning subagent dispatch. Supported unit keys are `plan-milestone` and `plan-slice`; each has:
   - `allowed`: string[] — additional planning-safe agents for that unit.
 
-  Agents must already be classified by GSD as read-only planning specialists: `mnemo`, `scout`, `planner`, `reviewer`, `security`, or `tester`. The write gate still blocks source writes outside `.gsd/**`, unrestricted bash, stale subagent calls without agent identities, agents outside the global read-only registry, and agents not listed for the active unit.
+  Agents must be built-in read-only planning specialists (`mnemo`, `scout`, `planner`, `reviewer`, `security`, or `tester`) or registered in `planning_subagent_registry` with `read_only_specialist: true`. The write gate still blocks source writes outside `.gsd/**`, unrestricted bash, stale subagent calls without agent identities, agents outside the read-only registry, and agents not listed for the active unit.
 
   Example:
 
   ```yaml
+  planning_subagent_registry:
+    my-custom-planner:
+      read_only_specialist: true
+
   planning_subagents:
     plan-milestone:
       allowed:
         - scout
         - planner
+        - my-custom-planner
         - security
     plan-slice:
       allowed:
         - scout
         - planner
+        - my-custom-planner
         - reviewer
         - security
   ```
