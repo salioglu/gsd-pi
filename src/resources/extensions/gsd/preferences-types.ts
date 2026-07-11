@@ -141,6 +141,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "git",
   "post_unit_hooks",
   "pre_dispatch_hooks",
+  "planning_subagent_registry",
   "planning_subagents",
   "dynamic_routing",
   "disabled_model_providers",
@@ -231,6 +232,12 @@ export interface PlanningSubagentUnitConfig {
 export type PlanningSubagentsConfig = Partial<
   Record<ConfigurablePlanningSubagentUnit, PlanningSubagentUnitConfig>
 >;
+
+export interface PlanningSubagentRegistryEntry {
+  read_only_specialist?: boolean;
+}
+
+export type PlanningSubagentRegistryConfig = Record<string, PlanningSubagentRegistryEntry>;
 
 
 export const SKILL_ACTIONS = new Set(["use", "prefer", "avoid"]);
@@ -491,6 +498,7 @@ export interface GSDPreferences {
   git?: GitPreferences;
   post_unit_hooks?: PostUnitHookConfig[];
   pre_dispatch_hooks?: PreDispatchHookConfig[];
+  planning_subagent_registry?: PlanningSubagentRegistryConfig;
   planning_subagents?: PlanningSubagentsConfig;
   dynamic_routing?: DynamicRoutingConfig;
   /** Provider IDs to exclude from /model and automatic model routing while leaving tool auth intact. */
