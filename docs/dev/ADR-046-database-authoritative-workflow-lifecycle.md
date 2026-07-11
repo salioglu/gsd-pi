@@ -1,18 +1,19 @@
 <!-- Project/App: gsd-pi -->
-<!-- File Purpose: Proposed umbrella ADR for the database-authoritative workflow refactor. -->
+<!-- File Purpose: Accepted umbrella ADR for the database-authoritative workflow refactor. -->
 
 # ADR-046: Database-Authoritative Workflow Lifecycle
 
-**Status:** Proposed — implementation requires explicit maintainer approval
+**Status:** Accepted (2026-07-11)
 **Date:** 2026-07-11
 **Decision issue:** [Wayfinder: Database-authoritative GSD workflow refactor](https://github.com/open-gsd/gsd-pi/issues/1405)
 **Implementation program:** [Decompose the approved contracts into implementation milestones](https://github.com/open-gsd/gsd-pi/issues/1411#issuecomment-4948101799)
+**Approval provenance:** Direct maintainer instruction recorded in the project database as Decision `D001`; proposal merged in [PR #1416](https://github.com/open-gsd/gsd-pi/pull/1416) at commit [`93cd35e5`](https://github.com/open-gsd/gsd-pi/commit/93cd35e5)
 
-> This ADR is the durable decision record accompanying the proposed
+> This ADR is the accepted durable decision record accompanying the
 > [workflow refactor RFC](proposals/rfc-database-authoritative-workflow-refactor.md).
-> Closing the Wayfinder map resolved the design; it did not authorize
-> architectural implementation. No implementation governed by this ADR begins
-> until a maintainer explicitly approves the RFC and accepts this ADR.
+> The merged proposal and direct maintainer instruction satisfy the architecture
+> approval gate. Implementation remains subject to the dependency order, review,
+> testing, migration, and release gates recorded below.
 
 ## Context
 
@@ -292,10 +293,16 @@ available through that window and at least one later stable release.
 
 ## Existing ADR disposition
 
+These dispositions define the accepted post-cutover architecture. They do not
+claim that current runtime behavior has changed before the corresponding
+migration and cutover gates complete.
+
 | Existing decision | Disposition under ADR-046 |
 |---|---|
+| ADR-003 Pipeline Simplification | Superseded before adoption. Research remains first-class, resumable Milestone work rather than being merged into planning or reduced to optional artifacts; its ceremony-reduction goal remains valid through the shared Lifecycle Kernel, automated verification, and durable closeout. |
 | ADR-009 Unified Orchestration Kernel | Superseded for workflow orchestration. Provider/model/TOS policy remains independently valid. |
 | ADR-011 Progressive Planning and Escalation | Progressive refinement retained; file-backed escalation, DAG, broad pauses, and forward-only correction superseded. |
+| ADR-013 Memory Store Consolidation | Amended. `memories` remains canonical for reusable cross-session knowledge, while workflow Decisions and their lifecycle effects move to the Conversation domain; memory extraction is noncritical follow-on work. |
 | ADR-014 Auto Orchestration Deep Module | Amended and generalized into the shared Lifecycle Kernel. |
 | ADR-015 Runtime Invariant Modules | Retained with database-only reconciliation and typed module results. |
 | ADR-016 Worktree Lifecycle and Projection | Worktree Lifecycle retained; workflow-state copying and worktree-local authority reconciliation superseded. |
@@ -319,8 +326,8 @@ available through that window and at least one later stable release.
 | ADR-042 Three Session Types | Session separation retained; durable GSD lifecycle moves out of AutoSession. |
 | ADR-045 Flat-Phase Migration | Superseded before adoption; legacy layouts are explicit import/export formats, not startup authority. |
 
-After this ADR is accepted, each superseded or amended ADR receives a short
-top-of-file status notice linking here. Historical bodies remain intact.
+Each superseded or amended ADR has a short top-of-file status notice linking
+here. Historical bodies remain intact.
 
 ## Implementation boundary and references
 
