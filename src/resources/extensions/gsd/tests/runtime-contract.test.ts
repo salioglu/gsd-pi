@@ -238,6 +238,30 @@ test("fails closed when the contract directory changes between file reads", asyn
   });
 });
 
+for (const [target, replaceAfter] of [
+  ["AGENT.md", "AGENT.md"],
+  ["README.md", "AGENT.md"],
+  ["runtime.mjs", "README.md"],
+] as const) {
+  test(`fails closed when ${target} changes during snapshot assembly`, async () => {
+    await withRuntimeProject(async (base) => {
+      const contractDir = join(base, "script", "local-runtime");
+      mkdirSync(contractDir, { recursive: true });
+      writeFileSync(join(contractDir, "AGENT.md"), "# Original agent rules\n", "utf-8");
+      writeFileSync(join(contractDir, "README.md"), "# Original documentation\n", "utf-8");
+      writeFileSync(join(contractDir, "runtime.mjs"), "export const generation = 1;\n", "utf-8");
+      const replacement = join(contractDir, `${target}.replacement`);
+      writeFileSync(replacement, `replacement for ${target}\n`, "utf-8");
+
+      const contract = _resolveRuntimeContractWithReadHookForTest(base, (name) => {
+        if (name === replaceAfter) renameSync(replacement, join(contractDir, target));
+      });
+
+      assert.equal(contract, null);
+    });
+  });
+}
+
 test("keeps an opened contract snapshot authoritative after directory replacement", async () => {
   await withRuntimeProject(async (base) => {
     const contractDir = join(base, "script", "local-runtime");
@@ -273,6 +297,17 @@ test("rejects contract document symlinks that escape the contract directory", as
     } finally {
       rmSync(outsideDir, { recursive: true, force: true });
     }
+  });
+});
+
+test("rejects contract file symlinks that stay within the contract directory", async () => {
+  await withRuntimeProject(async (base) => {
+    const contractDir = join(base, "script", "local-runtime");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "agent-rules.md"), "# Contained rules\n", "utf-8");
+    symlinkSync("agent-rules.md", join(contractDir, "AGENT.md"));
+
+    assert.equal(resolveRuntimeContract(base), null);
   });
 });
 

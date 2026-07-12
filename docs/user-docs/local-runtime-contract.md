@@ -42,6 +42,6 @@ runtime:
 ---
 ```
 
-Both values must be relative paths that remain inside the project. Symlinked contract files that resolve outside the active project or worktree are ignored.
+Both values must be relative paths that remain inside the project. Recognized contract members must be real regular files; symlinks are rejected even when their targets remain inside the contract directory.
 
 In a parent workspace, place the shared contract at the parent project root. Child-repository startup can then be coordinated through one documented entry point.

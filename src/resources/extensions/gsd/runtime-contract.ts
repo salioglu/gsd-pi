@@ -2,11 +2,13 @@ import {
   closeSync,
   constants,
   fstatSync,
+  lstatSync,
   openSync,
   readSync,
   realpathSync,
   statSync,
 } from "node:fs";
+import type { Stats } from "node:fs";
 import { isAbsolute, relative, resolve, win32 } from "node:path";
 
 import type { GSDPreferences } from "./preferences-types.js";
@@ -40,6 +42,11 @@ interface OpenedContractDirectory {
   stats: ReturnType<typeof fstatSync>;
 }
 
+interface ContractMemberSnapshot {
+  path: string;
+  stats: Stats | null;
+}
+
 function isWithin(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel) && !win32.isAbsolute(rel));
@@ -50,6 +57,21 @@ function sameFile(
   right: ReturnType<typeof statSync>,
 ): boolean {
   return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameMember(left: Stats, right: Stats): boolean {
+  return (
+    sameFile(left, right) &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.rdev === right.rdev &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs &&
+    left.birthtimeMs === right.birthtimeMs
+  );
 }
 
 function readOpenedFile(fd: number, byteLimit: number): Buffer {
@@ -99,32 +121,69 @@ function assertContractDirectoryIdentity(directory: OpenedContractDirectory): vo
   }
 }
 
+function captureContractMembers(
+  contractDir: string,
+  names: string[],
+): Map<string, ContractMemberSnapshot> {
+  const members = new Map<string, ContractMemberSnapshot>();
+  for (const name of new Set(names)) {
+    const path = resolve(contractDir, name);
+    if (!isWithin(contractDir, path)) throw new Error("Runtime contract member escapes its directory");
+
+    try {
+      const stats = lstatSync(path);
+      if (stats.isSymbolicLink() || !stats.isFile()) {
+        throw new Error("Runtime contract members must be regular files");
+      }
+      members.set(name, { path, stats });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      members.set(name, { path, stats: null });
+    }
+  }
+  return members;
+}
+
+function assertContractMembersIdentity(members: Map<string, ContractMemberSnapshot>): void {
+  for (const member of members.values()) {
+    try {
+      const stats = lstatSync(member.path);
+      if (!member.stats || stats.isSymbolicLink() || !stats.isFile() || !sameMember(member.stats, stats)) {
+        throw new Error("Runtime contract member changed during snapshot assembly");
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && !member.stats) continue;
+      throw error;
+    }
+  }
+}
+
 function openValidatedFile(
   projectRoot: string,
   contractDir: string,
-  name: string,
+  member: ContractMemberSnapshot,
 ): { path: string; size: number; content: Buffer } | undefined {
-  const candidate = resolve(contractDir, name);
-  if (!isWithin(contractDir, candidate)) return undefined;
+  if (!member.stats) return undefined;
 
   let fd: number | undefined;
   try {
-    fd = openSync(candidate, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const openedStats = fstatSync(fd);
-    if (!openedStats.isFile()) return undefined;
+    const pathStats = lstatSync(member.path);
+    if (pathStats.isSymbolicLink() || !pathStats.isFile() || !sameMember(member.stats, pathStats)) {
+      return undefined;
+    }
 
-    const path = realpathSync.native(candidate);
+    fd = openSync(member.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const openedStats = fstatSync(fd);
+    if (!openedStats.isFile() || !sameMember(member.stats, openedStats)) return undefined;
+
+    const path = realpathSync.native(member.path);
     if (!isWithin(projectRoot, path) || !isWithin(contractDir, path)) return undefined;
-    if (!sameFile(openedStats, statSync(path))) return undefined;
+    if (!sameMember(member.stats, statSync(path))) return undefined;
 
     const content = readOpenedFile(fd, Math.min(openedStats.size, MAX_CONTRACT_DOCUMENT_BYTES));
     const finalStats = fstatSync(fd);
-    if (
-      !sameFile(openedStats, finalStats) ||
-      openedStats.size !== finalStats.size ||
-      openedStats.mtimeMs !== finalStats.mtimeMs ||
-      openedStats.ctimeMs !== finalStats.ctimeMs
-    ) {
+    const finalPathStats = lstatSync(member.path);
+    if (!sameMember(member.stats, finalStats) || !sameMember(member.stats, finalPathStats)) {
       return undefined;
     }
     return { path, size: openedStats.size, content };
@@ -138,9 +197,9 @@ function openValidatedFile(
 function resolveContractDocument(
   projectRoot: string,
   contractDir: string,
-  name: string,
+  member: ContractMemberSnapshot,
 ): RuntimeContractDocument | undefined {
-  const file = openValidatedFile(projectRoot, contractDir, name);
+  const file = openValidatedFile(projectRoot, contractDir, member);
   if (!file) return undefined;
   return {
     path: file.path,
@@ -152,9 +211,9 @@ function resolveContractDocument(
 function resolveContractEntry(
   projectRoot: string,
   contractDir: string,
-  name: string,
+  member: ContractMemberSnapshot,
 ): RuntimeContractEntry | undefined {
-  const file = openValidatedFile(projectRoot, contractDir, name);
+  const file = openValidatedFile(projectRoot, contractDir, member);
   return file ? { path: file.path, size: file.size } : undefined;
 }
 
@@ -176,6 +235,11 @@ function discoverRuntimeContract(
   if (!directory) return null;
 
   try {
+    const entryNames = configured?.entry ? [configured.entry] : DEFAULT_ENTRY_NAMES;
+    const members = captureContractMembers(directory.path, ["AGENT.md", "README.md", ...entryNames]);
+    assertContractDirectoryIdentity(directory);
+    assertContractMembersIdentity(members);
+
     const readFromContractDirectory = <T>(name: string, read: () => T): T => {
       assertContractDirectoryIdentity(directory);
       const result = read();
@@ -186,22 +250,22 @@ function discoverRuntimeContract(
 
     const agentInstructions = readFromContractDirectory(
       "AGENT.md",
-      () => resolveContractDocument(projectRoot, directory.path, "AGENT.md"),
+      () => resolveContractDocument(projectRoot, directory.path, members.get("AGENT.md")!),
     );
     const readme = readFromContractDirectory(
       "README.md",
-      () => resolveContractDocument(projectRoot, directory.path, "README.md"),
+      () => resolveContractDocument(projectRoot, directory.path, members.get("README.md")!),
     );
-    const entryNames = configured?.entry ? [configured.entry] : DEFAULT_ENTRY_NAMES;
     let entry: RuntimeContractEntry | undefined;
     for (const name of entryNames) {
       entry = readFromContractDirectory(
         name,
-        () => resolveContractEntry(projectRoot, directory.path, name),
+        () => resolveContractEntry(projectRoot, directory.path, members.get(name)!),
       );
       if (entry) break;
     }
 
+    assertContractMembersIdentity(members);
     if (!agentInstructions && !readme && !entry) return null;
     return {
       directory: directory.path,
