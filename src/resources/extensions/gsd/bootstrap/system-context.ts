@@ -10,6 +10,7 @@ import { debugTime } from "../debug-logger.js";
 import { loadPrompt, getTemplatesDir } from "../prompt-loader.js";
 import { readForensicsMarker } from "../forensics.js";
 import { resolveAllSkillReferences, renderPreferencesForSystemPrompt, loadEffectiveGSDPreferences } from "../preferences.js";
+import { renderRuntimeContractForSystemPrompt } from "../runtime-contract.js";
 import { resolveModelWithFallbacksForUnit } from "../preferences-models.js";
 import { resolveGsdRootFile, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTaskFiles, resolveTasksDir, relSliceFile, relSlicePath, relTaskFile } from "../paths.js";
 import { extractIntroAndRules } from "../knowledge-parser.js";
@@ -351,6 +352,12 @@ export async function buildBeforeAgentStartResult(
     }
   }
 
+  const renderedRuntimeContract = renderRuntimeContractForSystemPrompt(
+    basePath,
+    loadedPreferences?.preferences,
+  );
+  const runtimeContractBlock = renderedRuntimeContract ? `\n\n${renderedRuntimeContract}` : "";
+
   await runSessionStartupMaintenanceOnce(basePath, ctx);
 
   const { block: knowledgeBlock, globalSizeKb } = loadKnowledgeBlock(gsdHome(), basePath);
@@ -421,7 +428,7 @@ export async function buildBeforeAgentStartResult(
   // Keeping it out of `fullSystem` preserves provider prompt-cache stability
   // for the static system/tool prefix. The dynamic memory block rides the
   // volatile context message instead. (#5019)
-  const fullSystem = `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${knowledgeBlock}${codebaseBlock}${worktreeBlock}${subagentModelBlock}`;
+  const fullSystem = `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${runtimeContractBlock}${knowledgeBlock}${codebaseBlock}${worktreeBlock}${subagentModelBlock}`;
 
   stopContextTimer({
     systemPromptSize: fullSystem.length,

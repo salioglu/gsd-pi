@@ -489,6 +489,46 @@ test("workspace is a recognized preference key (no unknown warning)", () => {
   );
 });
 
+test("runtime contract preferences validate and are preserved", () => {
+  const { preferences, errors, warnings } = validatePreferences({
+    runtime: {
+      contract: {
+        path: "ops/dev",
+        entry: "run.mjs",
+      },
+    },
+  } as any);
+
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.filter(w => w.includes("runtime")).length, 0);
+  assert.deepEqual(preferences.runtime, {
+    contract: {
+      path: "ops/dev",
+      entry: "run.mjs",
+    },
+  });
+});
+
+test("runtime contract preferences reject unsafe project paths", () => {
+  for (const value of ["/tmp/runtime", "../runtime", "ops/../../runtime", "ops/dev\ninjected"]) {
+    const { errors, preferences } = validatePreferences({
+      runtime: { contract: { path: value } },
+    } as any);
+
+    assert.ok(errors.some(error => error.includes("runtime.contract.path")));
+    assert.equal(preferences.runtime, undefined);
+  }
+});
+
+test("runtime contract entry must stay within the contract directory", () => {
+  const { errors, preferences } = validatePreferences({
+    runtime: { contract: { path: "ops/dev", entry: "../run.mjs" } },
+  } as any);
+
+  assert.ok(errors.some(error => error.includes("runtime.contract.entry")));
+  assert.equal(preferences.runtime, undefined);
+});
+
 test("valid values pass through correctly", () => {
   const { preferences: p1 } = validatePreferences({ budget_enforcement: "halt" });
   assert.equal(p1.budget_enforcement, "halt");

@@ -174,6 +174,11 @@ Diagnostics record the file path, scope (global/project), severity (error/warnin
   - Planning tools consume repository IDs through `targetRepositories`: `gsd_plan_slice.targetRepositories` sets a slice-wide default, and `gsd_plan_task.targetRepositories` records the repositories an individual task touches. Values must be declared IDs or the implicit `project`; omit these fields in single-repo projects.
   - In parent mode with declared child repositories, `/gsd codebase generate` and automatic `.gsd/CODEBASE.md` refreshes enumerate `project` plus each child repository, render repo-labeled sections, and store repository IDs in map metadata.
 
+- `runtime.contract`: nominates a project-local runtime contract. When omitted, GSD discovers `script/local-runtime/AGENT.md`, `README.md`, and the first available `runtime.mjs`, `runtime.js`, `runtime.ts`, or `runtime.sh`. Keys:
+  - `path`: optional contract directory relative to the active project or worktree root. Default: `script/local-runtime`.
+  - `entry`: optional canonical entry point relative to the contract directory.
+  - Both paths must remain inside the project. See [Project-local runtime contract](../../../../../docs/user-docs/local-runtime-contract.md).
+
 ## Workspace Example
 
 ```yaml
