@@ -10,7 +10,7 @@ Create `script/local-runtime/` at the project root. GSD recognizes these files:
 - `README.md` — human-readable startup, health, seed, and teardown instructions.
 - `runtime.mjs`, `runtime.js`, `runtime.ts`, or `runtime.sh` — the canonical entry point, discovered in that order.
 
-When any recognized file exists, GSD adds its resolved path and a read-before-runtime instruction to agent and subagent system context. GSD does not automatically execute the entry point or infer its actions.
+When any recognized file exists, GSD safely opens and injects bounded snapshots of `AGENT.md` and `README.md`, plus validated entry-point metadata, into agent and subagent system context. GSD does not automatically execute the entry point or infer its actions.
 
 ```text
 script/

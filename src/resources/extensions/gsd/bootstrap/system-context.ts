@@ -317,13 +317,13 @@ export async function buildBeforeAgentStartResult(
     shortcutDashboard: formatShortcut("Ctrl+Alt+G"),
     shortcutShell: formatShortcut("Ctrl+Alt+B"),
   });
-  let loadedPreferences = loadEffectiveGSDPreferences();
+  let loadedPreferences = loadEffectiveGSDPreferences(ctx.cwd);
   try {
     const { markCmuxPromptShown, shouldPromptToEnableCmux } = await import("../../cmux/index.js");
     if (shouldPromptToEnableCmux(loadedPreferences?.preferences)) {
       markCmuxPromptShown();
       if (autoEnableCmuxPreferences()) {
-        loadedPreferences = loadEffectiveGSDPreferences();
+        loadedPreferences = loadEffectiveGSDPreferences(ctx.cwd);
         ctx.ui.notify(
           "cmux detected — auto-enabled. Run /gsd cmux off to disable.",
           "info",
@@ -341,7 +341,7 @@ export async function buildBeforeAgentStartResult(
 
   let preferenceBlock = "";
   if (loadedPreferences) {
-    const cwd = basePath;
+    const cwd = ctx.cwd;
     const report = resolveAllSkillReferences(loadedPreferences.preferences, cwd);
     preferenceBlock = `\n\n${renderPreferencesForSystemPrompt(loadedPreferences.preferences, report.resolutions, { includeResolvedPaths: false })}`;
     if (report.warnings.length > 0) {
@@ -353,7 +353,7 @@ export async function buildBeforeAgentStartResult(
   }
 
   const renderedRuntimeContract = renderRuntimeContractForSystemPrompt(
-    basePath,
+    ctx.cwd,
     loadedPreferences?.preferences,
   );
   const runtimeContractBlock = renderedRuntimeContract ? `\n\n${renderedRuntimeContract}` : "";
