@@ -9,7 +9,7 @@ import {
   statSync,
 } from "node:fs";
 import type { Stats } from "node:fs";
-import { isAbsolute, relative, resolve, win32 } from "node:path";
+import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
 
 import type { GSDPreferences } from "./preferences-types.js";
 import { createRepositoryRegistryFromPreferences } from "./repository-registry.js";
@@ -54,9 +54,22 @@ interface RuntimeContractSnapshotHooks {
   afterFileRead?: (name: string) => void;
 }
 
+type RuntimeContractDiscovery =
+  | { status: "absent" }
+  | { status: "invalid" }
+  | { status: "valid"; contract: ResolvedRuntimeContract };
+
+const INVALID_CONTRACT_BLOCK = [
+  "## Invalid project-local runtime contract",
+  "",
+  "The configured or discovered runtime contract could not be validated safely.",
+  "Do not start, restart, seed, stop, reset, or tear down any business project until the project-local runtime contract is repaired.",
+].join("\n");
+
 function isWithin(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel) && !win32.isAbsolute(rel));
+  const traversesParent = rel === ".." || rel.startsWith(`..${sep}`);
+  return rel === "" || (!traversesParent && !isAbsolute(rel) && !win32.isAbsolute(rel));
 }
 
 function sameFile(left: Stats, right: Stats): boolean {
@@ -235,18 +248,27 @@ function discoverRuntimeContract(
   basePath: string,
   preferences?: GSDPreferences,
   hooks?: RuntimeContractSnapshotHooks,
-): ResolvedRuntimeContract | null {
+): RuntimeContractDiscovery {
   const repositoryRegistry = createRepositoryRegistryFromPreferences(basePath, preferences);
   const projectRoot = realpathSync.native(repositoryRegistry.projectRoot);
   const configured = preferences?.runtime?.contract;
   const contractPath = configured?.path ?? DEFAULT_CONTRACT_PATH;
-  if (isAbsolute(contractPath) || win32.isAbsolute(contractPath)) return null;
+  if (isAbsolute(contractPath) || win32.isAbsolute(contractPath)) return { status: "invalid" };
 
   const candidateDir = resolve(projectRoot, contractPath);
-  if (!isWithin(projectRoot, candidateDir)) return null;
+  if (!isWithin(projectRoot, candidateDir)) return { status: "invalid" };
+
+  try {
+    lstatSync(candidateDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { status: configured ? "invalid" : "absent" };
+    }
+    return { status: "invalid" };
+  }
 
   const directory = openValidatedContractDirectory(projectRoot, candidateDir);
-  if (!directory) return null;
+  if (!directory) return { status: "invalid" };
 
   try {
     const entryNames = configured?.entry ? [configured.entry] : DEFAULT_ENTRY_NAMES;
@@ -299,16 +321,37 @@ function discoverRuntimeContract(
     }
 
     assertContractMembersIdentity(members);
-    if (!agentInstructions && !readme && !entry) return null;
+    if (!agentInstructions && !readme && !entry) {
+      return { status: configured ? "invalid" : "absent" };
+    }
     return {
-      directory: directory.path,
-      ...(agentInstructions ? { agentInstructions } : {}),
-      ...(readme ? { readme } : {}),
-      ...(entry ? { entry } : {}),
+      status: "valid",
+      contract: {
+        directory: directory.path,
+        ...(agentInstructions ? { agentInstructions } : {}),
+        ...(readme ? { readme } : {}),
+        ...(entry ? { entry } : {}),
+      },
     };
   } finally {
     closeSync(directory.fd);
   }
+}
+
+function resolveRuntimeContractDiscovery(
+  basePath: string,
+  preferences?: GSDPreferences,
+  hooks?: RuntimeContractSnapshotHooks,
+): RuntimeContractDiscovery {
+  try {
+    return discoverRuntimeContract(basePath, preferences, hooks);
+  } catch {
+    return { status: "invalid" };
+  }
+}
+
+function resolvedContractOrNull(discovery: RuntimeContractDiscovery): ResolvedRuntimeContract | null {
+  return discovery.status === "valid" ? discovery.contract : null;
 }
 
 export function _resolveRuntimeContractWithReadHookForTest(
@@ -316,11 +359,7 @@ export function _resolveRuntimeContractWithReadHookForTest(
   afterFileRead: (name: string) => void,
   preferences?: GSDPreferences,
 ): ResolvedRuntimeContract | null {
-  try {
-    return discoverRuntimeContract(basePath, preferences, { afterFileRead });
-  } catch {
-    return null;
-  }
+  return resolvedContractOrNull(resolveRuntimeContractDiscovery(basePath, preferences, { afterFileRead }));
 }
 
 export function _resolveRuntimeContractWithSnapshotHooksForTest(
@@ -328,22 +367,14 @@ export function _resolveRuntimeContractWithSnapshotHooksForTest(
   hooks: RuntimeContractSnapshotHooks,
   preferences?: GSDPreferences,
 ): ResolvedRuntimeContract | null {
-  try {
-    return discoverRuntimeContract(basePath, preferences, hooks);
-  } catch {
-    return null;
-  }
+  return resolvedContractOrNull(resolveRuntimeContractDiscovery(basePath, preferences, hooks));
 }
 
 export function resolveRuntimeContract(
   basePath: string,
   preferences?: GSDPreferences,
 ): ResolvedRuntimeContract | null {
-  try {
-    return discoverRuntimeContract(basePath, preferences);
-  } catch {
-    return null;
-  }
+  return resolvedContractOrNull(resolveRuntimeContractDiscovery(basePath, preferences));
 }
 
 function renderDocument(label: string, document: RuntimeContractDocument): string[] {
@@ -359,8 +390,10 @@ export function renderRuntimeContractForSystemPrompt(
   basePath: string,
   preferences?: GSDPreferences,
 ): string {
-  const contract = resolveRuntimeContract(basePath, preferences);
-  if (!contract) return "";
+  const discovery = resolveRuntimeContractDiscovery(basePath, preferences);
+  if (discovery.status === "absent") return "";
+  if (discovery.status === "invalid") return INVALID_CONTRACT_BLOCK;
+  const contract = discovery.contract;
 
   const lines = [
     "## Project-local runtime contract",
@@ -380,5 +413,7 @@ export function renderRuntimeContractForSystemPrompt(
     "- Do not start business projects directly with npm, pnpm, or docker compose commands unless the runtime contract explicitly delegates to them.",
   );
   const rendered = lines.join("\n");
-  return Buffer.byteLength(rendered, "utf-8") <= MAX_RENDERED_CONTRACT_BYTES ? rendered : "";
+  return Buffer.byteLength(rendered, "utf-8") <= MAX_RENDERED_CONTRACT_BYTES
+    ? rendered
+    : INVALID_CONTRACT_BLOCK;
 }

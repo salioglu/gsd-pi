@@ -192,6 +192,36 @@ test("leaves agent context unchanged when no runtime contract exists", async () 
     );
 
     assert.doesNotMatch(result?.systemPrompt ?? "", /## Project-local runtime contract/);
+    assert.doesNotMatch(result?.systemPrompt ?? "", /Invalid project-local runtime contract/);
+  });
+});
+
+test("blocks runtime operations when a discovered contract is invalid", async () => {
+  await withRuntimeProject(async (base) => {
+    const contractDir = join(base, "script", "local-runtime");
+    mkdirSync(contractDir, { recursive: true });
+    symlinkSync("missing-agent-rules.md", join(contractDir, "AGENT.md"));
+
+    const runtimeBlock = renderRuntimeContractForSystemPrompt(base);
+
+    assert.match(runtimeBlock, /Invalid project-local runtime contract/);
+    assert.match(runtimeBlock, /Do not start, restart, seed, stop, reset, or tear down/);
+    assert.doesNotMatch(runtimeBlock, /missing-agent-rules/);
+  });
+});
+
+test("allows configured in-project paths whose names begin with dotdot", async () => {
+  await withRuntimeProject(async (base) => {
+    const contractDir = join(base, "..runtime");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "AGENT.md"), "# Dotdot-prefixed runtime rules\n", "utf-8");
+
+    const runtimeBlock = renderRuntimeContractForSystemPrompt(base, {
+      runtime: { contract: { path: "..runtime" } },
+    });
+
+    assert.match(runtimeBlock, /# Dotdot-prefixed runtime rules/);
+    assert.doesNotMatch(runtimeBlock, /Invalid project-local runtime contract/);
   });
 });
 
@@ -422,6 +452,8 @@ test("rejects contract snapshots whose rendered form exceeds the prompt bound", 
 
     const runtimeBlock = renderRuntimeContractForSystemPrompt(base);
 
-    assert.equal(runtimeBlock, "");
+    assert.match(runtimeBlock, /Invalid project-local runtime contract/);
+    assert.match(runtimeBlock, /Do not start, restart, seed, stop, reset, or tear down/);
+    assert.doesNotMatch(runtimeBlock, /\\u0000/);
   });
 });

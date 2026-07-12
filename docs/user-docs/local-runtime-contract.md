@@ -46,4 +46,6 @@ Global preferences do not activate or override a runtime contract; each project 
 
 Both values must be relative paths that remain inside the project. Recognized contract members must be real regular files; symlinks are rejected even when their targets remain inside the contract directory.
 
+If a configured or discovered contract cannot be validated or safely snapshotted, GSD injects a blocking diagnostic instead of contract content. Agents must not start, restart, seed, stop, reset, or tear down the runtime until the contract is repaired. A project with no configured contract and no recognized files remains behavior-neutral.
+
 In a parent workspace, place the shared contract at the parent project root. Child-repository startup can then be coordinated through one documented entry point.
