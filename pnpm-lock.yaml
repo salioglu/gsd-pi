@@ -199,20 +199,20 @@ importers:
         specifier: 0.3.6
         version: 0.3.6
       '@opengsd/engine-darwin-arm64':
-        specifier: 1.10.0
-        version: 1.10.0
+        specifier: 1.11.0
+        version: 1.11.0
       '@opengsd/engine-darwin-x64':
-        specifier: 1.10.0
-        version: 1.10.0
+        specifier: 1.11.0
+        version: 1.11.0
       '@opengsd/engine-linux-arm64-gnu':
-        specifier: 1.10.0
-        version: 1.10.0
+        specifier: 1.11.0
+        version: 1.11.0
       '@opengsd/engine-linux-x64-gnu':
-        specifier: 1.10.0
-        version: 1.10.0
+        specifier: 1.11.0
+        version: 1.11.0
       '@opengsd/engine-win32-x64-msvc':
-        specifier: 1.10.0
-        version: 1.10.0
+        specifier: 1.11.0
+        version: 1.11.0
       fsevents:
         specifier: ~2.3.3
         version: 2.3.3
@@ -1954,28 +1954,28 @@ packages:
     resolution: {integrity: sha512-nn5ozdjYQpUCZlWGuxcJY/KpxkWQs4DcbMCmKojjyrYDEAGy4Ce19NN4v5MduafTwJlbKc99UA8YhSVqq9yPZA==}
     engines: {node: '>=12.4.0'}
 
-  '@opengsd/engine-darwin-arm64@1.10.0':
-    resolution: {integrity: sha512-mbTkWeqZSnIvjS2uzBQqsyWAN6XbPmpxe+HySH+BKRXn7FwLelFC+nMPcX2tj0MpfNVUt/54Uit6HUi1Sh+JEQ==}
+  '@opengsd/engine-darwin-arm64@1.11.0':
+    resolution: {integrity: sha512-dXc4/QsG2Atf2kPFbm1bxe8Igbj8DrpO0Ot7pxKlFt3CIz0udC20DtiIWLlLplP0MOlLpFEfgRpWcFDRzAgS8Q==}
     cpu: [arm64]
     os: [darwin]
 
-  '@opengsd/engine-darwin-x64@1.10.0':
-    resolution: {integrity: sha512-bxh6k2ABGXhckdZ5ROsPFewBtDsX8FSrmNMglnhdyfAcc3SjP/By9hRvm87WSLgMHQ9s0KFNB63sXyxlVxliZA==}
+  '@opengsd/engine-darwin-x64@1.11.0':
+    resolution: {integrity: sha512-Nqg5gA3wMjrizekJqZrAupl0QdocrwQ03M0QmsUBzqCJ5ZLrPw1FusH8sVaaSlVs/vgS6u3UzrodXWn9HefPXw==}
     cpu: [x64]
     os: [darwin]
 
-  '@opengsd/engine-linux-arm64-gnu@1.10.0':
-    resolution: {integrity: sha512-d+0Mne/d6GrRzcI9f8sfHOSW3AaGDZYY6loVfpi2IOY10alttDfkBJdzHRcDuyaTYzjwAHtAOY1xn9fRckDAXw==}
+  '@opengsd/engine-linux-arm64-gnu@1.11.0':
+    resolution: {integrity: sha512-8dZtWr06T0kC0IgxOg5LnowjZyHsTulQ3aDiLXVoAMXoom/ur4YC1rfyuLv1brBWjg2/KB5z/dcMU9OZJ6Jb4A==}
     cpu: [arm64]
     os: [linux]
 
-  '@opengsd/engine-linux-x64-gnu@1.10.0':
-    resolution: {integrity: sha512-r9va2E6nMGPpMap7ImY5fiDd30I3CowGowz4FHVwu2AoYw5qTEqrMUUhh5aZNkMxPUq0l/e80JCkJLup7bJCmQ==}
+  '@opengsd/engine-linux-x64-gnu@1.11.0':
+    resolution: {integrity: sha512-a6Fx8tuEcErudW4G7pNWCeAyr9xwsny0lq4vKFENh2MKUjiZO+xI50XXey9mjmQ0pLhHJSpFgA6kcpniRxKNPQ==}
     cpu: [x64]
     os: [linux]
 
-  '@opengsd/engine-win32-x64-msvc@1.10.0':
-    resolution: {integrity: sha512-Fs/ZijN6ezFlcZRwJhZ1Y/NbcSnxxhNsyi3G7N/oRx67GoKtSVfQJsPl09wKOCa31G8IiLXUoiEBcl0Q05vAEQ==}
+  '@opengsd/engine-win32-x64-msvc@1.11.0':
+    resolution: {integrity: sha512-y39R3bTQzQPpxv/yp5MYVhatlg4TrBb237gkjPc0SHKSghvnL2xooNNgnV3UAdreH0SW7yhsNT03ggPzrZNXXg==}
     cpu: [x64]
     os: [win32]
 
@@ -7634,19 +7634,19 @@ snapshots:
 
   '@nolyfill/is-core-module@1.0.39': {}
 
-  '@opengsd/engine-darwin-arm64@1.10.0':
+  '@opengsd/engine-darwin-arm64@1.11.0':
     optional: true
 
-  '@opengsd/engine-darwin-x64@1.10.0':
+  '@opengsd/engine-darwin-x64@1.11.0':
     optional: true
 
-  '@opengsd/engine-linux-arm64-gnu@1.10.0':
+  '@opengsd/engine-linux-arm64-gnu@1.11.0':
     optional: true
 
-  '@opengsd/engine-linux-x64-gnu@1.10.0':
+  '@opengsd/engine-linux-x64-gnu@1.11.0':
     optional: true
 
-  '@opengsd/engine-win32-x64-msvc@1.10.0':
+  '@opengsd/engine-win32-x64-msvc@1.11.0':
     optional: true
 
   '@opengsd/gsd-browser@0.2.2': {}
@@ -9769,7 +9769,7 @@ snapshots:
       eslint: 9.39.4(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
       eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.7.3))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0))
-      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.7.3))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.7.3))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0))
+      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.7.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.4(jiti@2.7.0))
       eslint-plugin-jsx-a11y: 6.10.2(eslint@9.39.4(jiti@2.7.0))
       eslint-plugin-react: 7.37.5(eslint@9.39.4(jiti@2.7.0))
       eslint-plugin-react-hooks: 7.1.1(eslint@9.39.4(jiti@2.7.0))
@@ -9802,7 +9802,7 @@ snapshots:
       tinyglobby: 0.2.17
       unrs-resolver: 1.12.2
     optionalDependencies:
-      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.7.3))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.7.3))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0))
+      eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.7.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.4(jiti@2.7.0))
     transitivePeerDependencies:
       - supports-color
 
@@ -9817,7 +9817,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.7.3))(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.7.3))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0)))(eslint@9.39.4(jiti@2.7.0)):
+  eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@5.7.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.4(jiti@2.7.0)):
     dependencies:
       '@rtsao/scc': 1.1.0
       array-includes: 3.1.9
