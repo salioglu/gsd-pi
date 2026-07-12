@@ -42,6 +42,8 @@ runtime:
 ---
 ```
 
+Global preferences do not activate or override a runtime contract; each project must opt in locally when it does not use the default path.
+
 Both values must be relative paths that remain inside the project. Recognized contract members must be real regular files; symlinks are rejected even when their targets remain inside the contract directory.
 
 In a parent workspace, place the shared contract at the parent project root. Child-repository startup can then be coordinated through one documented entry point.

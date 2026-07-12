@@ -178,6 +178,7 @@ Diagnostics record the file path, scope (global/project), severity (error/warnin
   - `path`: optional contract directory relative to the active project or worktree root. Default: `script/local-runtime`.
   - `entry`: optional canonical entry point relative to the contract directory.
   - Both paths must remain inside the project. See [Project-local runtime contract](../../../../../docs/user-docs/local-runtime-contract.md).
+  - Configure this only in project preferences; global preferences do not activate or override runtime contracts.
 
 ## Workspace Example
 

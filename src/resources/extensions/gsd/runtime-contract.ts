@@ -17,6 +17,7 @@ import { createRepositoryRegistryFromPreferences } from "./repository-registry.j
 const DEFAULT_CONTRACT_PATH = "script/local-runtime";
 const DEFAULT_ENTRY_NAMES = ["runtime.mjs", "runtime.js", "runtime.ts", "runtime.sh"];
 const MAX_CONTRACT_DOCUMENT_BYTES = 8_000;
+const MAX_RENDERED_CONTRACT_BYTES = 20_000;
 
 export interface RuntimeContractDocument {
   path: string;
@@ -39,7 +40,7 @@ export interface ResolvedRuntimeContract {
 interface OpenedContractDirectory {
   fd: number;
   path: string;
-  stats: ReturnType<typeof fstatSync>;
+  stats: Stats;
 }
 
 interface ContractMemberSnapshot {
@@ -47,15 +48,18 @@ interface ContractMemberSnapshot {
   stats: Stats | null;
 }
 
+interface RuntimeContractSnapshotHooks {
+  afterMemberCapture?: (name: string) => void;
+  beforeFileOpen?: (name: string) => void;
+  afterFileRead?: (name: string) => void;
+}
+
 function isWithin(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel) && !win32.isAbsolute(rel));
 }
 
-function sameFile(
-  left: ReturnType<typeof fstatSync>,
-  right: ReturnType<typeof statSync>,
-): boolean {
+function sameFile(left: Stats, right: Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
@@ -114,8 +118,8 @@ function assertContractDirectoryIdentity(directory: OpenedContractDirectory): vo
   if (
     currentPath !== directory.path ||
     !openedStats.isDirectory() ||
-    !sameFile(directory.stats, openedStats) ||
-    !sameFile(directory.stats, currentStats)
+    !sameMember(directory.stats, openedStats) ||
+    !sameMember(directory.stats, currentStats)
   ) {
     throw new Error("Runtime contract directory changed during snapshot assembly");
   }
@@ -124,6 +128,7 @@ function assertContractDirectoryIdentity(directory: OpenedContractDirectory): vo
 function captureContractMembers(
   contractDir: string,
   names: string[],
+  afterMemberCapture?: (name: string) => void,
 ): Map<string, ContractMemberSnapshot> {
   const members = new Map<string, ContractMemberSnapshot>();
   for (const name of new Set(names)) {
@@ -140,6 +145,7 @@ function captureContractMembers(
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       members.set(name, { path, stats: null });
     }
+    afterMemberCapture?.(name);
   }
   return members;
 }
@@ -162,6 +168,7 @@ function openValidatedFile(
   projectRoot: string,
   contractDir: string,
   member: ContractMemberSnapshot,
+  beforeOpen?: () => void,
 ): { path: string; size: number; content: Buffer } | undefined {
   if (!member.stats) return undefined;
 
@@ -169,26 +176,31 @@ function openValidatedFile(
   try {
     const pathStats = lstatSync(member.path);
     if (pathStats.isSymbolicLink() || !pathStats.isFile() || !sameMember(member.stats, pathStats)) {
-      return undefined;
+      throw new Error("Runtime contract member changed before opening");
     }
 
+    beforeOpen?.();
     fd = openSync(member.path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const openedStats = fstatSync(fd);
-    if (!openedStats.isFile() || !sameMember(member.stats, openedStats)) return undefined;
+    if (!openedStats.isFile() || !sameMember(member.stats, openedStats)) {
+      throw new Error("Runtime contract member changed while opening");
+    }
 
     const path = realpathSync.native(member.path);
-    if (!isWithin(projectRoot, path) || !isWithin(contractDir, path)) return undefined;
-    if (!sameMember(member.stats, statSync(path))) return undefined;
+    if (!isWithin(projectRoot, path) || !isWithin(contractDir, path)) {
+      throw new Error("Runtime contract member escapes its directory");
+    }
+    if (!sameMember(member.stats, statSync(path))) {
+      throw new Error("Runtime contract member path changed while opening");
+    }
 
     const content = readOpenedFile(fd, Math.min(openedStats.size, MAX_CONTRACT_DOCUMENT_BYTES));
     const finalStats = fstatSync(fd);
     const finalPathStats = lstatSync(member.path);
     if (!sameMember(member.stats, finalStats) || !sameMember(member.stats, finalPathStats)) {
-      return undefined;
+      throw new Error("Runtime contract member changed while reading");
     }
     return { path, size: openedStats.size, content };
-  } catch {
-    return undefined;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -198,8 +210,9 @@ function resolveContractDocument(
   projectRoot: string,
   contractDir: string,
   member: ContractMemberSnapshot,
+  beforeOpen?: () => void,
 ): RuntimeContractDocument | undefined {
-  const file = openValidatedFile(projectRoot, contractDir, member);
+  const file = openValidatedFile(projectRoot, contractDir, member, beforeOpen);
   if (!file) return undefined;
   return {
     path: file.path,
@@ -212,15 +225,16 @@ function resolveContractEntry(
   projectRoot: string,
   contractDir: string,
   member: ContractMemberSnapshot,
+  beforeOpen?: () => void,
 ): RuntimeContractEntry | undefined {
-  const file = openValidatedFile(projectRoot, contractDir, member);
+  const file = openValidatedFile(projectRoot, contractDir, member, beforeOpen);
   return file ? { path: file.path, size: file.size } : undefined;
 }
 
 function discoverRuntimeContract(
   basePath: string,
   preferences?: GSDPreferences,
-  afterFileRead?: (name: string) => void,
+  hooks?: RuntimeContractSnapshotHooks,
 ): ResolvedRuntimeContract | null {
   const repositoryRegistry = createRepositoryRegistryFromPreferences(basePath, preferences);
   const projectRoot = realpathSync.native(repositoryRegistry.projectRoot);
@@ -236,31 +250,50 @@ function discoverRuntimeContract(
 
   try {
     const entryNames = configured?.entry ? [configured.entry] : DEFAULT_ENTRY_NAMES;
-    const members = captureContractMembers(directory.path, ["AGENT.md", "README.md", ...entryNames]);
+    const members = captureContractMembers(
+      directory.path,
+      ["AGENT.md", "README.md", ...entryNames],
+      hooks?.afterMemberCapture,
+    );
     assertContractDirectoryIdentity(directory);
     assertContractMembersIdentity(members);
 
     const readFromContractDirectory = <T>(name: string, read: () => T): T => {
       assertContractDirectoryIdentity(directory);
       const result = read();
-      afterFileRead?.(name);
+      hooks?.afterFileRead?.(name);
       assertContractDirectoryIdentity(directory);
       return result;
     };
 
     const agentInstructions = readFromContractDirectory(
       "AGENT.md",
-      () => resolveContractDocument(projectRoot, directory.path, members.get("AGENT.md")!),
+      () => resolveContractDocument(
+        projectRoot,
+        directory.path,
+        members.get("AGENT.md")!,
+        () => hooks?.beforeFileOpen?.("AGENT.md"),
+      ),
     );
     const readme = readFromContractDirectory(
       "README.md",
-      () => resolveContractDocument(projectRoot, directory.path, members.get("README.md")!),
+      () => resolveContractDocument(
+        projectRoot,
+        directory.path,
+        members.get("README.md")!,
+        () => hooks?.beforeFileOpen?.("README.md"),
+      ),
     );
     let entry: RuntimeContractEntry | undefined;
     for (const name of entryNames) {
       entry = readFromContractDirectory(
         name,
-        () => resolveContractEntry(projectRoot, directory.path, members.get(name)!),
+        () => resolveContractEntry(
+          projectRoot,
+          directory.path,
+          members.get(name)!,
+          () => hooks?.beforeFileOpen?.(name),
+        ),
       );
       if (entry) break;
     }
@@ -284,7 +317,19 @@ export function _resolveRuntimeContractWithReadHookForTest(
   preferences?: GSDPreferences,
 ): ResolvedRuntimeContract | null {
   try {
-    return discoverRuntimeContract(basePath, preferences, afterFileRead);
+    return discoverRuntimeContract(basePath, preferences, { afterFileRead });
+  } catch {
+    return null;
+  }
+}
+
+export function _resolveRuntimeContractWithSnapshotHooksForTest(
+  basePath: string,
+  hooks: RuntimeContractSnapshotHooks,
+  preferences?: GSDPreferences,
+): ResolvedRuntimeContract | null {
+  try {
+    return discoverRuntimeContract(basePath, preferences, hooks);
   } catch {
     return null;
   }
@@ -334,5 +379,6 @@ export function renderRuntimeContractForSystemPrompt(
     "- Do not execute the runtime automatically. Revalidate the entry point before any user-directed invocation.",
     "- Do not start business projects directly with npm, pnpm, or docker compose commands unless the runtime contract explicitly delegates to them.",
   );
-  return lines.join("\n");
+  const rendered = lines.join("\n");
+  return Buffer.byteLength(rendered, "utf-8") <= MAX_RENDERED_CONTRACT_BYTES ? rendered : "";
 }

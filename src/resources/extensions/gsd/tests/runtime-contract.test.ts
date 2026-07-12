@@ -16,6 +16,7 @@ import { _clearGsdRootCache } from "../paths.ts";
 import { clearGSDPreferencesCache } from "../preferences.ts";
 import {
   _resolveRuntimeContractWithReadHookForTest,
+  _resolveRuntimeContractWithSnapshotHooksForTest,
   renderRuntimeContractForSystemPrompt,
   resolveRuntimeContract,
 } from "../runtime-contract.ts";
@@ -113,6 +114,39 @@ test("uses the configured runtime contract path and entry point", async () => {
     assertContainsPath(systemPrompt, join(contractDir, "README.md"));
     assertContainsPath(systemPrompt, join(contractDir, "run.mjs"));
     assert.doesNotMatch(systemPrompt, /script[\\/]local-runtime/);
+  });
+});
+
+test("does not inherit a runtime contract override from global preferences", async () => {
+  await withRuntimeProject(async (base, ctx) => {
+    const globalPreferencesDir = join(base, ".test-home", ".gsd");
+    mkdirSync(globalPreferencesDir, { recursive: true });
+    writeFileSync(
+      join(globalPreferencesDir, "PREFERENCES.md"),
+      [
+        "---",
+        "language: Spanish",
+        "runtime:",
+        "  contract:",
+        "    path: ops/global-runtime",
+        "---",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    const contractDir = join(base, "ops", "global-runtime");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "AGENT.md"), "# Global runtime rules\n", "utf-8");
+    clearGSDPreferencesCache();
+
+    const result = await buildBeforeAgentStartResult(
+      { prompt: "Inspect the application", systemPrompt: "base system prompt" },
+      ctx,
+    );
+
+    assert.doesNotMatch(result?.systemPrompt ?? "", /# Global runtime rules/);
+    assert.doesNotMatch(result?.systemPrompt ?? "", /## Project-local runtime contract/);
+    assert.match(result?.systemPrompt ?? "", /Language: Always respond in Spanish/);
   });
 });
 
@@ -238,6 +272,45 @@ test("fails closed when the contract directory changes between file reads", asyn
   });
 });
 
+test("fails closed when a member changes during identity capture", async () => {
+  await withRuntimeProject(async (base) => {
+    const contractDir = join(base, "script", "local-runtime");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "AGENT.md"), "# Generation one rules\n", "utf-8");
+    writeFileSync(join(contractDir, "README.md"), "# Generation one documentation\n", "utf-8");
+    const replacement = join(contractDir, "README.md.replacement");
+    writeFileSync(replacement, "# Generation two documentation\n", "utf-8");
+
+    const contract = _resolveRuntimeContractWithSnapshotHooksForTest(base, {
+      afterMemberCapture(name) {
+        if (name === "AGENT.md") renameSync(replacement, join(contractDir, "README.md"));
+      },
+    });
+
+    assert.equal(contract, null);
+  });
+});
+
+test("fails closed when a captured member temporarily cannot be read", async () => {
+  await withRuntimeProject(async (base) => {
+    const contractDir = join(base, "script", "local-runtime");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "AGENT.md"), "# Runtime rules\n", "utf-8");
+    writeFileSync(join(contractDir, "README.md"), "# Runtime documentation\n", "utf-8");
+
+    const contract = _resolveRuntimeContractWithSnapshotHooksForTest(base, {
+      beforeFileOpen(name) {
+        if (name !== "README.md") return;
+        const error = new Error("simulated read failure") as NodeJS.ErrnoException;
+        error.code = "EIO";
+        throw error;
+      },
+    });
+
+    assert.equal(contract, null);
+  });
+});
+
 for (const [target, replaceAfter] of [
   ["AGENT.md", "AGENT.md"],
   ["README.md", "AGENT.md"],
@@ -324,5 +397,31 @@ test("bounds and clearly delimits injected contract snapshots", async () => {
     assert.match(runtimeBlock, /truncated/);
     assert.doesNotMatch(runtimeBlock, /TAIL/);
     assert.ok(runtimeBlock.length < 10_000);
+  });
+});
+
+test("does not mark fully retained multibyte documents as truncated", async () => {
+  await withRuntimeProject(async (base) => {
+    const contractDir = join(base, "script", "local-runtime");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "AGENT.md"), "運行規則：安全に開始する。\n", "utf-8");
+
+    const contract = resolveRuntimeContract(base);
+
+    assert.equal(contract?.agentInstructions?.truncated, false);
+    assert.equal(contract?.agentInstructions?.content, "運行規則：安全に開始する。\n");
+  });
+});
+
+test("rejects contract snapshots whose rendered form exceeds the prompt bound", async () => {
+  await withRuntimeProject(async (base) => {
+    const contractDir = join(base, "script", "local-runtime");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "AGENT.md"), "\u0000".repeat(8_000), "utf-8");
+    writeFileSync(join(contractDir, "README.md"), "\u0001".repeat(8_000), "utf-8");
+
+    const runtimeBlock = renderRuntimeContractForSystemPrompt(base);
+
+    assert.equal(runtimeBlock, "");
   });
 });

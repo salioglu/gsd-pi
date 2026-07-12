@@ -357,6 +357,7 @@ export function loadEffectiveGSDPreferences(
   const effectiveGlobalPreferences = globalPreferences?.ignored ? null : globalPreferences;
   const effectiveProjectPreferences = projectPreferences?.ignored ? null : projectPreferences;
   const projectHasPlanningDepth = effectiveProjectPreferences?.preferences.planning_depth !== undefined;
+  const projectHasRuntimeContract = effectiveProjectPreferences?.preferences.runtime?.contract !== undefined;
 
   if (!effectiveGlobalPreferences && !effectiveProjectPreferences) {
     cacheEffectivePreferences(cacheKey, null);
@@ -416,6 +417,7 @@ export function loadEffectiveGSDPreferences(
   }
 
   result = stripInheritedPlanningDepth(result, projectHasPlanningDepth);
+  result = stripInheritedRuntimeContract(result, projectHasRuntimeContract);
   result = appendCrossAxisPreferenceWarnings(result);
 
   cacheEffectivePreferences(cacheKey, result);
@@ -504,6 +506,19 @@ function stripInheritedPlanningDepth(
   // fresh repo behave like `/gsd new-project --deep`.
   const preferences: GSDPreferences = { ...loaded.preferences };
   delete preferences.planning_depth;
+  return { ...loaded, preferences };
+}
+
+function stripInheritedRuntimeContract(
+  loaded: LoadedGSDPreferences,
+  projectHasRuntimeContract: boolean,
+): LoadedGSDPreferences {
+  if (projectHasRuntimeContract || loaded.preferences.runtime?.contract === undefined) {
+    return loaded;
+  }
+
+  const preferences: GSDPreferences = { ...loaded.preferences };
+  delete preferences.runtime;
   return { ...loaded, preferences };
 }
 
