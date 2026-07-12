@@ -404,7 +404,7 @@ console.log('\n=== complete-task: roadmap expected output is not re-rendered fro
 `;
   fs.writeFileSync(roadmapPath, roadmapContent);
 
-  insertMilestone({ id: 'M001', title: 'Test Milestone', vision: 'Stale DB vision' });
+  insertMilestone({ id: 'M001', title: 'Test Milestone', planning: { vision: 'Stale DB vision' } });
   insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice', risk: 'high', depends: [], demo: 'basic functionality works', sequence: 1 });
   insertTask({
     id: 'T01',
