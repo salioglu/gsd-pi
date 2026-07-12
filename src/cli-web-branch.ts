@@ -44,7 +44,6 @@ type WritableLike = Pick<typeof process.stderr, 'write'>
 const VALID_THINKING_LEVELS = new Set<CliThinkingLevel>(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 
 const PASSTHROUGH_SUBCOMMANDS = new Set([
-  'auto',
   'config',
   'graph',
   'headless',

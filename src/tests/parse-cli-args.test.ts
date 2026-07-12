@@ -127,6 +127,14 @@ describe('parseCliArgs — short flags and basic options', () => {
     const flags = parse('headless', '--bare', 'auto')
     assert.deepEqual(flags.messages, ['headless', '--bare', 'auto'])
   })
+
+  test('`auto` does not pass through: --model/--thinking are parsed so buildHeadlessAutoArgs can reorder them', () => {
+    const flags = parse('auto', '--model', 'test-model', '--thinking', 'medium')
+    assert.deepEqual(flags.messages, ['auto'])
+    assert.equal(flags.model, 'test-model')
+    assert.equal(flags.thinking, 'medium')
+    assert.deepEqual(buildHeadlessAutoArgs(flags), ['--model', 'test-model', '--thinking', 'medium', 'auto'])
+  })
 })
 
 describe('parseCliArgs — list flags and accumulators', () => {
