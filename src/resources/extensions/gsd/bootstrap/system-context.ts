@@ -1,7 +1,7 @@
 // Project/App: gsd-pi
 // File Purpose: System prompt and hidden context bootstrap for GSD sessions.
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
@@ -306,17 +306,27 @@ export async function _flushDeferredContextMaintenanceForTest(basePath?: string)
   await Promise.allSettled(tasks);
 }
 
+function resolveExistingContextPath(candidate: string | undefined): string | undefined {
+  if (!candidate) return undefined;
+  try {
+    return realpathSync.native(resolve(candidate));
+  } catch {
+    return undefined;
+  }
+}
+
 export async function buildBeforeAgentStartResult(
   event: { prompt: string; systemPrompt: string },
   ctx: ExtensionContext,
 ): Promise<{ systemPrompt: string; message?: { customType: string; content: string; display: false } } | undefined> {
   const compatibleContext = ctx as ExtensionContext & { projectRoot?: string };
   const contextPath = compatibleContext.cwd ?? compatibleContext.projectRoot;
-  if (!contextPath) return undefined;
+  const resolvedContextPath = resolveExistingContextPath(contextPath);
+  if (!resolvedContextPath) return undefined;
   const propagatedProjectRoot = process.env.GSD_SUBAGENT_CHILD === "1"
-    ? process.env.GSD_PROJECT_ROOT?.trim()
+    ? resolveExistingContextPath(process.env.GSD_PROJECT_ROOT?.trim())
     : undefined;
-  const basePath = propagatedProjectRoot || contextPath;
+  const basePath = propagatedProjectRoot ?? resolvedContextPath;
   if (!existsSync(gsdRoot(basePath))) return undefined;
 
   const stopContextTimer = debugTime("context-inject");

@@ -48,6 +48,12 @@ interface ContractMemberSnapshot {
   stats: Stats | null;
 }
 
+interface ValidatedOpenedFile {
+  fd: number;
+  path: string;
+  stats: Stats;
+}
+
 interface PathComponentSnapshot {
   path: string;
   stats: Stats;
@@ -56,6 +62,7 @@ interface PathComponentSnapshot {
 interface RuntimeContractSnapshotHooks {
   afterPathComponentCapture?: () => void;
   beforeContractDirectoryOpen?: () => void;
+  afterStableMemberCapture?: (name: string) => void;
   afterMemberCapture?: (name: string) => void;
   beforeFileOpen?: (name: string) => void;
   afterFileRead?: (name: string) => void;
@@ -236,10 +243,11 @@ function captureContractMembers(
 function captureStableContractMembers(
   directory: OpenedContractDirectory,
   names: string[],
+  afterMemberCapture?: (name: string) => void,
 ): Map<string, ContractMemberSnapshot> {
   return captureUnderStableDirectory(
     directory,
-    () => captureContractMembers(directory.path, names),
+    () => captureContractMembers(directory.path, names, afterMemberCapture),
   );
 }
 
@@ -247,11 +255,15 @@ function captureUnderStableDirectory<T>(
   directory: OpenedContractDirectory,
   capture: () => T,
 ): T {
-  const beforeCapture = fstatSync(directory.fd);
   const result = capture();
-  const afterCapture = fstatSync(directory.fd);
+  const openedStats = fstatSync(directory.fd);
   const currentPathStats = statSync(directory.path);
-  if (!sameMember(beforeCapture, afterCapture) || !sameMember(beforeCapture, currentPathStats)) {
+  if (
+    !openedStats.isDirectory() ||
+    !currentPathStats.isDirectory() ||
+    !sameFile(directory.stats, openedStats) ||
+    !sameFile(directory.stats, currentPathStats)
+  ) {
     throw new Error("Runtime contract directory changed during member capture");
   }
   return result;
@@ -289,12 +301,13 @@ function assertContractMembersIdentity(
   }
 }
 
-function openValidatedFile(
+function withValidatedOpenedFile<T>(
   projectRoot: string,
   contractDir: string,
   member: ContractMemberSnapshot,
+  use: (file: ValidatedOpenedFile) => T,
   beforeOpen?: () => void,
-): { path: string; size: number; content: Buffer } | undefined {
+): T | undefined {
   if (!member.stats) return undefined;
 
   let fd: number | undefined;
@@ -312,9 +325,6 @@ function openValidatedFile(
     if (!openedStats.isFile() || !sameMember(member.stats, openedStats)) {
       throw new Error("Runtime contract member changed while opening");
     }
-    if (openedStats.size > MAX_CONTRACT_DOCUMENT_BYTES) {
-      throw new Error("Runtime contract member exceeds the snapshot limit");
-    }
 
     const path = realpathSync.native(member.path);
     if (!isWithin(projectRoot, path) || !isWithin(contractDir, path)) {
@@ -324,14 +334,14 @@ function openValidatedFile(
       throw new Error("Runtime contract member path changed while opening");
     }
 
-    const content = readOpenedFile(fd, openedStats.size);
+    const result = use({ fd, path, stats: openedStats });
     const finalStats = fstatSync(fd);
     assertNoSymlinkPathComponents(contractDir, member.path);
     const finalPathStats = lstatSync(member.path);
     if (!sameMember(member.stats, finalStats) || !sameMember(member.stats, finalPathStats)) {
-      throw new Error("Runtime contract member changed while reading");
+      throw new Error("Runtime contract member changed during validation");
     }
-    return { path, size: openedStats.size, content };
+    return result;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -343,12 +353,15 @@ function resolveContractDocument(
   member: ContractMemberSnapshot,
   beforeOpen?: () => void,
 ): RuntimeContractDocument | undefined {
-  const file = openValidatedFile(projectRoot, contractDir, member, beforeOpen);
-  if (!file) return undefined;
-  return {
-    path: file.path,
-    content: file.content.toString("utf-8"),
-  };
+  return withValidatedOpenedFile(projectRoot, contractDir, member, (file) => {
+    if (file.stats.size > MAX_CONTRACT_DOCUMENT_BYTES) {
+      throw new Error("Runtime contract member exceeds the snapshot limit");
+    }
+    return {
+      path: file.path,
+      content: readOpenedFile(file.fd, file.stats.size).toString("utf-8"),
+    };
+  }, beforeOpen);
 }
 
 function resolveContractEntry(
@@ -357,41 +370,10 @@ function resolveContractEntry(
   member: ContractMemberSnapshot,
   beforeOpen?: () => void,
 ): RuntimeContractEntry | undefined {
-  if (!member.stats) return undefined;
-
-  let fd: number | undefined;
-  try {
-    assertNoSymlinkPathComponents(contractDir, member.path);
-    const pathStats = lstatSync(member.path);
-    if (pathStats.isSymbolicLink() || !pathStats.isFile() || !sameMember(member.stats, pathStats)) {
-      throw new Error("Runtime contract entry changed before opening");
-    }
-
-    beforeOpen?.();
-    assertNoSymlinkPathComponents(contractDir, member.path);
-    fd = openSync(member.path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const openedStats = fstatSync(fd);
-    if (!openedStats.isFile() || !sameMember(member.stats, openedStats)) {
-      throw new Error("Runtime contract entry changed while opening");
-    }
-    const path = realpathSync.native(member.path);
-    if (!isWithin(projectRoot, path) || !isWithin(contractDir, path)) {
-      throw new Error("Runtime contract entry escapes its directory");
-    }
-    if (!sameMember(member.stats, statSync(path))) {
-      throw new Error("Runtime contract entry path changed while opening");
-    }
-
-    const finalStats = fstatSync(fd);
-    assertNoSymlinkPathComponents(contractDir, member.path);
-    const finalPathStats = lstatSync(member.path);
-    if (!sameMember(member.stats, finalStats) || !sameMember(member.stats, finalPathStats)) {
-      throw new Error("Runtime contract entry changed during validation");
-    }
-    return { path, size: openedStats.size };
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
+  return withValidatedOpenedFile(projectRoot, contractDir, member, (file) => ({
+    path: file.path,
+    size: file.stats.size,
+  }), beforeOpen);
 }
 
 function discoverRuntimeContract(
@@ -437,7 +419,11 @@ function discoverRuntimeContract(
     if (defaultEntryMembers) entryMemberNames = [...defaultEntryMembers.keys()];
     else if (configured?.entry) entryMemberNames = [configured.entry];
     const memberNames = ["AGENT.md", "README.md", ...entryMemberNames];
-    const baselineMembers = captureStableContractMembers(directory, memberNames);
+    const baselineMembers = captureStableContractMembers(
+      directory,
+      memberNames,
+      hooks?.afterStableMemberCapture,
+    );
     const members = captureContractMembers(
       directory.path,
       memberNames,

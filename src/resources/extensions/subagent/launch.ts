@@ -71,9 +71,18 @@ function isWithin(root: string, candidate: string): boolean {
 	return rel === "" || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel));
 }
 
-export function resolveSubagentProjectRoot(defaultCwd: string, sourceCwd: string): string {
-	const parent = path.resolve(defaultCwd);
-	const source = path.resolve(sourceCwd);
+function resolveExistingPath(candidate: string): string | undefined {
+	try {
+		return fs.realpathSync.native(path.resolve(candidate));
+	} catch {
+		return undefined;
+	}
+}
+
+export function resolveSubagentProjectRoot(defaultCwd: string, sourceCwd: string): string | undefined {
+	const parent = resolveExistingPath(defaultCwd);
+	const source = resolveExistingPath(sourceCwd);
+	if (!parent || !source) return undefined;
 	return isWithin(parent, source) ? parent : source;
 }
 
@@ -143,11 +152,12 @@ export function resolveSubagentSessionArgs(
 
 export function createSubagentLaunchPlan(input: SubagentLaunchInput): SubagentLaunchPlan {
 	const session = input.session ?? resolveSubagentSessionArgs(input.contextMode ?? "fresh", input.parentSessionManager);
-	const cwd = path.resolve(input.cwd ?? input.defaultCwd);
-	const defaultCwd = path.resolve(input.defaultCwd);
+	const requestedCwd = path.resolve(input.cwd ?? input.defaultCwd);
+	const cwd = resolveExistingPath(requestedCwd) ?? requestedCwd;
+	const defaultCwd = resolveExistingPath(input.defaultCwd);
 	const projectRoot = input.projectRoot
-		? path.resolve(input.projectRoot)
-		: isWithin(defaultCwd, cwd) ? defaultCwd : undefined;
+		? resolveExistingPath(input.projectRoot)
+		: defaultCwd && isWithin(defaultCwd, cwd) ? defaultCwd : undefined;
 	return {
 		args: buildSubagentProcessArgs(
 			input.agent,

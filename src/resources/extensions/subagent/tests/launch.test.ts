@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, afterEach } from "node:test";
@@ -18,6 +18,7 @@ import {
 	buildSubagentProcessEnv,
 	createSubagentLaunchPlan,
 	isSubagentChildProcess,
+	resolveSubagentProjectRoot,
 	resolveSubagentSessionArgs,
 } from "../launch.js";
 
@@ -74,19 +75,44 @@ describe("subagent launch module", () => {
 	});
 
 	it("propagates the parent authority to a nested repository child", () => {
+		dir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-subagent-parent-")));
+		const child = join(dir, "frontend");
+		mkdirSync(child);
 		const plan = createSubagentLaunchPlan({
 			agent: makeAgent(),
 			task: "inspect the frontend",
 			tmpPromptPath: null,
-			defaultCwd: "/workspace",
-			cwd: "/workspace/frontend",
+			defaultCwd: dir,
+			cwd: child,
 		});
 
-		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], "/workspace");
+		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], dir);
 		assert.deepEqual(buildShellEnvAssignments(plan.env), [
 			`${SUBAGENT_CHILD_ENV_VAR}='${SUBAGENT_CHILD_ENV_VALUE}'`,
-			`${SUBAGENT_PROJECT_ROOT_ENV_VAR}='/workspace'`,
+			`${SUBAGENT_PROJECT_ROOT_ENV_VAR}='${dir}'`,
 		]);
+	});
+
+	it("does not propagate parent authority through a symlinked child path", () => {
+		dir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-subagent-symlink-")));
+		const workspace = join(dir, "workspace");
+		const externalRepo = join(dir, "external-repo");
+		const linkedRepo = join(workspace, "linked-repo");
+		mkdirSync(workspace);
+		mkdirSync(externalRepo);
+		symlinkSync(externalRepo, linkedRepo, "dir");
+
+		const plan = createSubagentLaunchPlan({
+			agent: makeAgent(),
+			task: "inspect the linked repository",
+			tmpPromptPath: null,
+			defaultCwd: workspace,
+			cwd: linkedRepo,
+		});
+
+		assert.equal(plan.cwd, externalRepo);
+		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], undefined);
+		assert.equal(resolveSubagentProjectRoot(workspace, linkedRepo), externalRepo);
 	});
 
 	it("shell-escapes cmux environment values without command execution", () => {
@@ -109,16 +135,21 @@ describe("subagent launch module", () => {
 	});
 
 	it("propagates explicit authority to an isolated child checkout", () => {
+		dir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-subagent-isolated-")));
+		const workspace = join(dir, "workspace");
+		const isolatedCheckout = join(dir, "isolated-checkout");
+		mkdirSync(workspace);
+		mkdirSync(isolatedCheckout);
 		const plan = createSubagentLaunchPlan({
 			agent: makeAgent(),
 			task: "inspect in isolation",
 			tmpPromptPath: null,
-			defaultCwd: "/workspace",
-			cwd: "/tmp/isolated-checkout",
-			projectRoot: "/workspace",
+			defaultCwd: workspace,
+			cwd: isolatedCheckout,
+			projectRoot: workspace,
 		});
 
-		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], "/workspace");
+		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], workspace);
 	});
 
 	it("removes stale project authority for an unrelated child cwd", () => {

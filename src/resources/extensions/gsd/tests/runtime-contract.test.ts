@@ -273,6 +273,32 @@ test("injects the owning contract into an explicitly isolated subagent", async (
   });
 });
 
+test("ignores propagated project authority when its filesystem identity is unavailable", async () => {
+  await withRuntimeProject(async (base, ctx) => {
+    const contractDir = join(base, "script", "local-runtime");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "AGENT.md"), "# Current repository runtime\n", "utf-8");
+    const previousChild = process.env.GSD_SUBAGENT_CHILD;
+    const previousRoot = process.env.GSD_PROJECT_ROOT;
+    process.env.GSD_SUBAGENT_CHILD = "1";
+    process.env.GSD_PROJECT_ROOT = join(base, "missing-project");
+
+    try {
+      const result = await buildBeforeAgentStartResult(
+        { prompt: "Inspect the repository", systemPrompt: "base system prompt" },
+        ctx,
+      );
+
+      assert.match(result?.systemPrompt ?? "", /# Current repository runtime/);
+    } finally {
+      if (previousChild === undefined) delete process.env.GSD_SUBAGENT_CHILD;
+      else process.env.GSD_SUBAGENT_CHILD = previousChild;
+      if (previousRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
+      else process.env.GSD_PROJECT_ROOT = previousRoot;
+    }
+  });
+});
+
 test("leaves agent context unchanged when no runtime contract exists", async () => {
   await withRuntimeProject(async (_base, ctx) => {
     const result = await buildBeforeAgentStartResult(
@@ -823,6 +849,25 @@ test("ignores changes to lower-priority default entry candidates", async () => {
 
     const contract = _resolveRuntimeContractWithSnapshotHooksForTest(base, {
       afterMemberCapture(name) {
+        if (name === "runtime.mjs") renameSync(replacement, join(contractDir, "runtime.ts"));
+      },
+    });
+
+    assert.equal(contract?.entry?.path, join(contractDir, "runtime.mjs"));
+  });
+});
+
+test("ignores lower-priority entry replacement during stable member capture", async () => {
+  await withRuntimeProject(async (base) => {
+    const contractDir = join(base, "script", "local-runtime");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "runtime.mjs"), "export {}\n", "utf-8");
+    writeFileSync(join(contractDir, "runtime.ts"), "export const generation = 1;\n", "utf-8");
+    const replacement = join(contractDir, "runtime.ts.replacement");
+    writeFileSync(replacement, "export const generation = 2;\n", "utf-8");
+
+    const contract = _resolveRuntimeContractWithSnapshotHooksForTest(base, {
+      afterStableMemberCapture(name) {
         if (name === "runtime.mjs") renameSync(replacement, join(contractDir, "runtime.ts"));
       },
     });
