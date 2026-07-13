@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
+import { resetCmuxPromptState } from "../../cmux/index.ts";
 import {
   _flushDeferredContextMaintenanceForTest,
   buildForensicsContextInjection,
@@ -673,19 +674,67 @@ test("ignores changes to lower-priority default entry candidates", async () => {
   });
 });
 
-test("bounds and clearly delimits injected contract snapshots", async () => {
-  await withRuntimeProject(async (base) => {
-    const contractDir = join(base, "script", "local-runtime");
-    mkdirSync(contractDir, { recursive: true });
-    writeFileSync(join(contractDir, "AGENT.md"), `# Runtime rules\n${"a".repeat(20_000)}TAIL`, "utf-8");
+for (const oversizedMember of ["AGENT.md", "README.md", "runtime.mjs"] as const) {
+  test(`fails closed when ${oversizedMember} exceeds the snapshot limit`, async () => {
+    await withRuntimeProject(async (base) => {
+      const contractDir = join(base, "script", "local-runtime");
+      mkdirSync(contractDir, { recursive: true });
+      writeFileSync(join(contractDir, "AGENT.md"), "# Runtime rules\n", "utf-8");
+      writeFileSync(join(contractDir, "README.md"), "# Runtime documentation\n", "utf-8");
+      writeFileSync(join(contractDir, "runtime.mjs"), "export {};\n", "utf-8");
+      writeFileSync(join(contractDir, oversizedMember), `SAFE_PREFIX\n${"a".repeat(8_000)}UNREAD_RULE`, "utf-8");
 
-    const runtimeBlock = renderRuntimeContractForSystemPrompt(base);
+      const runtimeBlock = renderRuntimeContractForSystemPrompt(base);
 
-    assert.match(runtimeBlock, /<runtime-contract-snapshot/);
-    assert.match(runtimeBlock, /<\/runtime-contract-snapshot>/);
-    assert.match(runtimeBlock, /truncated/);
-    assert.doesNotMatch(runtimeBlock, /TAIL/);
-    assert.ok(runtimeBlock.length < 10_000);
+      assert.match(runtimeBlock, /Invalid project-local runtime contract/);
+      assert.match(runtimeBlock, /Do not start, restart, seed, stop, reset, or tear down/);
+      assert.doesNotMatch(runtimeBlock, /SAFE_PREFIX|UNREAD_RULE/);
+      assert.doesNotMatch(runtimeBlock, /<runtime-contract-snapshot/);
+    });
+  });
+}
+
+test("cmux auto-enable preserves malformed runtime contract blocking", async () => {
+  await withRuntimeProject(async (base, ctx) => {
+    const preferencesPath = join(base, ".gsd", "PREFERENCES.md");
+    const socketPath = join(base, "cmux.sock");
+    const originalWorkspaceId = process.env.CMUX_WORKSPACE_ID;
+    const originalSurfaceId = process.env.CMUX_SURFACE_ID;
+    const originalSocketPath = process.env.CMUX_SOCKET_PATH;
+    const malformedPreferences = [
+      "---",
+      "runtime:",
+      "  contract:",
+      "    path: ../outside",
+      "broken: [",
+      "---",
+      "",
+    ].join("\n");
+    writeFileSync(preferencesPath, malformedPreferences, "utf-8");
+    writeFileSync(socketPath, "", "utf-8");
+    process.env.CMUX_WORKSPACE_ID = "workspace:runtime-contract";
+    process.env.CMUX_SURFACE_ID = "surface:runtime-contract";
+    process.env.CMUX_SOCKET_PATH = socketPath;
+    resetCmuxPromptState();
+    clearGSDPreferencesCache();
+
+    try {
+      const result = await buildBeforeAgentStartResult(
+        { prompt: "Inspect the application", systemPrompt: "base system prompt" },
+        ctx,
+      );
+
+      assert.match(result?.systemPrompt ?? "", /Invalid project-local runtime contract/);
+      assert.equal(readFileSync(preferencesPath, "utf-8"), malformedPreferences);
+    } finally {
+      resetCmuxPromptState();
+      if (originalWorkspaceId === undefined) delete process.env.CMUX_WORKSPACE_ID;
+      else process.env.CMUX_WORKSPACE_ID = originalWorkspaceId;
+      if (originalSurfaceId === undefined) delete process.env.CMUX_SURFACE_ID;
+      else process.env.CMUX_SURFACE_ID = originalSurfaceId;
+      if (originalSocketPath === undefined) delete process.env.CMUX_SOCKET_PATH;
+      else process.env.CMUX_SOCKET_PATH = originalSocketPath;
+    }
   });
 });
 
@@ -706,7 +755,7 @@ test("contract content cannot reproduce snapshot delimiters", async () => {
   });
 });
 
-test("does not mark fully retained multibyte documents as truncated", async () => {
+test("retains complete multibyte documents", async () => {
   await withRuntimeProject(async (base) => {
     const contractDir = join(base, "script", "local-runtime");
     mkdirSync(contractDir, { recursive: true });
@@ -714,7 +763,6 @@ test("does not mark fully retained multibyte documents as truncated", async () =
 
     const contract = resolveRuntimeContract(base);
 
-    assert.equal(contract?.agentInstructions?.truncated, false);
     assert.equal(contract?.agentInstructions?.content, "運行規則：安全に開始する。\n");
   });
 });

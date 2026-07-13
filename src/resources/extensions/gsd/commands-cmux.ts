@@ -19,6 +19,7 @@ export function autoEnableCmuxPreferences(basePath?: string): boolean {
   if (!existsSync(path)) return false;
 
   const existing = loadProjectGSDPreferences(basePath);
+  if (existing?.ignored || existing?.projectRuntimeContract === "invalid") return false;
   const prefs: Record<string, unknown> = existing?.preferences ? { ...existing.preferences } : { version: 1 };
   prefs.cmux = {
     enabled: true,

@@ -22,7 +22,6 @@ const MAX_RENDERED_CONTRACT_BYTES = 20_000;
 export interface RuntimeContractDocument {
   path: string;
   content: string;
-  truncated: boolean;
 }
 
 export interface RuntimeContractEntry {
@@ -198,6 +197,9 @@ function openValidatedFile(
     if (!openedStats.isFile() || !sameMember(member.stats, openedStats)) {
       throw new Error("Runtime contract member changed while opening");
     }
+    if (openedStats.size > MAX_CONTRACT_DOCUMENT_BYTES) {
+      throw new Error("Runtime contract member exceeds the snapshot limit");
+    }
 
     const path = realpathSync.native(member.path);
     if (!isWithin(projectRoot, path) || !isWithin(contractDir, path)) {
@@ -207,7 +209,7 @@ function openValidatedFile(
       throw new Error("Runtime contract member path changed while opening");
     }
 
-    const content = readOpenedFile(fd, Math.min(openedStats.size, MAX_CONTRACT_DOCUMENT_BYTES));
+    const content = readOpenedFile(fd, openedStats.size);
     const finalStats = fstatSync(fd);
     const finalPathStats = lstatSync(member.path);
     if (!sameMember(member.stats, finalStats) || !sameMember(member.stats, finalPathStats)) {
@@ -230,7 +232,6 @@ function resolveContractDocument(
   return {
     path: file.path,
     content: file.content.toString("utf-8"),
-    truncated: file.size > file.content.length,
   };
 }
 
@@ -391,9 +392,8 @@ export function resolveRuntimeContract(
 }
 
 function renderDocument(label: string, document: RuntimeContractDocument): string[] {
-  const truncation = document.truncated ? " truncated" : "";
   return [
-    `<runtime-contract-snapshot kind=${encodeSnapshotValue(label)} path=${encodeSnapshotValue(document.path)}${truncation}>`,
+    `<runtime-contract-snapshot kind=${encodeSnapshotValue(label)} path=${encodeSnapshotValue(document.path)}>`,
     encodeSnapshotValue(document.content),
     "</runtime-contract-snapshot>",
   ];
