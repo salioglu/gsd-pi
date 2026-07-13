@@ -26,6 +26,7 @@ import {
   renderPreferencesForSystemPrompt,
   renderLanguageDirectiveForPrompt,
   clearGSDPreferencesCache,
+  _loadProjectPreferencesCandidatesForTest,
   _resetParseWarningFlag,
 } from "../preferences.ts";
 import { collectPreferenceDiagnostics, formatPreferenceDiagnostic } from "../preferences-diagnostics.ts";
@@ -2027,6 +2028,36 @@ test("uppercase PREFERENCES.md wins over legacy lowercase preferences.md", () =>
     rmSync(tempProject, { recursive: true, force: true });
     rmSync(tempGsdHome, { recursive: true, force: true });
   }
+});
+
+test("malformed uppercase runtime contract blocks a valid lowercase fallback", (t) => {
+  const tempProject = mkdtempSync(join(tmpdir(), "gsd-prefs-runtime-priority-"));
+  t.after(() => {
+    rmSync(tempProject, { recursive: true, force: true });
+    _resetParseWarningFlag();
+    _resetLogs();
+  });
+
+  const authoritativePath = join(tempProject, "PREFERENCES.md");
+  const fallbackPath = join(tempProject, "legacy-preferences.md");
+  writeFileSync(
+    authoritativePath,
+    "---\nruntime:\n  contract:\n    path: [broken\n---\n",
+    "utf-8",
+  );
+  writeFileSync(
+    fallbackPath,
+    "---\nruntime:\n  contract:\n    path: ops/dev\n---\n",
+    "utf-8",
+  );
+
+  const loaded = _loadProjectPreferencesCandidatesForTest([
+    authoritativePath,
+    fallbackPath,
+  ]);
+
+  assert.equal(loaded?.preferences.runtime?.contract?.path, "ops/dev");
+  assert.equal(loaded?.projectRuntimeContract, "invalid");
 });
 
 test("experimental.rtk defaults to off in new project preferences", () => {

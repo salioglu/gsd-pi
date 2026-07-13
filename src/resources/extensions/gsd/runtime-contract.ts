@@ -108,6 +108,7 @@ function openValidatedContractDirectory(
   let fd: number | undefined;
   let retained = false;
   try {
+    assertNoSymlinkPathComponents(projectRoot, candidateDir);
     const path = realpathSync.native(candidateDir);
     if (!isWithin(projectRoot, path)) return undefined;
 
@@ -327,7 +328,7 @@ function discoverRuntimeContract(
 
   try {
     assertContractDirectoryIdentity(directory);
-    const defaultEntryMembers = configured
+    const defaultEntryMembers = configured?.entry
       ? undefined
       : captureStableDefaultEntryCandidates(directory);
     const entryName = configured?.entry ?? DEFAULT_ENTRY_NAMES.find(

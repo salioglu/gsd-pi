@@ -125,6 +125,21 @@ test("uses the configured runtime contract path and entry point", async () => {
   });
 });
 
+test("uses default entry priority when only the contract path is configured", async () => {
+  await withRuntimeProject(async (base) => {
+    const contractDir = join(base, "ops", "dev");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "runtime.js"), "export {};\n", "utf-8");
+    writeFileSync(join(contractDir, "runtime.mjs"), "export {};\n", "utf-8");
+
+    const contract = resolveRuntimeContract(base, {
+      runtime: { contract: { path: "ops/dev" } },
+    });
+
+    assert.equal(contract?.entry?.path, join(contractDir, "runtime.mjs"));
+  });
+});
+
 test("does not inherit a runtime contract override from global preferences", async () => {
   await withRuntimeProject(async (base, ctx) => {
     const globalPreferencesDir = join(base, ".test-home", ".gsd");
@@ -651,6 +666,22 @@ test("rejects symlinked ancestors of configured contract entries", async () => {
 
     const runtimeBlock = renderRuntimeContractForSystemPrompt(base, {
       runtime: { contract: { path: "script/local-runtime", entry: "bin/run.mjs" } },
+    });
+
+    assert.match(runtimeBlock, /Invalid project-local runtime contract/);
+    assert.doesNotMatch(runtimeBlock, /Project-local runtime contract\n/);
+  });
+});
+
+test("rejects symlinked ancestors of configured contract directories", async () => {
+  await withRuntimeProject(async (base) => {
+    const actualDir = join(base, "actual", "dev");
+    mkdirSync(actualDir, { recursive: true });
+    writeFileSync(join(actualDir, "AGENT.md"), "# Runtime rules\n", "utf-8");
+    symlinkSync("actual", join(base, "ops"));
+
+    const runtimeBlock = renderRuntimeContractForSystemPrompt(base, {
+      runtime: { contract: { path: "ops/dev" } },
     });
 
     assert.match(runtimeBlock, /Invalid project-local runtime contract/);

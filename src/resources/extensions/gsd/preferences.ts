@@ -343,6 +343,12 @@ export function loadProjectGSDPreferences(basePath?: string): LoadedGSDPreferenc
   return loadFirstUsablePreferencesFile(projectPreferencesCandidatePaths(basePath), "project");
 }
 
+export function _loadProjectPreferencesCandidatesForTest(
+  paths: string[],
+): LoadedGSDPreferences | null {
+  return loadFirstUsablePreferencesFile(paths, "project");
+}
+
 export function loadEffectiveGSDPreferences(
   basePath?: string,
   opts?: EffectivePreferencesLoadOptions,
@@ -474,7 +480,9 @@ function mergePreferenceMetadata(
     ...(primary.diagnostics ?? []),
     ...(secondary?.diagnostics ?? []),
   ];
-  const projectRuntimeContract = primary.projectRuntimeContract ?? secondary?.projectRuntimeContract;
+  const projectRuntimeContract = secondary?.projectRuntimeContract === "invalid"
+    ? "invalid"
+    : primary.projectRuntimeContract ?? secondary?.projectRuntimeContract;
   return {
     ...primary,
     ...(projectRuntimeContract ? { projectRuntimeContract } : {}),
