@@ -323,11 +323,11 @@ export async function buildBeforeAgentStartResult(
   const contextPath = compatibleContext.cwd ?? compatibleContext.projectRoot;
   const resolvedContextPath = resolveExistingContextPath(contextPath);
   if (!resolvedContextPath) return undefined;
-  const propagatedProjectRoot = process.env.GSD_SUBAGENT_CHILD === "1"
-    ? resolveExistingContextPath(process.env.GSD_PROJECT_ROOT?.trim())
+  const propagatedRuntimeContractRoot = process.env.GSD_SUBAGENT_CHILD === "1"
+    ? resolveExistingContextPath(process.env.GSD_RUNTIME_CONTRACT_ROOT?.trim())
     : undefined;
   const basePath = resolvedContextPath;
-  const runtimeContractBasePath = propagatedProjectRoot ?? basePath;
+  const runtimeContractBasePath = propagatedRuntimeContractRoot ?? basePath;
   if (!existsSync(gsdRoot(basePath)) && !existsSync(gsdRoot(runtimeContractBasePath))) return undefined;
 
   const stopContextTimer = debugTime("context-inject");

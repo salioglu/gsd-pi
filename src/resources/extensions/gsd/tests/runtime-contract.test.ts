@@ -219,9 +219,9 @@ test("injects the parent workspace contract into a child repository subagent", a
     writeFileSync(join(parentContractDir, "AGENT.md"), "# Parent workspace runtime\n", "utf-8");
     writeFileSync(join(childContractDir, "AGENT.md"), "# Child-only runtime\n", "utf-8");
     const previousChild = process.env.GSD_SUBAGENT_CHILD;
-    const previousRoot = process.env.GSD_PROJECT_ROOT;
+    const previousRoot = process.env.GSD_RUNTIME_CONTRACT_ROOT;
     process.env.GSD_SUBAGENT_CHILD = "1";
-    process.env.GSD_PROJECT_ROOT = base;
+    process.env.GSD_RUNTIME_CONTRACT_ROOT = base;
     _clearGsdRootCache();
     clearGSDPreferencesCache();
 
@@ -236,8 +236,8 @@ test("injects the parent workspace contract into a child repository subagent", a
     } finally {
       if (previousChild === undefined) delete process.env.GSD_SUBAGENT_CHILD;
       else process.env.GSD_SUBAGENT_CHILD = previousChild;
-      if (previousRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
-      else process.env.GSD_PROJECT_ROOT = previousRoot;
+      if (previousRoot === undefined) delete process.env.GSD_RUNTIME_CONTRACT_ROOT;
+      else process.env.GSD_RUNTIME_CONTRACT_ROOT = previousRoot;
     }
   });
 });
@@ -261,9 +261,9 @@ test("keeps child context local while inheriting the parent runtime contract", a
     mkdirSync(contractDir, { recursive: true });
     writeFileSync(join(contractDir, "AGENT.md"), "# Parent workspace runtime\n", "utf-8");
     const previousChild = process.env.GSD_SUBAGENT_CHILD;
-    const previousRoot = process.env.GSD_PROJECT_ROOT;
+    const previousRoot = process.env.GSD_RUNTIME_CONTRACT_ROOT;
     process.env.GSD_SUBAGENT_CHILD = "1";
-    process.env.GSD_PROJECT_ROOT = base;
+    process.env.GSD_RUNTIME_CONTRACT_ROOT = base;
     clearGSDPreferencesCache();
 
     try {
@@ -279,8 +279,8 @@ test("keeps child context local while inheriting the parent runtime contract", a
     } finally {
       if (previousChild === undefined) delete process.env.GSD_SUBAGENT_CHILD;
       else process.env.GSD_SUBAGENT_CHILD = previousChild;
-      if (previousRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
-      else process.env.GSD_PROJECT_ROOT = previousRoot;
+      if (previousRoot === undefined) delete process.env.GSD_RUNTIME_CONTRACT_ROOT;
+      else process.env.GSD_RUNTIME_CONTRACT_ROOT = previousRoot;
     }
   });
 });
@@ -301,9 +301,9 @@ test("keeps child context local when the parent has no runtime contract", async 
       "utf-8",
     );
     const previousChild = process.env.GSD_SUBAGENT_CHILD;
-    const previousRoot = process.env.GSD_PROJECT_ROOT;
+    const previousRoot = process.env.GSD_RUNTIME_CONTRACT_ROOT;
     process.env.GSD_SUBAGENT_CHILD = "1";
-    process.env.GSD_PROJECT_ROOT = base;
+    process.env.GSD_RUNTIME_CONTRACT_ROOT = base;
     clearGSDPreferencesCache();
 
     try {
@@ -319,8 +319,8 @@ test("keeps child context local when the parent has no runtime contract", async 
     } finally {
       if (previousChild === undefined) delete process.env.GSD_SUBAGENT_CHILD;
       else process.env.GSD_SUBAGENT_CHILD = previousChild;
-      if (previousRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
-      else process.env.GSD_PROJECT_ROOT = previousRoot;
+      if (previousRoot === undefined) delete process.env.GSD_RUNTIME_CONTRACT_ROOT;
+      else process.env.GSD_RUNTIME_CONTRACT_ROOT = previousRoot;
     }
   });
 });
@@ -333,9 +333,9 @@ test("injects the owning contract into an explicitly isolated subagent", async (
     writeFileSync(join(contractDir, "AGENT.md"), "# Owning project runtime\n", "utf-8");
     execFileSync("git", ["init", "-q"], { cwd: isolatedRepo, stdio: "ignore" });
     const previousChild = process.env.GSD_SUBAGENT_CHILD;
-    const previousRoot = process.env.GSD_PROJECT_ROOT;
+    const previousRoot = process.env.GSD_RUNTIME_CONTRACT_ROOT;
     process.env.GSD_SUBAGENT_CHILD = "1";
-    process.env.GSD_PROJECT_ROOT = base;
+    process.env.GSD_RUNTIME_CONTRACT_ROOT = base;
     _clearGsdRootCache();
     clearGSDPreferencesCache();
 
@@ -349,8 +349,8 @@ test("injects the owning contract into an explicitly isolated subagent", async (
     } finally {
       if (previousChild === undefined) delete process.env.GSD_SUBAGENT_CHILD;
       else process.env.GSD_SUBAGENT_CHILD = previousChild;
-      if (previousRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
-      else process.env.GSD_PROJECT_ROOT = previousRoot;
+      if (previousRoot === undefined) delete process.env.GSD_RUNTIME_CONTRACT_ROOT;
+      else process.env.GSD_RUNTIME_CONTRACT_ROOT = previousRoot;
       rmSync(isolatedRepo, { recursive: true, force: true });
     }
   });
@@ -362,9 +362,9 @@ test("ignores propagated project authority when its filesystem identity is unava
     mkdirSync(contractDir, { recursive: true });
     writeFileSync(join(contractDir, "AGENT.md"), "# Current repository runtime\n", "utf-8");
     const previousChild = process.env.GSD_SUBAGENT_CHILD;
-    const previousRoot = process.env.GSD_PROJECT_ROOT;
+    const previousRoot = process.env.GSD_RUNTIME_CONTRACT_ROOT;
     process.env.GSD_SUBAGENT_CHILD = "1";
-    process.env.GSD_PROJECT_ROOT = join(base, "missing-project");
+    process.env.GSD_RUNTIME_CONTRACT_ROOT = join(base, "missing-project");
 
     try {
       const result = await buildBeforeAgentStartResult(
@@ -376,8 +376,8 @@ test("ignores propagated project authority when its filesystem identity is unava
     } finally {
       if (previousChild === undefined) delete process.env.GSD_SUBAGENT_CHILD;
       else process.env.GSD_SUBAGENT_CHILD = previousChild;
-      if (previousRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
-      else process.env.GSD_PROJECT_ROOT = previousRoot;
+      if (previousRoot === undefined) delete process.env.GSD_RUNTIME_CONTRACT_ROOT;
+      else process.env.GSD_RUNTIME_CONTRACT_ROOT = previousRoot;
     }
   });
 });

@@ -13,7 +13,7 @@ import type { AgentConfig } from "../agents.js";
 import {
 	SUBAGENT_CHILD_ENV_VAR,
 	SUBAGENT_CHILD_ENV_VALUE,
-	SUBAGENT_PROJECT_ROOT_ENV_VAR,
+	SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR,
 	buildShellEnvAssignments,
 	buildSubagentProcessEnv,
 	createSubagentLaunchPlan,
@@ -78,19 +78,27 @@ describe("subagent launch module", () => {
 		dir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-subagent-parent-")));
 		const child = join(dir, "frontend");
 		mkdirSync(child);
-		const plan = createSubagentLaunchPlan({
-			agent: makeAgent(),
-			task: "inspect the frontend",
-			tmpPromptPath: null,
-			defaultCwd: dir,
-			cwd: child,
-		});
+		const previousProjectRoot = process.env.GSD_PROJECT_ROOT;
+		delete process.env.GSD_PROJECT_ROOT;
+		try {
+			const plan = createSubagentLaunchPlan({
+				agent: makeAgent(),
+				task: "inspect the frontend",
+				tmpPromptPath: null,
+				defaultCwd: dir,
+				cwd: child,
+			});
 
-		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], dir);
-		assert.deepEqual(buildShellEnvAssignments(plan.env), [
-			`${SUBAGENT_CHILD_ENV_VAR}='${SUBAGENT_CHILD_ENV_VALUE}'`,
-			`${SUBAGENT_PROJECT_ROOT_ENV_VAR}='${dir}'`,
-		]);
+			assert.equal(plan.env.GSD_PROJECT_ROOT, undefined);
+			assert.equal(plan.env[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR], dir);
+			assert.deepEqual(buildShellEnvAssignments(plan.env), [
+				`${SUBAGENT_CHILD_ENV_VAR}='${SUBAGENT_CHILD_ENV_VALUE}'`,
+				`${SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR}='${dir}'`,
+			]);
+		} finally {
+			if (previousProjectRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
+			else process.env.GSD_PROJECT_ROOT = previousProjectRoot;
+		}
 	});
 
 	it("does not propagate parent authority through a symlinked child path", () => {
@@ -111,7 +119,7 @@ describe("subagent launch module", () => {
 		});
 
 		assert.equal(plan.cwd, externalRepo);
-		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], undefined);
+		assert.equal(plan.env[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR], undefined);
 		assert.equal(resolveSubagentProjectRoot(workspace, linkedRepo), externalRepo);
 	});
 
@@ -126,7 +134,7 @@ describe("subagent launch module", () => {
 			cwd: missingChild,
 		});
 
-		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], undefined);
+		assert.equal(plan.env[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR], undefined);
 	});
 
 	it("revalidates project authority after a child path becomes a symlink", () => {
@@ -150,7 +158,7 @@ describe("subagent launch module", () => {
 		});
 
 		assert.equal(plan.cwd, externalRepo);
-		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], undefined);
+		assert.equal(plan.env[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR], undefined);
 	});
 
 	it("shell-escapes cmux environment values without command execution", () => {
@@ -159,12 +167,12 @@ describe("subagent launch module", () => {
 		const projectRoot = `space $HOME $(touch ${marker}) \`touch ${marker}\` 'quote'\nnext`;
 		const assignments = buildShellEnvAssignments({
 			[SUBAGENT_CHILD_ENV_VAR]: SUBAGENT_CHILD_ENV_VALUE,
-			[SUBAGENT_PROJECT_ROOT_ENV_VAR]: projectRoot,
+			[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR]: projectRoot,
 		});
 
 		const output = execFileSync(
 			"bash",
-			["-lc", `env ${assignments.join(" ")} printenv ${SUBAGENT_PROJECT_ROOT_ENV_VAR}`],
+			["-lc", `env ${assignments.join(" ")} printenv ${SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR}`],
 			{ encoding: "utf-8" },
 		);
 
@@ -189,12 +197,12 @@ describe("subagent launch module", () => {
 			projectRootSourceCwd: sourceCheckout,
 		});
 
-		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], workspace);
+		assert.equal(plan.env[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR], workspace);
 	});
 
-	it("removes stale project authority for an unrelated child cwd", () => {
-		const previous = process.env[SUBAGENT_PROJECT_ROOT_ENV_VAR];
-		process.env[SUBAGENT_PROJECT_ROOT_ENV_VAR] = "/stale-project";
+	it("removes stale runtime contract authority for an unrelated child cwd", () => {
+		const previous = process.env[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR];
+		process.env[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR] = "/stale-project";
 		try {
 			const plan = createSubagentLaunchPlan({
 				agent: makeAgent(),
@@ -204,10 +212,10 @@ describe("subagent launch module", () => {
 				cwd: "/other-project",
 			});
 
-			assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], undefined);
+			assert.equal(plan.env[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR], undefined);
 		} finally {
-			if (previous === undefined) delete process.env[SUBAGENT_PROJECT_ROOT_ENV_VAR];
-			else process.env[SUBAGENT_PROJECT_ROOT_ENV_VAR] = previous;
+			if (previous === undefined) delete process.env[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR];
+			else process.env[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR] = previous;
 		}
 	});
 

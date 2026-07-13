@@ -8,7 +8,7 @@ import type { AgentConfig } from "./agents.js";
 
 export const SUBAGENT_CHILD_ENV_VAR = "GSD_SUBAGENT_CHILD";
 export const SUBAGENT_CHILD_ENV_VALUE = "1";
-export const SUBAGENT_PROJECT_ROOT_ENV_VAR = "GSD_PROJECT_ROOT";
+export const SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR = "GSD_RUNTIME_CONTRACT_ROOT";
 
 export type SubagentContextMode = "fresh" | "fork";
 
@@ -51,19 +51,19 @@ export function isSubagentChildProcess(env: NodeJS.ProcessEnv = process.env): bo
 
 export function buildSubagentProcessEnv(
 	env: NodeJS.ProcessEnv = process.env,
-	projectRoot?: string,
+	runtimeContractRoot?: string,
 ): NodeJS.ProcessEnv {
 	const childEnv: NodeJS.ProcessEnv = {
 		...env,
 		[SUBAGENT_CHILD_ENV_VAR]: SUBAGENT_CHILD_ENV_VALUE,
 	};
-	if (projectRoot) childEnv[SUBAGENT_PROJECT_ROOT_ENV_VAR] = path.resolve(projectRoot);
-	else delete childEnv[SUBAGENT_PROJECT_ROOT_ENV_VAR];
+	if (runtimeContractRoot) childEnv[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR] = path.resolve(runtimeContractRoot);
+	else delete childEnv[SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR];
 	return childEnv;
 }
 
 export function buildShellEnvAssignments(env: NodeJS.ProcessEnv = process.env): string[] {
-	return [SUBAGENT_CHILD_ENV_VAR, SUBAGENT_PROJECT_ROOT_ENV_VAR]
+	return [SUBAGENT_CHILD_ENV_VAR, SUBAGENT_RUNTIME_CONTRACT_ROOT_ENV_VAR]
 		.flatMap((name) => env[name] ? [`${name}=${shellEscape(env[name])}`] : []);
 }
 
