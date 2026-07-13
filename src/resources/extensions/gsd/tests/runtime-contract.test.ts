@@ -207,6 +207,72 @@ test("injects one shared runtime contract for a parent workspace", async () => {
   });
 });
 
+test("injects the parent workspace contract into a child repository subagent", async () => {
+  await withRuntimeProject(async (base, ctx) => {
+    const childRepo = join(base, "frontend");
+    const parentContractDir = join(base, "script", "local-runtime");
+    const childContractDir = join(childRepo, "script", "local-runtime");
+    mkdirSync(join(childRepo, ".gsd"), { recursive: true });
+    mkdirSync(parentContractDir, { recursive: true });
+    mkdirSync(childContractDir, { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: childRepo, stdio: "ignore" });
+    writeFileSync(join(parentContractDir, "AGENT.md"), "# Parent workspace runtime\n", "utf-8");
+    writeFileSync(join(childContractDir, "AGENT.md"), "# Child-only runtime\n", "utf-8");
+    const previousChild = process.env.GSD_SUBAGENT_CHILD;
+    const previousRoot = process.env.GSD_PROJECT_ROOT;
+    process.env.GSD_SUBAGENT_CHILD = "1";
+    process.env.GSD_PROJECT_ROOT = base;
+    _clearGsdRootCache();
+    clearGSDPreferencesCache();
+
+    try {
+      const result = await buildBeforeAgentStartResult(
+        { prompt: "Inspect the frontend", systemPrompt: "base system prompt" },
+        { ...ctx, cwd: childRepo } as ExtensionContext,
+      );
+
+      assert.match(result?.systemPrompt ?? "", /# Parent workspace runtime/);
+      assert.doesNotMatch(result?.systemPrompt ?? "", /# Child-only runtime/);
+    } finally {
+      if (previousChild === undefined) delete process.env.GSD_SUBAGENT_CHILD;
+      else process.env.GSD_SUBAGENT_CHILD = previousChild;
+      if (previousRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
+      else process.env.GSD_PROJECT_ROOT = previousRoot;
+    }
+  });
+});
+
+test("injects the owning contract into an explicitly isolated subagent", async () => {
+  await withRuntimeProject(async (base, ctx) => {
+    const isolatedRepo = realpathSync(mkdtempSync(join(tmpdir(), "gsd-runtime-detached-")));
+    const contractDir = join(base, "script", "local-runtime");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "AGENT.md"), "# Owning project runtime\n", "utf-8");
+    execFileSync("git", ["init", "-q"], { cwd: isolatedRepo, stdio: "ignore" });
+    const previousChild = process.env.GSD_SUBAGENT_CHILD;
+    const previousRoot = process.env.GSD_PROJECT_ROOT;
+    process.env.GSD_SUBAGENT_CHILD = "1";
+    process.env.GSD_PROJECT_ROOT = base;
+    _clearGsdRootCache();
+    clearGSDPreferencesCache();
+
+    try {
+      const result = await buildBeforeAgentStartResult(
+        { prompt: "Inspect the isolated checkout", systemPrompt: "base system prompt" },
+        { ...ctx, cwd: isolatedRepo } as ExtensionContext,
+      );
+
+      assert.match(result?.systemPrompt ?? "", /# Owning project runtime/);
+    } finally {
+      if (previousChild === undefined) delete process.env.GSD_SUBAGENT_CHILD;
+      else process.env.GSD_SUBAGENT_CHILD = previousChild;
+      if (previousRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
+      else process.env.GSD_PROJECT_ROOT = previousRoot;
+      rmSync(isolatedRepo, { recursive: true, force: true });
+    }
+  });
+});
+
 test("leaves agent context unchanged when no runtime contract exists", async () => {
   await withRuntimeProject(async (_base, ctx) => {
     const result = await buildBeforeAgentStartResult(
@@ -686,6 +752,32 @@ test("rejects symlinked ancestors of configured contract directories", async () 
 
     assert.match(runtimeBlock, /Invalid project-local runtime contract/);
     assert.doesNotMatch(runtimeBlock, /Project-local runtime contract\n/);
+  });
+});
+
+test("fails closed when a contract ancestor changes after identity capture", async () => {
+  await withRuntimeProject(async (base) => {
+    const scriptDir = join(base, "script");
+    const contractDir = join(scriptDir, "local-runtime");
+    const movedScriptDir = join(base, "script-original");
+    const replacementScriptDir = join(base, "script-replacement");
+    mkdirSync(contractDir, { recursive: true });
+    mkdirSync(join(replacementScriptDir, "local-runtime"), { recursive: true });
+    writeFileSync(join(contractDir, "AGENT.md"), "# Trusted runtime rules\n", "utf-8");
+    writeFileSync(
+      join(replacementScriptDir, "local-runtime", "AGENT.md"),
+      "# Replacement runtime rules\n",
+      "utf-8",
+    );
+
+    const contract = _resolveRuntimeContractWithSnapshotHooksForTest(base, {
+      afterPathComponentCapture() {
+        renameSync(scriptDir, movedScriptDir);
+        renameSync(replacementScriptDir, scriptDir);
+      },
+    });
+
+    assert.equal(contract, null);
   });
 });
 

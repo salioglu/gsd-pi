@@ -12,6 +12,8 @@ import type { AgentConfig } from "../agents.js";
 import {
 	SUBAGENT_CHILD_ENV_VAR,
 	SUBAGENT_CHILD_ENV_VALUE,
+	SUBAGENT_PROJECT_ROOT_ENV_VAR,
+	buildShellEnvAssignments,
 	buildSubagentProcessEnv,
 	createSubagentLaunchPlan,
 	isSubagentChildProcess,
@@ -68,6 +70,54 @@ describe("subagent launch module", () => {
 		assert.equal(plan.cwd, "/repo");
 		assert.deepEqual(plan.session, { mode: "fresh" });
 		assert.deepEqual(plan.args.slice(plan.args.indexOf("--tools"), plan.args.indexOf("--tools") + 2), ["--tools", "read,write"]);
+	});
+
+	it("propagates the parent authority to a nested repository child", () => {
+		const plan = createSubagentLaunchPlan({
+			agent: makeAgent(),
+			task: "inspect the frontend",
+			tmpPromptPath: null,
+			defaultCwd: "/workspace",
+			cwd: "/workspace/frontend",
+		});
+
+		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], "/workspace");
+		assert.deepEqual(buildShellEnvAssignments(plan.env), [
+			`${SUBAGENT_CHILD_ENV_VAR}="${SUBAGENT_CHILD_ENV_VALUE}"`,
+			`${SUBAGENT_PROJECT_ROOT_ENV_VAR}="/workspace"`,
+		]);
+	});
+
+	it("propagates explicit authority to an isolated child checkout", () => {
+		const plan = createSubagentLaunchPlan({
+			agent: makeAgent(),
+			task: "inspect in isolation",
+			tmpPromptPath: null,
+			defaultCwd: "/workspace",
+			cwd: "/tmp/isolated-checkout",
+			projectRoot: "/workspace",
+		});
+
+		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], "/workspace");
+	});
+
+	it("removes stale project authority for an unrelated child cwd", () => {
+		const previous = process.env[SUBAGENT_PROJECT_ROOT_ENV_VAR];
+		process.env[SUBAGENT_PROJECT_ROOT_ENV_VAR] = "/stale-project";
+		try {
+			const plan = createSubagentLaunchPlan({
+				agent: makeAgent(),
+				task: "inspect another project",
+				tmpPromptPath: null,
+				defaultCwd: "/workspace",
+				cwd: "/other-project",
+			});
+
+			assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], undefined);
+		} finally {
+			if (previous === undefined) delete process.env[SUBAGENT_PROJECT_ROOT_ENV_VAR];
+			else process.env[SUBAGENT_PROJECT_ROOT_ENV_VAR] = previous;
+		}
 	});
 
 	it("creates a real branched session for forked context", () => {

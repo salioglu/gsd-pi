@@ -310,7 +310,13 @@ export async function buildBeforeAgentStartResult(
   event: { prompt: string; systemPrompt: string },
   ctx: ExtensionContext,
 ): Promise<{ systemPrompt: string; message?: { customType: string; content: string; display: false } } | undefined> {
-  const basePath = ctx.cwd;
+  const compatibleContext = ctx as ExtensionContext & { projectRoot?: string };
+  const contextPath = compatibleContext.cwd ?? compatibleContext.projectRoot;
+  if (!contextPath) return undefined;
+  const propagatedProjectRoot = process.env.GSD_SUBAGENT_CHILD === "1"
+    ? process.env.GSD_PROJECT_ROOT?.trim()
+    : undefined;
+  const basePath = propagatedProjectRoot || contextPath;
   if (!existsSync(gsdRoot(basePath))) return undefined;
 
   const stopContextTimer = debugTime("context-inject");

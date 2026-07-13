@@ -7,6 +7,7 @@ import type { AgentConfig } from "./agents.js";
 
 export const SUBAGENT_CHILD_ENV_VAR = "GSD_SUBAGENT_CHILD";
 export const SUBAGENT_CHILD_ENV_VALUE = "1";
+export const SUBAGENT_PROJECT_ROOT_ENV_VAR = "GSD_PROJECT_ROOT";
 
 export type SubagentContextMode = "fresh" | "fork";
 
@@ -32,6 +33,7 @@ export interface SubagentLaunchInput {
 	session?: SubagentSessionArgs;
 	cwd?: string;
 	defaultCwd: string;
+	projectRoot?: string;
 }
 
 export interface SubagentLaunchPlan {
@@ -45,16 +47,33 @@ export function isSubagentChildProcess(env: NodeJS.ProcessEnv = process.env): bo
 	return env[SUBAGENT_CHILD_ENV_VAR] === SUBAGENT_CHILD_ENV_VALUE;
 }
 
-export function buildSubagentProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-	return {
+export function buildSubagentProcessEnv(
+	env: NodeJS.ProcessEnv = process.env,
+	projectRoot?: string,
+): NodeJS.ProcessEnv {
+	const childEnv: NodeJS.ProcessEnv = {
 		...env,
 		[SUBAGENT_CHILD_ENV_VAR]: SUBAGENT_CHILD_ENV_VALUE,
 	};
+	if (projectRoot) childEnv[SUBAGENT_PROJECT_ROOT_ENV_VAR] = path.resolve(projectRoot);
+	else delete childEnv[SUBAGENT_PROJECT_ROOT_ENV_VAR];
+	return childEnv;
 }
 
 export function buildShellEnvAssignments(env: NodeJS.ProcessEnv = process.env): string[] {
-	const value = env[SUBAGENT_CHILD_ENV_VAR];
-	return value ? [`${SUBAGENT_CHILD_ENV_VAR}=${JSON.stringify(value)}`] : [];
+	return [SUBAGENT_CHILD_ENV_VAR, SUBAGENT_PROJECT_ROOT_ENV_VAR]
+		.flatMap((name) => env[name] ? [`${name}=${JSON.stringify(env[name])}`] : []);
+}
+
+function isWithin(root: string, candidate: string): boolean {
+	const rel = path.relative(root, candidate);
+	return rel === "" || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel));
+}
+
+export function resolveSubagentProjectRoot(defaultCwd: string, sourceCwd: string): string {
+	const parent = path.resolve(defaultCwd);
+	const source = path.resolve(sourceCwd);
+	return isWithin(parent, source) ? parent : source;
 }
 
 export function buildSubagentProcessArgs(
@@ -123,6 +142,11 @@ export function resolveSubagentSessionArgs(
 
 export function createSubagentLaunchPlan(input: SubagentLaunchInput): SubagentLaunchPlan {
 	const session = input.session ?? resolveSubagentSessionArgs(input.contextMode ?? "fresh", input.parentSessionManager);
+	const cwd = path.resolve(input.cwd ?? input.defaultCwd);
+	const defaultCwd = path.resolve(input.defaultCwd);
+	const projectRoot = input.projectRoot
+		? path.resolve(input.projectRoot)
+		: isWithin(defaultCwd, cwd) ? defaultCwd : undefined;
 	return {
 		args: buildSubagentProcessArgs(
 			input.agent,
@@ -132,8 +156,8 @@ export function createSubagentLaunchPlan(input: SubagentLaunchInput): SubagentLa
 			input.thinkingOverride,
 			session,
 		),
-		env: buildSubagentProcessEnv(),
-		cwd: input.cwd ?? input.defaultCwd,
+		env: buildSubagentProcessEnv(process.env, projectRoot),
+		cwd,
 		session,
 	};
 }

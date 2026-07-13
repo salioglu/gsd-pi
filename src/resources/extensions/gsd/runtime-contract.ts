@@ -40,6 +40,7 @@ interface OpenedContractDirectory {
   fd: number;
   path: string;
   stats: Stats;
+  components: PathComponentSnapshot[];
 }
 
 interface ContractMemberSnapshot {
@@ -47,7 +48,13 @@ interface ContractMemberSnapshot {
   stats: Stats | null;
 }
 
+interface PathComponentSnapshot {
+  path: string;
+  stats: Stats;
+}
+
 interface RuntimeContractSnapshotHooks {
+  afterPathComponentCapture?: () => void;
   afterMemberCapture?: (name: string) => void;
   beforeFileOpen?: (name: string) => void;
   afterFileRead?: (name: string) => void;
@@ -101,14 +108,50 @@ function readOpenedFile(fd: number, byteLimit: number): Buffer {
   return buffer.subarray(0, offset);
 }
 
+function capturePathComponents(root: string, candidate: string): PathComponentSnapshot[] {
+  if (!isWithin(root, candidate)) {
+    throw new Error("Runtime contract path escapes the project root");
+  }
+
+  const paths = [root];
+  let currentPath = root;
+  const relativePath = relative(root, candidate);
+  if (relativePath) {
+    for (const component of relativePath.split(sep)) {
+      currentPath = resolve(currentPath, component);
+      paths.push(currentPath);
+    }
+  }
+
+  return paths.map((path) => {
+    const stats = lstatSync(path);
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new Error("Runtime contract path components must be directories");
+    }
+    return { path, stats };
+  });
+}
+
+function assertPathComponentsIdentity(components: PathComponentSnapshot[]): void {
+  for (const component of components) {
+    const stats = lstatSync(component.path);
+    if (stats.isSymbolicLink() || !stats.isDirectory() || !sameMember(component.stats, stats)) {
+      throw new Error("Runtime contract path changed during snapshot assembly");
+    }
+  }
+}
+
 function openValidatedContractDirectory(
   projectRoot: string,
   candidateDir: string,
+  afterPathComponentCapture?: () => void,
 ): OpenedContractDirectory | undefined {
   let fd: number | undefined;
   let retained = false;
   try {
-    assertNoSymlinkPathComponents(projectRoot, candidateDir);
+    const components = capturePathComponents(projectRoot, candidateDir).slice(0, -1);
+    afterPathComponentCapture?.();
+    assertPathComponentsIdentity(components);
     const path = realpathSync.native(candidateDir);
     if (!isWithin(projectRoot, path)) return undefined;
 
@@ -116,7 +159,8 @@ function openValidatedContractDirectory(
     const stats = fstatSync(fd);
     if (!stats.isDirectory() || !sameFile(stats, statSync(path))) return undefined;
     retained = true;
-    return { fd, path, stats };
+    assertPathComponentsIdentity(components);
+    return { fd, path, stats, components };
   } catch {
     return undefined;
   } finally {
@@ -125,6 +169,7 @@ function openValidatedContractDirectory(
 }
 
 function assertContractDirectoryIdentity(directory: OpenedContractDirectory): void {
+  assertPathComponentsIdentity(directory.components);
   const openedStats = fstatSync(directory.fd);
   const currentPath = realpathSync.native(directory.path);
   const currentStats = statSync(currentPath);
@@ -183,32 +228,38 @@ function captureStableContractMembers(
   directory: OpenedContractDirectory,
   names: string[],
 ): Map<string, ContractMemberSnapshot> {
+  return captureUnderStableDirectory(
+    directory,
+    () => captureContractMembers(directory.path, names),
+  );
+}
+
+function captureUnderStableDirectory<T>(
+  directory: OpenedContractDirectory,
+  capture: () => T,
+): T {
   const beforeCapture = fstatSync(directory.fd);
-  const members = captureContractMembers(directory.path, names);
+  const result = capture();
   const afterCapture = fstatSync(directory.fd);
   const currentPathStats = statSync(directory.path);
   if (!sameMember(beforeCapture, afterCapture) || !sameMember(beforeCapture, currentPathStats)) {
     throw new Error("Runtime contract directory changed during member capture");
   }
-  return members;
+  return result;
 }
 
 function captureStableDefaultEntryCandidates(
   directory: OpenedContractDirectory,
 ): Map<string, ContractMemberSnapshot> {
-  const beforeCapture = fstatSync(directory.fd);
-  const members = new Map<string, ContractMemberSnapshot>();
-  for (const name of DEFAULT_ENTRY_NAMES) {
-    const member = captureContractMembers(directory.path, [name]).get(name)!;
-    members.set(name, member);
-    if (member.stats) break;
-  }
-  const afterCapture = fstatSync(directory.fd);
-  const currentPathStats = statSync(directory.path);
-  if (!sameMember(beforeCapture, afterCapture) || !sameMember(beforeCapture, currentPathStats)) {
-    throw new Error("Runtime contract directory changed during entry selection");
-  }
-  return members;
+  return captureUnderStableDirectory(directory, () => {
+    const members = new Map<string, ContractMemberSnapshot>();
+    for (const name of DEFAULT_ENTRY_NAMES) {
+      const member = captureContractMembers(directory.path, [name]).get(name)!;
+      members.set(name, member);
+      if (member.stats) break;
+    }
+    return members;
+  });
 }
 
 function assertContractMembersIdentity(
@@ -323,7 +374,11 @@ function discoverRuntimeContract(
     return { status: "invalid" };
   }
 
-  const directory = openValidatedContractDirectory(projectRoot, candidateDir);
+  const directory = openValidatedContractDirectory(
+    projectRoot,
+    candidateDir,
+    hooks?.afterPathComponentCapture,
+  );
   if (!directory) return { status: "invalid" };
 
   try {
