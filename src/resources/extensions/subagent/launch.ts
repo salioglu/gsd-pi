@@ -35,6 +35,7 @@ export interface SubagentLaunchInput {
 	cwd?: string;
 	defaultCwd: string;
 	projectRoot?: string;
+	projectRootSourceCwd?: string;
 }
 
 export interface SubagentLaunchPlan {
@@ -153,11 +154,17 @@ export function resolveSubagentSessionArgs(
 export function createSubagentLaunchPlan(input: SubagentLaunchInput): SubagentLaunchPlan {
 	const session = input.session ?? resolveSubagentSessionArgs(input.contextMode ?? "fresh", input.parentSessionManager);
 	const requestedCwd = path.resolve(input.cwd ?? input.defaultCwd);
-	const cwd = resolveExistingPath(requestedCwd) ?? requestedCwd;
+	const resolvedCwd = resolveExistingPath(requestedCwd);
+	const cwd = resolvedCwd ?? requestedCwd;
 	const defaultCwd = resolveExistingPath(input.defaultCwd);
-	const projectRoot = input.projectRoot
+	const candidateProjectRoot = input.projectRoot
 		? resolveExistingPath(input.projectRoot)
-		: defaultCwd && isWithin(defaultCwd, cwd) ? defaultCwd : undefined;
+		: defaultCwd;
+	const authoritySourceCwd = resolveExistingPath(input.projectRootSourceCwd ?? requestedCwd);
+	const projectRoot = resolvedCwd && candidateProjectRoot && authoritySourceCwd
+		&& isWithin(candidateProjectRoot, authoritySourceCwd)
+		? candidateProjectRoot
+		: undefined;
 	return {
 		args: buildSubagentProcessArgs(
 			input.agent,

@@ -432,6 +432,7 @@ interface SubagentRunOptions {
 	trackingName?: string;
 	thinkingOverride?: string;
 	projectRoot?: string;
+	projectRootSourceCwd?: string;
 }
 
 async function runSingleAgent(
@@ -454,6 +455,7 @@ async function runSingleAgent(
 		trackingName,
 		thinkingOverride,
 		projectRoot,
+		projectRootSourceCwd,
 	} = options;
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -538,6 +540,7 @@ async function runSingleAgent(
 			cwd,
 			defaultCwd,
 			projectRoot,
+			projectRootSourceCwd,
 		});
 		if (launch.session.mode === "fork") currentResult.sessionFile = launch.session.sessionFile;
 		let wasAborted = false;
@@ -631,6 +634,7 @@ async function runSingleAgentInCmuxSplit(
 		trackingName,
 		thinkingOverride,
 		projectRoot,
+		projectRootSourceCwd,
 	} = options;
 	const agent = agents.find((a) => a.name === agentName);
 	if (!agent) {
@@ -700,6 +704,7 @@ async function runSingleAgentInCmuxSplit(
 			cwd,
 			defaultCwd,
 			projectRoot,
+			projectRootSourceCwd,
 		});
 		if (launch.session.mode === "fork") currentResult.sessionFile = launch.session.sessionFile;
 		const processArgs = [process.env.GSD_BIN_PATH!, ...extensionArgs, ...launch.args];
@@ -1329,6 +1334,7 @@ export default function (pi: ExtensionAPI) {
 								trackingName: dispatchTrackingNames[0],
 								thinkingOverride: params.thinking,
 								projectRoot,
+								projectRootSourceCwd: isolation ? effectiveCwd : undefined,
 							},
 						);
 						if (isolation && result.exitCode === 0) {
@@ -1494,7 +1500,11 @@ export default function (pi: ExtensionAPI) {
 							emitParallelUpdate();
 						}
 					};
-					const executeOnce = (runCwd: string | undefined, projectRoot?: string) => {
+					const executeOnce = (
+						runCwd: string | undefined,
+						projectRoot?: string,
+						projectRootSourceCwd?: string,
+					) => {
 						const runOptions: SubagentRunOptions = {
 							modelOverride: taskModel,
 							contextMode: t.context ?? contextMode,
@@ -1502,6 +1512,7 @@ export default function (pi: ExtensionAPI) {
 							trackingName: dispatchTrackingNames[index],
 							thinkingOverride: taskThinking,
 							projectRoot,
+							projectRootSourceCwd,
 						};
 						return cmuxSplitsEnabled
 							? runSingleAgentInCmuxSplit(
@@ -1543,7 +1554,11 @@ export default function (pi: ExtensionAPI) {
 							const projectRoot = isolation
 								? resolveSubagentProjectRoot(ctx.cwd, effectiveCwd)
 								: undefined;
-							const result = await executeOnce(isolation ? isolation.workDir : effectiveCwd, projectRoot);
+							const result = await executeOnce(
+								isolation ? isolation.workDir : effectiveCwd,
+								projectRoot,
+								isolation ? effectiveCwd : undefined,
+							);
 							if (isolation && result.exitCode === 0) {
 								const patches = await isolation.captureDelta();
 								const mergeResult = patches.length > 0
@@ -1623,6 +1638,7 @@ export default function (pi: ExtensionAPI) {
 						trackingName: dispatchTrackingNames[0],
 						thinkingOverride: params.thinking,
 						projectRoot,
+						projectRootSourceCwd: isolation ? effectiveCwd : undefined,
 					};
 					const result = cmuxSplitsEnabled
 						? await runSingleAgentInCmuxSplit(

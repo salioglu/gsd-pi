@@ -242,6 +242,89 @@ test("injects the parent workspace contract into a child repository subagent", a
   });
 });
 
+test("keeps child context local while inheriting the parent runtime contract", async () => {
+  await withRuntimeProject(async (base, ctx) => {
+    const childRepo = join(base, "frontend");
+    mkdirSync(join(childRepo, ".gsd"), { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: childRepo, stdio: "ignore" });
+    writeFileSync(
+      join(base, ".gsd", "PREFERENCES.md"),
+      "---\nlanguage: Spanish\n---\n",
+      "utf-8",
+    );
+    writeFileSync(
+      join(childRepo, ".gsd", "PREFERENCES.md"),
+      "---\nlanguage: French\n---\n",
+      "utf-8",
+    );
+    const contractDir = join(base, "script", "local-runtime");
+    mkdirSync(contractDir, { recursive: true });
+    writeFileSync(join(contractDir, "AGENT.md"), "# Parent workspace runtime\n", "utf-8");
+    const previousChild = process.env.GSD_SUBAGENT_CHILD;
+    const previousRoot = process.env.GSD_PROJECT_ROOT;
+    process.env.GSD_SUBAGENT_CHILD = "1";
+    process.env.GSD_PROJECT_ROOT = base;
+    clearGSDPreferencesCache();
+
+    try {
+      const result = await buildBeforeAgentStartResult(
+        { prompt: "Inspect the frontend", systemPrompt: "base system prompt" },
+        { ...ctx, cwd: childRepo } as ExtensionContext,
+      );
+      const systemPrompt = result?.systemPrompt ?? "";
+
+      assert.match(systemPrompt, /# Parent workspace runtime/);
+      assert.match(systemPrompt, /Language: Always respond in French/);
+      assert.doesNotMatch(systemPrompt, /Language: Always respond in Spanish/);
+    } finally {
+      if (previousChild === undefined) delete process.env.GSD_SUBAGENT_CHILD;
+      else process.env.GSD_SUBAGENT_CHILD = previousChild;
+      if (previousRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
+      else process.env.GSD_PROJECT_ROOT = previousRoot;
+    }
+  });
+});
+
+test("keeps child context local when the parent has no runtime contract", async () => {
+  await withRuntimeProject(async (base, ctx) => {
+    const childRepo = join(base, "frontend");
+    mkdirSync(join(childRepo, ".gsd"), { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: childRepo, stdio: "ignore" });
+    writeFileSync(
+      join(base, ".gsd", "PREFERENCES.md"),
+      "---\nlanguage: Spanish\n---\n",
+      "utf-8",
+    );
+    writeFileSync(
+      join(childRepo, ".gsd", "PREFERENCES.md"),
+      "---\nlanguage: French\n---\n",
+      "utf-8",
+    );
+    const previousChild = process.env.GSD_SUBAGENT_CHILD;
+    const previousRoot = process.env.GSD_PROJECT_ROOT;
+    process.env.GSD_SUBAGENT_CHILD = "1";
+    process.env.GSD_PROJECT_ROOT = base;
+    clearGSDPreferencesCache();
+
+    try {
+      const result = await buildBeforeAgentStartResult(
+        { prompt: "Inspect the frontend", systemPrompt: "base system prompt" },
+        { ...ctx, cwd: childRepo } as ExtensionContext,
+      );
+      const systemPrompt = result?.systemPrompt ?? "";
+
+      assert.doesNotMatch(systemPrompt, /Project-local runtime contract/);
+      assert.match(systemPrompt, /Language: Always respond in French/);
+      assert.doesNotMatch(systemPrompt, /Language: Always respond in Spanish/);
+    } finally {
+      if (previousChild === undefined) delete process.env.GSD_SUBAGENT_CHILD;
+      else process.env.GSD_SUBAGENT_CHILD = previousChild;
+      if (previousRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
+      else process.env.GSD_PROJECT_ROOT = previousRoot;
+    }
+  });
+});
+
 test("injects the owning contract into an explicitly isolated subagent", async () => {
   await withRuntimeProject(async (base, ctx) => {
     const isolatedRepo = realpathSync(mkdtempSync(join(tmpdir(), "gsd-runtime-detached-")));

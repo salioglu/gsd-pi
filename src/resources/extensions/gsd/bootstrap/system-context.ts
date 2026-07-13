@@ -326,8 +326,9 @@ export async function buildBeforeAgentStartResult(
   const propagatedProjectRoot = process.env.GSD_SUBAGENT_CHILD === "1"
     ? resolveExistingContextPath(process.env.GSD_PROJECT_ROOT?.trim())
     : undefined;
-  const basePath = propagatedProjectRoot ?? resolvedContextPath;
-  if (!existsSync(gsdRoot(basePath))) return undefined;
+  const basePath = resolvedContextPath;
+  const runtimeContractBasePath = propagatedProjectRoot ?? basePath;
+  if (!existsSync(gsdRoot(basePath)) && !existsSync(gsdRoot(runtimeContractBasePath))) return undefined;
 
   const stopContextTimer = debugTime("context-inject");
   const systemContent = loadPrompt("system", {
@@ -364,10 +365,13 @@ export async function buildBeforeAgentStartResult(
     }
   }
 
+  const runtimeContractPreferences = runtimeContractBasePath === basePath
+    ? loadedPreferences
+    : loadEffectiveGSDPreferences(runtimeContractBasePath);
   const renderedRuntimeContract = renderRuntimeContractForSystemPrompt(
-    basePath,
-    loadedPreferences?.preferences,
-    loadedPreferences?.projectRuntimeContract,
+    runtimeContractBasePath,
+    runtimeContractPreferences?.preferences,
+    runtimeContractPreferences?.projectRuntimeContract,
   );
   const runtimeContractBlock = renderedRuntimeContract ? `\n\n${renderedRuntimeContract}` : "";
 

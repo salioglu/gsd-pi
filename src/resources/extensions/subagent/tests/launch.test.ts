@@ -115,6 +115,44 @@ describe("subagent launch module", () => {
 		assert.equal(resolveSubagentProjectRoot(workspace, linkedRepo), externalRepo);
 	});
 
+	it("does not propagate parent authority when the child cwd is missing", () => {
+		dir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-subagent-missing-")));
+		const missingChild = join(dir, "missing-child");
+		const plan = createSubagentLaunchPlan({
+			agent: makeAgent(),
+			task: "inspect the missing child",
+			tmpPromptPath: null,
+			defaultCwd: dir,
+			cwd: missingChild,
+		});
+
+		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], undefined);
+	});
+
+	it("revalidates project authority after a child path becomes a symlink", () => {
+		dir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-subagent-delayed-symlink-")));
+		const workspace = join(dir, "workspace");
+		const child = join(workspace, "child");
+		const externalRepo = join(dir, "external-repo");
+		mkdirSync(child, { recursive: true });
+		mkdirSync(externalRepo);
+		const projectRoot = resolveSubagentProjectRoot(workspace, child);
+		rmSync(child, { recursive: true });
+		symlinkSync(externalRepo, child, "dir");
+
+		const plan = createSubagentLaunchPlan({
+			agent: makeAgent(),
+			task: "inspect after the path changed",
+			tmpPromptPath: null,
+			defaultCwd: workspace,
+			cwd: child,
+			projectRoot,
+		});
+
+		assert.equal(plan.cwd, externalRepo);
+		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], undefined);
+	});
+
 	it("shell-escapes cmux environment values without command execution", () => {
 		dir = mkdtempSync(join(tmpdir(), "gsd-subagent-shell-env-"));
 		const marker = join(dir, "injected");
@@ -137,8 +175,9 @@ describe("subagent launch module", () => {
 	it("propagates explicit authority to an isolated child checkout", () => {
 		dir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-subagent-isolated-")));
 		const workspace = join(dir, "workspace");
+		const sourceCheckout = join(workspace, "source-checkout");
 		const isolatedCheckout = join(dir, "isolated-checkout");
-		mkdirSync(workspace);
+		mkdirSync(sourceCheckout, { recursive: true });
 		mkdirSync(isolatedCheckout);
 		const plan = createSubagentLaunchPlan({
 			agent: makeAgent(),
@@ -147,6 +186,7 @@ describe("subagent launch module", () => {
 			defaultCwd: workspace,
 			cwd: isolatedCheckout,
 			projectRoot: workspace,
+			projectRootSourceCwd: sourceCheckout,
 		});
 
 		assert.equal(plan.env[SUBAGENT_PROJECT_ROOT_ENV_VAR], workspace);
