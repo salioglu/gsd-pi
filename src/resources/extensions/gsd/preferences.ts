@@ -375,6 +375,7 @@ export function loadEffectiveGSDPreferences(
       path: effectiveProjectPreferences.path,
       scope: "project",
       preferences: mergePreferences(effectiveGlobalPreferences.preferences, effectiveProjectPreferences.preferences),
+      ...(metadata.projectRuntimeContract ? { projectRuntimeContract: metadata.projectRuntimeContract } : {}),
       ...(metadata.warnings ? { warnings: metadata.warnings } : {}),
       ...(metadata.diagnostics ? { diagnostics: metadata.diagnostics } : {}),
     };
@@ -535,11 +536,12 @@ function loadPreferencesFile(path: string, scope: "global" | "project"): LoadedG
   const preferences = parsed.preferences ?? {};
   const validation = validatePreferences(preferences);
   const rawRuntime = (preferences as Record<string, unknown>).runtime;
-  const hasConfiguredRuntimeContract = scope === "project"
-    && typeof rawRuntime === "object"
+  const hasParsedRuntimeContract = typeof rawRuntime === "object"
     && rawRuntime !== null
     && !Array.isArray(rawRuntime)
     && Object.hasOwn(rawRuntime, "contract");
+  const hasConfiguredRuntimeContract = scope === "project"
+    && (hasParsedRuntimeContract || (ignored && containsRuntimeContractSetting(raw)));
   let projectRuntimeContract: LoadedGSDPreferences["projectRuntimeContract"];
   if (hasConfiguredRuntimeContract) {
     projectRuntimeContract = validation.preferences.runtime?.contract ? "valid" : "invalid";
@@ -574,6 +576,37 @@ function loadPreferencesFile(path: string, scope: "global" | "project"): LoadedG
     ...(allWarnings.length > 0 ? { warnings: allWarnings } : {}),
     ...(diagnostics.length > 0 ? { diagnostics } : {}),
   };
+}
+
+function containsRuntimeContractSetting(content: string): boolean {
+  let start = 0;
+  if (content.startsWith("---\r\n")) {
+    start = 5;
+  } else if (content.startsWith("---\n")) {
+    start = 4;
+  } else {
+    return false;
+  }
+  const end = content.indexOf("\n---", start);
+  const frontmatter = content.slice(start, end === -1 ? undefined : end);
+  const lines = frontmatter.split(/\r?\n/);
+
+  for (let index = 0; index < lines.length; index++) {
+    const runtime = /^(\s*)runtime\s*:\s*(.*)$/.exec(lines[index] ?? "");
+    if (!runtime) continue;
+    if (/^\{[^\n]*\bcontract\s*:/.test(runtime[2] ?? "")) return true;
+
+    const runtimeIndent = runtime[1]?.length ?? 0;
+    for (let childIndex = index + 1; childIndex < lines.length; childIndex++) {
+      const child = lines[childIndex] ?? "";
+      if (!child.trim() || /^\s*#/.test(child)) continue;
+      const childIndent = /^\s*/.exec(child)?.[0].length ?? 0;
+      if (childIndent <= runtimeIndent) break;
+      if (/^\s*contract\s*:/.test(child)) return true;
+    }
+  }
+
+  return false;
 }
 
 let _warnedUnrecognizedFormat = false;

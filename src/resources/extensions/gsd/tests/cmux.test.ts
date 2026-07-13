@@ -146,6 +146,26 @@ describe("autoEnableCmuxPreferences", () => {
     assert.ok(content.includes("splits: true"), "should preserve existing splits: true");
     assert.ok(content.includes("browser: true"), "should preserve existing browser: true");
   });
+
+  test("writes only the requested project when host cwd differs", () => {
+    const activeProject = fs.mkdtempSync(path.join(tmpdir(), "cmux-active-project-"));
+    const hostPath = path.join(tmp, ".gsd", "preferences.md");
+    const activePath = path.join(activeProject, ".gsd", "preferences.md");
+    fs.mkdirSync(path.dirname(activePath), { recursive: true });
+    fs.writeFileSync(hostPath, "---\nversion: 1\n---\n");
+    fs.writeFileSync(activePath, "---\nversion: 1\n---\n");
+
+    try {
+      const result = autoEnableCmuxPreferences(activeProject);
+
+      assert.equal(result, true);
+      assert.doesNotMatch(fs.readFileSync(hostPath, "utf-8"), /cmux:/);
+      assert.match(fs.readFileSync(activePath, "utf-8"), /cmux:/);
+      assert.match(fs.readFileSync(activePath, "utf-8"), /enabled: true/);
+    } finally {
+      fs.rmSync(activeProject, { recursive: true, force: true });
+    }
+  });
 });
 
 test("buildCmuxStatusLabel and progress prefer deepest active unit", () => {

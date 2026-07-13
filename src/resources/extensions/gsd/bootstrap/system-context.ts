@@ -323,7 +323,7 @@ export async function buildBeforeAgentStartResult(
     const { markCmuxPromptShown, shouldPromptToEnableCmux } = await import("../../cmux/index.js");
     if (shouldPromptToEnableCmux(loadedPreferences?.preferences)) {
       markCmuxPromptShown();
-      if (autoEnableCmuxPreferences()) {
+      if (autoEnableCmuxPreferences(basePath)) {
         loadedPreferences = loadEffectiveGSDPreferences(basePath);
         ctx.ui.notify(
           "cmux detected — auto-enabled. Run /gsd cmux off to disable.",
