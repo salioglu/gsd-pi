@@ -350,6 +350,15 @@ type WorkflowToolExecutors = {
     basePath: string,
     invocation: ExecutionInvocation,
   ) => Promise<unknown>;
+  executeTaskRecoveryResume: (
+    params: {
+      recoveryActionId: string;
+      repairSummary: string;
+      evidence: Record<string, unknown>;
+    },
+    basePath: string,
+    invocation: ExecutionInvocation,
+  ) => Promise<unknown>;
   executeSliceReopen: (
     params: {
       sliceId: string;
@@ -559,6 +568,32 @@ function resolveSoleActiveWorktree(projectRoot: string): string | null {
   return live[0];
 }
 
+async function bridgeRecoveryActionMilestoneId(
+  projectDir: string,
+  recoveryActionId: string,
+): Promise<string | null> {
+  const bridge = await importBridgeModule();
+  if (!await bridge.ensureDbOpen(projectDir)) return null;
+  const row = bridge.getDb().prepare(`
+    SELECT lifecycle.milestone_id
+    FROM workflow_recovery_actions action
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.project_id = action.project_id
+     AND lifecycle.lifecycle_id = action.lifecycle_id
+    WHERE action.recovery_action_id = :recovery_action_id
+  `).get({ ":recovery_action_id": recoveryActionId });
+  return typeof row?.milestone_id === "string" ? row.milestone_id : null;
+}
+
+export async function resolveRecoveryActionProjectDir(
+  projectRoot: string,
+  recoveryActionId: string,
+  resolveMilestoneId: (projectDir: string, recoveryActionId: string) => Promise<string | null> = bridgeRecoveryActionMilestoneId,
+): Promise<string> {
+  const milestoneId = await resolveMilestoneId(projectRoot, recoveryActionId);
+  return resolveActiveWorktreeBasePath(projectRoot, milestoneId) ?? projectRoot;
+}
+
 function isHomeDirectory(candidate: string): boolean {
   let resolvedHome: string;
   try {
@@ -640,6 +675,7 @@ function isWorkflowToolExecutors(value: unknown): value is WorkflowToolExecutors
     "executeUatResultSave",
     "executeTaskComplete",
     "executeTaskReopen",
+    "executeTaskRecoveryResume",
     "executeSliceReopen",
     "executeMilestoneReopen",
   ];
@@ -1148,6 +1184,21 @@ async function handleTaskReopen(
   const { executeTaskReopen } = await getWorkflowToolExecutors();
   return adaptExecutorResult(
     await runSerializedWorkflowOperation(() => executeTaskReopen(args, projectDir, invocation)),
+  );
+}
+
+async function handleTaskRecoveryResume(
+  projectDir: string,
+  args: Omit<z.infer<typeof taskRecoveryResumeSchema>, "projectDir">,
+  invocation: ExecutionInvocation,
+): Promise<unknown> {
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(async () => {
+      const resolvedProjectDir = await resolveRecoveryActionProjectDir(projectDir, args.recoveryActionId);
+      await enforceWorkflowWriteGate("gsd_task_recovery_resume", resolvedProjectDir);
+      const { executeTaskRecoveryResume } = await getWorkflowToolExecutors();
+      return executeTaskRecoveryResume(args, resolvedProjectDir, invocation);
+    }),
   );
 }
 
@@ -2032,6 +2083,17 @@ const taskReopenParams = {
 };
 const taskReopenSchema = z.object(taskReopenParams);
 
+const taskRecoveryResumeParams = {
+  projectDir: projectDirParam,
+  recoveryActionId: nonEmptyString("recoveryActionId").describe("Exact current abort Recovery Action ID"),
+  repairSummary: nonEmptyString("repairSummary").describe("What was repaired and why retry is now safe"),
+  evidence: unknownRecord.refine(
+    (value) => Object.keys(value).length > 0,
+    "evidence must be a non-empty object",
+  ).describe("Structured evidence proving the repair"),
+};
+const taskRecoveryResumeSchema = z.object(taskRecoveryResumeParams);
+
 const sliceReopenParams = {
   projectDir: projectDirParam,
   sliceId: nonEmptyString("sliceId").describe("Slice ID (e.g. S01)"),
@@ -2805,6 +2867,21 @@ export function registerWorkflowTools(
         projectDir,
         taskArgs,
         mcpExecutionInvocation("gsd_task_reopen", extra),
+      );
+    },
+  );
+
+  server.tool(
+    "gsd_task_recovery_resume",
+    "Authorize one new Task Attempt after the current durable abort cause has been repaired.",
+    taskRecoveryResumeParams,
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
+      const parsed = parseWorkflowArgs(taskRecoveryResumeSchema, args);
+      const { projectDir, ...resumeArgs } = parsed;
+      return handleTaskRecoveryResume(
+        projectDir,
+        resumeArgs,
+        mcpExecutionInvocation("gsd_task_recovery_resume", extra),
       );
     },
   );

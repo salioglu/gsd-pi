@@ -8,7 +8,12 @@ import { Text } from "@gsd/pi-tui";
 import { SUMMARY_SAVE_CONTENT_MAX_LENGTH } from "@opengsd/contracts";
 
 import { loadEffectiveGSDPreferences } from "../preferences.js";
-import { ensureDbOpen, resolveCtxCwd, resolveWorkflowToolBasePath } from "./dynamic-tools.js";
+import {
+  ensureDbOpen,
+  resolveCtxCwd,
+  resolveTaskRecoveryResumeBasePath,
+  resolveWorkflowToolBasePath,
+} from "./dynamic-tools.js";
 import { importWorkflowExecutorsModule } from "../workflow-mcp.js";
 import { loadWriteGateSnapshot, shouldBlockRootArtifactSaveInSnapshot } from "./write-gate.js";
 import { logError } from "../workflow-logger.js";
@@ -1390,6 +1395,45 @@ export function registerDbTools(pi: ExtensionAPI): void {
   };
 
   registerWorkflowTool(pi, reopenTaskTool);
+
+  const taskRecoveryResumeTool = {
+    name: "gsd_task_recovery_resume",
+    label: "Resume Repaired Task",
+    description:
+      "Authorize exactly one new Task Attempt after an agent-owned recovery abort. " +
+      "Use only after repairing the recorded cause; the abort and retry budget remain in history.",
+    promptSnippet: "Resume one Task after its durable abort cause has been repaired",
+    promptGuidelines: [
+      "Use the exact recoveryActionId returned by the current abort.",
+      "Explain the repair in plain language and attach concrete verification evidence.",
+      "This authorization is consumed by the next lineage-linked Task Attempt and cannot be reused.",
+    ],
+    parameters: Type.Object({
+      recoveryActionId: Type.String({ minLength: 1, description: "Exact current abort Recovery Action ID" }),
+      repairSummary: Type.String({ minLength: 1, description: "What was repaired and why retry is now safe" }),
+      evidence: Type.Record(
+        Type.String(),
+        Type.Unknown(),
+        { minProperties: 1, description: "Structured evidence proving the repair" },
+      ),
+    }, { additionalProperties: false }),
+    execute: async (
+      toolCallId: string,
+      params: any,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: unknown,
+    ) => {
+      const { executeTaskRecoveryResume } = await loadWorkflowExecutors();
+      return executeTaskRecoveryResume(
+        params,
+        resolveTaskRecoveryResumeBasePath(ctx, params.recoveryActionId),
+        piExecutionInvocation("gsd_task_recovery_resume", toolCallId),
+      );
+    },
+  };
+
+  registerWorkflowTool(pi, taskRecoveryResumeTool);
 
   // ─── gsd_slice_reopen (gsd_reopen_slice alias) ─────────────────────────
 
