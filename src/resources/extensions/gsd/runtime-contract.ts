@@ -12,7 +12,7 @@ import type { Stats } from "node:fs";
 import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
 
 import type { GSDPreferences } from "./preferences-types.js";
-import { createRepositoryRegistryFromPreferences } from "./repository-registry.js";
+import { resolveRepositoryProjectRoot } from "./repository-registry.js";
 
 const DEFAULT_CONTRACT_PATH = "script/local-runtime";
 const DEFAULT_ENTRY_NAMES = ["runtime.mjs", "runtime.js", "runtime.ts", "runtime.sh"];
@@ -249,8 +249,7 @@ function discoverRuntimeContract(
   preferences?: GSDPreferences,
   hooks?: RuntimeContractSnapshotHooks,
 ): RuntimeContractDiscovery {
-  const repositoryRegistry = createRepositoryRegistryFromPreferences(basePath, preferences);
-  const projectRoot = realpathSync.native(repositoryRegistry.projectRoot);
+  const projectRoot = realpathSync.native(resolveRepositoryProjectRoot(basePath));
   const configured = preferences?.runtime?.contract;
   const contractPath = configured?.path ?? DEFAULT_CONTRACT_PATH;
   if (isAbsolute(contractPath) || win32.isAbsolute(contractPath)) return { status: "invalid" };
@@ -381,10 +380,14 @@ export function resolveRuntimeContract(
 function renderDocument(label: string, document: RuntimeContractDocument): string[] {
   const truncation = document.truncated ? " truncated" : "";
   return [
-    `<runtime-contract-snapshot kind=${JSON.stringify(label)} path=${JSON.stringify(document.path)}${truncation}>`,
-    JSON.stringify(document.content),
+    `<runtime-contract-snapshot kind=${encodeSnapshotValue(label)} path=${encodeSnapshotValue(document.path)}${truncation}>`,
+    encodeSnapshotValue(document.content),
     "</runtime-contract-snapshot>",
   ];
+}
+
+function encodeSnapshotValue(value: string): string {
+  return JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
 }
 
 export function renderRuntimeContractForSystemPrompt(
@@ -408,7 +411,7 @@ export function renderRuntimeContractForSystemPrompt(
   if (contract.readme) lines.push(...renderDocument("runtime-documentation", contract.readme));
   if (contract.entry) {
     lines.push(
-      `- Canonical entry point observed during context assembly: ${JSON.stringify(contract.entry.path)} (${contract.entry.size} bytes).`,
+      `- Canonical entry point observed during context assembly: ${encodeSnapshotValue(contract.entry.path)} (${contract.entry.size} bytes).`,
     );
   }
   lines.push(

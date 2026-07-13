@@ -15,7 +15,7 @@ import { resolveModelWithFallbacksForUnit } from "../preferences-models.js";
 import { gsdRoot, resolveGsdRootFile, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTaskFiles, resolveTasksDir, relSliceFile, relSlicePath, relTaskFile } from "../paths.js";
 import { extractIntroAndRules } from "../knowledge-parser.js";
 import { ensureCodebaseMapFresh, readCodebaseMap } from "../codebase-generator.js";
-import { createRepositoryRegistryFromPreferences } from "../repository-registry.js";
+import { resolveRepositoryProjectRoot } from "../repository-registry.js";
 import { getActiveAutoWorktreeContext } from "../auto-worktree-session-registry.js";
 import { getActiveWorktreeName, getWorktreeOriginalCwd } from "../worktree-session-state.js";
 import { deriveState } from "../state.js";
@@ -366,10 +366,7 @@ export async function buildBeforeAgentStartResult(
   }
 
   let codebaseBlock = "";
-  const codebaseBasePath = createRepositoryRegistryFromPreferences(
-    basePath,
-    loadedPreferences?.preferences,
-  ).projectRoot;
+  const codebaseBasePath = resolveRepositoryProjectRoot(basePath);
   try {
     const codebaseOptions = loadedPreferences?.preferences?.codebase
       ? {
@@ -420,7 +417,7 @@ export async function buildBeforeAgentStartResult(
 
   const worktreeBlock = buildWorktreeContextBlock(basePath);
 
-  const subagentModelConfig = resolveModelWithFallbacksForUnit("subagent");
+  const subagentModelConfig = resolveModelWithFallbacksForUnit("subagent", basePath);
   const subagentModelBlock = subagentModelConfig
     ? `\n\n## Subagent Model\n\nWhen spawning subagents via the \`subagent\` tool, always pass \`model: "${subagentModelConfig.primary}"\` in the tool call parameters. Never omit this — always specify it explicitly.`
     : "";
@@ -643,9 +640,9 @@ function limitKnowledgeBlock(content: string, limit: number | null): string {
 }
 
 function buildWorktreeContextBlock(basePath: string): string {
-  const worktreeName = getActiveWorktreeName();
+  const worktreeName = getActiveWorktreeName(basePath);
   const worktreeMainCwd = getWorktreeOriginalCwd();
-  const autoWorktree = getActiveAutoWorktreeContext();
+  const autoWorktree = getActiveAutoWorktreeContext(basePath);
 
   if (worktreeName && worktreeMainCwd) {
     return [

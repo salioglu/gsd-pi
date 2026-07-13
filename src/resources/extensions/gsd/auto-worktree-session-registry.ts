@@ -42,7 +42,7 @@ export function _resetAutoWorktreeOriginalBaseForTests(): void {
   setActiveWorkspace(null);
 }
 
-export function getActiveAutoWorktreeContext(): {
+export function getActiveAutoWorktreeContext(basePath: string = process.cwd()): {
   originalBase: string;
   worktreeName: string;
   branch: string;
@@ -50,7 +50,7 @@ export function getActiveAutoWorktreeContext(): {
   const ws = getActiveWorkspace();
   if (!ws) return null;
   const originalBase = ws.projectRoot;
-  const cwd = process.cwd();
+  const cwd = basePath;
   if (!isGsdWorktreePath(cwd)) return null;
   const cwdProjectRoot = resolveWorktreeProjectRoot(cwd, originalBase);
   if (
