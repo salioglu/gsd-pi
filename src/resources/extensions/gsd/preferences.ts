@@ -541,9 +541,7 @@ function loadPreferencesFile(path: string, scope: "global" | "project"): LoadedG
   const preferences = parsed.preferences ?? {};
   const validation = validatePreferences(preferences);
   const rawRuntime = (preferences as Record<string, unknown>).runtime;
-  const hasParsedRuntimeContract = Array.isArray(rawRuntime)
-    ? rawRuntime.some((item) => typeof item === "object" && item !== null && Object.hasOwn(item, "contract"))
-    : typeof rawRuntime === "object" && rawRuntime !== null && Object.hasOwn(rawRuntime, "contract");
+  const hasParsedRuntimeContract = hasRuntimeContractProperty(rawRuntime);
   const hasConfiguredRuntimeContract = scope === "project"
     && (
       hasParsedRuntimeContract
@@ -598,6 +596,18 @@ function containsRuntimeContractSetting(content: string): boolean {
   const end = content.indexOf("\n---", start);
   const frontmatter = content.slice(start, end === -1 ? undefined : end);
   return parseDocument(frontmatter).hasIn(["runtime", "contract"]);
+}
+
+function hasRuntimeContractProperty(runtime: unknown): boolean {
+  if (Array.isArray(runtime)) return runtime.some(hasRuntimeContractProperty);
+  return typeof runtime === "object" && runtime !== null && Object.hasOwn(runtime, "contract");
+}
+
+function arrayRootHasRuntimeContract(preferences: unknown[]): boolean {
+  return preferences.some((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return false;
+    return hasRuntimeContractProperty((item as Record<string, unknown>).runtime);
+  });
 }
 
 let _warnedUnrecognizedFormat = false;
@@ -675,10 +685,10 @@ let _warnedFrontmatterParse = false;
 function parseFrontmatterBlockWithDiagnostics(
   frontmatter: string,
   lineOffset: number,
-): { preferences: GSDPreferences; diagnostics: PreferenceParseDiagnostic[] } {
+): PreferenceParseResult {
   try {
     const parsed = parseYaml(frontmatter);
-    if (typeof parsed !== 'object' || parsed === null) {
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       return {
         preferences: {} as GSDPreferences,
         diagnostics: [{
@@ -687,6 +697,9 @@ function parseFrontmatterBlockWithDiagnostics(
           message: "preferences frontmatter must be a YAML object",
           ignored: true,
         }],
+        ...(Array.isArray(parsed) && arrayRootHasRuntimeContract(parsed)
+          ? { runtimeContractParseFailed: true }
+          : {}),
       };
     }
     return {

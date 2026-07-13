@@ -1496,6 +1496,47 @@ test("heading-list runtime contract attempts remain invalid", (t) => {
   assert.equal(loaded?.projectRuntimeContract, "invalid");
 });
 
+test("array-root runtime contract attempts remain invalid", (t) => {
+  const tempProject = mkdtempSync(join(tmpdir(), "gsd-prefs-array-root-runtime-"));
+  t.after(() => {
+    rmSync(tempProject, { recursive: true, force: true });
+    clearGSDPreferencesCache();
+  });
+
+  mkdirSync(join(tempProject, ".gsd"), { recursive: true });
+  writeFileSync(
+    getProjectGSDPreferencesPath(tempProject),
+    "---\n- runtime:\n    contract:\n      path: ../outside\n---\n",
+    "utf-8",
+  );
+  clearGSDPreferencesCache();
+
+  const loaded = loadEffectiveGSDPreferences(tempProject);
+
+  assert.equal(loaded?.preferences.runtime, undefined);
+  assert.equal(loaded?.projectRuntimeContract, "invalid");
+});
+
+test("unrelated array-root preferences do not imply a runtime contract", (t) => {
+  const tempProject = mkdtempSync(join(tmpdir(), "gsd-prefs-array-root-control-"));
+  t.after(() => {
+    rmSync(tempProject, { recursive: true, force: true });
+    clearGSDPreferencesCache();
+  });
+
+  mkdirSync(join(tempProject, ".gsd"), { recursive: true });
+  writeFileSync(
+    getProjectGSDPreferencesPath(tempProject),
+    "---\n- note: runtime contract documentation\n---\n",
+    "utf-8",
+  );
+  clearGSDPreferencesCache();
+
+  const loaded = loadEffectiveGSDPreferences(tempProject);
+
+  assert.equal(loaded?.projectRuntimeContract, undefined);
+});
+
 test("unrelated heading-list runtime content does not imply a contract", (t) => {
   const tempProject = mkdtempSync(join(tmpdir(), "gsd-prefs-heading-list-control-"));
   t.after(() => {

@@ -130,10 +130,25 @@ function assertContractDirectoryIdentity(directory: OpenedContractDirectory): vo
   if (
     currentPath !== directory.path ||
     !openedStats.isDirectory() ||
-    !sameMember(directory.stats, openedStats) ||
-    !sameMember(directory.stats, currentStats)
+    !sameFile(directory.stats, openedStats) ||
+    !sameFile(directory.stats, currentStats)
   ) {
     throw new Error("Runtime contract directory changed during snapshot assembly");
+  }
+}
+
+function assertNoSymlinkPathComponents(contractDir: string, memberPath: string): void {
+  const memberRelativePath = relative(contractDir, memberPath);
+  if (!isWithin(contractDir, memberPath)) {
+    throw new Error("Runtime contract member escapes its directory");
+  }
+
+  let currentPath = contractDir;
+  for (const component of memberRelativePath.split(sep)) {
+    currentPath = resolve(currentPath, component);
+    if (lstatSync(currentPath).isSymbolicLink()) {
+      throw new Error("Runtime contract member paths cannot contain symlinks");
+    }
   }
 }
 
@@ -148,6 +163,7 @@ function captureContractMembers(
     if (!isWithin(contractDir, path)) throw new Error("Runtime contract member escapes its directory");
 
     try {
+      assertNoSymlinkPathComponents(contractDir, path);
       const stats = lstatSync(path);
       if (stats.isSymbolicLink() || !stats.isFile()) {
         throw new Error("Runtime contract members must be regular files");
@@ -162,9 +178,27 @@ function captureContractMembers(
   return members;
 }
 
-function assertContractMembersIdentity(members: Map<string, ContractMemberSnapshot>): void {
+function captureStableContractMembers(
+  directory: OpenedContractDirectory,
+  names: string[],
+): Map<string, ContractMemberSnapshot> {
+  const beforeCapture = fstatSync(directory.fd);
+  const members = captureContractMembers(directory.path, names);
+  const afterCapture = fstatSync(directory.fd);
+  const currentPathStats = statSync(directory.path);
+  if (!sameMember(beforeCapture, afterCapture) || !sameMember(beforeCapture, currentPathStats)) {
+    throw new Error("Runtime contract directory changed during member capture");
+  }
+  return members;
+}
+
+function assertContractMembersIdentity(
+  contractDir: string,
+  members: Map<string, ContractMemberSnapshot>,
+): void {
   for (const member of members.values()) {
     try {
+      assertNoSymlinkPathComponents(contractDir, member.path);
       const stats = lstatSync(member.path);
       if (!member.stats || stats.isSymbolicLink() || !stats.isFile() || !sameMember(member.stats, stats)) {
         throw new Error("Runtime contract member changed during snapshot assembly");
@@ -186,12 +220,14 @@ function openValidatedFile(
 
   let fd: number | undefined;
   try {
+    assertNoSymlinkPathComponents(contractDir, member.path);
     const pathStats = lstatSync(member.path);
     if (pathStats.isSymbolicLink() || !pathStats.isFile() || !sameMember(member.stats, pathStats)) {
       throw new Error("Runtime contract member changed before opening");
     }
 
     beforeOpen?.();
+    assertNoSymlinkPathComponents(contractDir, member.path);
     fd = openSync(member.path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const openedStats = fstatSync(fd);
     if (!openedStats.isFile() || !sameMember(member.stats, openedStats)) {
@@ -211,6 +247,7 @@ function openValidatedFile(
 
     const content = readOpenedFile(fd, openedStats.size);
     const finalStats = fstatSync(fd);
+    assertNoSymlinkPathComponents(contractDir, member.path);
     const finalPathStats = lstatSync(member.path);
     if (!sameMember(member.stats, finalStats) || !sameMember(member.stats, finalPathStats)) {
       throw new Error("Runtime contract member changed while reading");
@@ -286,13 +323,16 @@ function discoverRuntimeContract(
     assertContractDirectoryIdentity(directory);
     const entryName = configured?.entry ?? selectDefaultEntryName(directory.path);
     assertContractDirectoryIdentity(directory);
+    const memberNames = ["AGENT.md", "README.md", ...(entryName ? [entryName] : [])];
+    const baselineMembers = captureStableContractMembers(directory, memberNames);
     const members = captureContractMembers(
       directory.path,
-      ["AGENT.md", "README.md", ...(entryName ? [entryName] : [])],
+      memberNames,
       hooks?.afterMemberCapture,
     );
     assertContractDirectoryIdentity(directory);
-    assertContractMembersIdentity(members);
+    assertContractMembersIdentity(directory.path, baselineMembers);
+    assertContractMembersIdentity(directory.path, members);
 
     const readFromContractDirectory = <T>(name: string, read: () => T): T => {
       assertContractDirectoryIdentity(directory);
@@ -333,7 +373,7 @@ function discoverRuntimeContract(
       );
     }
 
-    assertContractMembersIdentity(members);
+    assertContractMembersIdentity(directory.path, members);
     if (configured?.entry && !entry) return { status: "invalid" };
     if (!agentInstructions && !readme && !entry) {
       return { status: configured ? "invalid" : "absent" };

@@ -14,9 +14,11 @@ import {
   getActiveAutoWorktreeContext,
   getAutoWorktreeOriginalBase,
   _resetAutoWorktreeOriginalBaseForTests,
+  setActiveWorkspace,
 } from "../auto-worktree-session-registry.ts";
 import { teardownAutoWorktree } from "../auto-worktree-teardown.ts";
 import { seedMergeReadyMilestone } from "./merge-ready-fixture.ts";
+import { createWorkspace } from "../workspace.ts";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -174,6 +176,16 @@ describe("auto-worktree workspace registry", () => {
 
     teardownAutoWorktree(dir2, "M020");
     try { process.chdir(savedCwd); } catch { /* ignore */ }
+  });
+
+  test("active auto-worktree context rejects a foreign project worktree", (t) => {
+    const activeProject = createTempRepo(t);
+    const foreignProject = createTempRepo(t);
+    const foreignWorktree = join(foreignProject, ".gsd-worktrees", "M099");
+    git(["worktree", "add", "-b", "milestone/M099", foreignWorktree], foreignProject);
+    setActiveWorkspace(createWorkspace(activeProject));
+
+    assert.strictEqual(getActiveAutoWorktreeContext(foreignWorktree), null);
   });
 
   test("mergeMilestoneToMain cleans up when milestone branch was already regular-merged", (t) => {

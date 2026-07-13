@@ -640,6 +640,24 @@ test("rejects contract file symlinks that stay within the contract directory", a
   });
 });
 
+test("rejects symlinked ancestors of configured contract entries", async () => {
+  await withRuntimeProject(async (base) => {
+    const contractDir = join(base, "script", "local-runtime");
+    const actualDir = join(contractDir, "actual");
+    mkdirSync(actualDir, { recursive: true });
+    writeFileSync(join(contractDir, "AGENT.md"), "# Runtime rules\n", "utf-8");
+    writeFileSync(join(actualDir, "run.mjs"), "export {};\n", "utf-8");
+    symlinkSync("actual", join(contractDir, "bin"));
+
+    const runtimeBlock = renderRuntimeContractForSystemPrompt(base, {
+      runtime: { contract: { path: "script/local-runtime", entry: "bin/run.mjs" } },
+    });
+
+    assert.match(runtimeBlock, /Invalid project-local runtime contract/);
+    assert.doesNotMatch(runtimeBlock, /Project-local runtime contract\n/);
+  });
+});
+
 test("ignores symlinks in lower-priority default entry candidates", async () => {
   await withRuntimeProject(async (base) => {
     const contractDir = join(base, "script", "local-runtime");
@@ -666,7 +684,7 @@ test("ignores changes to lower-priority default entry candidates", async () => {
 
     const contract = _resolveRuntimeContractWithSnapshotHooksForTest(base, {
       afterMemberCapture(name) {
-        if (name === "runtime.ts") renameSync(replacement, join(contractDir, "runtime.ts"));
+        if (name === "runtime.mjs") renameSync(replacement, join(contractDir, "runtime.ts"));
       },
     });
 
