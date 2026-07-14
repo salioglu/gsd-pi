@@ -578,7 +578,7 @@ function setupSliceFixture(base: string, secondTaskStatus = "complete"): void {
   writeFileSync(join(mDir, "01-01-UAT.md"), "# UAT\nPassed.", "utf-8");
 
   // Set up DB
-  openDatabase(":memory:");
+  openDatabase(join(base, ".gsd", "gsd.db"));
   insertMilestone({ id: "M001", title: "Test", status: "active" });
   insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "complete", risk: "low", depends: [] });
   insertSlice({ id: "S02", milestoneId: "M001", title: "Next Slice", status: "pending", risk: "low", depends: ["S01"] });
@@ -663,7 +663,7 @@ test("handleResetSlice with --force resets slice and all tasks", async () => {
 
     // DB status reset
     const slice = getSlice("M001", "S01");
-    assert.equal(slice?.status, "active");
+    assert.equal(slice?.status, "in_progress");
     const t1 = getTask("M001", "S01", "T01");
     assert.equal(t1?.status, "pending");
     const t2 = getTask("M001", "S01", "T02");
@@ -696,13 +696,38 @@ test("handleResetSlice with --force resets slice and all tasks", async () => {
     // Success notification
     assert.equal(notifications[0]?.level, "success");
     assert.match(notifications[0]?.message ?? "", /Reset slice M001\/S01/);
+
+    await handleResetSlice("M001/S01 --force", ctx, {} as any, base);
+    assert.equal(notifications[1]?.level, "success");
+    assert.match(notifications[1]?.message ?? "", /reused|replayed|already current|duplicate/i);
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
   }
 });
 
-test("handleResetSlice fails closed before mutating an adopted canonical slice", async () => {
+test("handleResetSlice warns when readable projections remain stale", async () => {
+  const base = makeTempDir("gsd-reset-slice-stale-projection");
+  try {
+    setupSliceFixture(base);
+    adoptCompletedLifecycle({ itemKind: "slice", milestoneId: "M001", sliceId: "S01" });
+    const summaryPath = join(base, ".gsd", "phases", "01-test", "01-01-SUMMARY.md");
+    rmSync(summaryPath, { force: true });
+    mkdirSync(summaryPath);
+
+    const { notifications, ctx } = makeCtx();
+    await handleResetSlice("M001/S01 --force", ctx, {} as any, base);
+
+    assert.equal(notifications.at(-1)?.level, "warning");
+    assert.match(notifications.at(-1)?.message ?? "", /pending repair|stale/i);
+    assert.doesNotMatch(notifications.at(-1)?.message ?? "", /projections refreshed/i);
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("handleResetSlice atomically reopens an adopted canonical slice", async () => {
   const base = makeTempDir("gsd-reset-slice-adopted");
   try {
     setupSliceFixture(base);
@@ -711,17 +736,16 @@ test("handleResetSlice fails closed before mutating an adopted canonical slice",
     const { notifications, ctx } = makeCtx();
     await handleResetSlice("M001/S01 --force", ctx, {} as any, base);
 
-    assert.equal(notifications[0]?.level, "error");
-    assert.match(notifications[0]?.message ?? "", /canonical slice history.*cannot be reset/i);
-    assert.equal(getSlice("M001", "S01")?.status, "complete");
-    assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
-    assert.equal(getTask("M001", "S01", "T02")?.status, "complete");
+    assert.equal(notifications.at(-1)?.level, "success");
+    assert.equal(getSlice("M001", "S01")?.status, "in_progress");
+    assert.equal(getTask("M001", "S01", "T01")?.status, "pending");
+    assert.equal(getTask("M001", "S01", "T02")?.status, "pending");
     assert.equal(
       _getAdapter()!.prepare(`
         SELECT lifecycle_status FROM workflow_item_lifecycles
         WHERE item_kind = 'slice' AND milestone_id = 'M001' AND slice_id = 'S01'
       `).get()?.lifecycle_status,
-      "completed",
+      "ready",
     );
   } finally {
     closeDatabase();
@@ -743,7 +767,7 @@ test("handleResetSlice validates every task before changing slice or task state"
     await handleResetSlice("M001/S01 --force", ctx, {} as any, base);
 
     assert.equal(notifications[0]?.level, "error");
-    assert.match(notifications[0]?.message ?? "", /cannot be reset safely from in_progress/i);
+    assert.match(notifications[0]?.message ?? "", /not complete.*T02|T02.*not terminal/i);
     assert.equal(getSlice("M001", "S01")?.status, "complete");
     assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
     assert.equal(getTask("M001", "S01", "T02")?.status, "in_progress");
@@ -807,7 +831,8 @@ test("handleResetSlice fails closed under a terminal canonical milestone", async
 test("handleResetSlice with non-existent slice returns error", async () => {
   const base = makeTempDir("gsd-reset-slice-notfound");
   try {
-    openDatabase(":memory:");
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+    openDatabase(join(base, ".gsd", "gsd.db"));
     insertMilestone({ id: "M001", title: "Test", status: "active" });
 
     const { notifications, ctx } = makeCtx();

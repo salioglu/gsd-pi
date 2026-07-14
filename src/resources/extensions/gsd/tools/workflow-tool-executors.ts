@@ -53,6 +53,8 @@ import type { ReopenMilestoneParams } from "./reopen-milestone.js";
 import { handleReopenMilestone } from "./reopen-milestone.js";
 import type { ReopenSliceParams } from "./reopen-slice.js";
 import { handleReopenSlice } from "./reopen-slice.js";
+import type { SkipSliceParams } from "./skip-slice.js";
+import { handleSkipSlice } from "./skip-slice.js";
 import type { ReopenTaskParams } from "./reopen-task.js";
 import { handleReopenTask } from "./reopen-task.js";
 import type { ReassessRoadmapParams } from "./reassess-roadmap.js";
@@ -61,6 +63,7 @@ import type { ValidateMilestoneOptions, ValidateMilestoneParams } from "./valida
 import { handleValidateMilestone } from "./validate-milestone.js";
 import { logError, logWarning } from "../workflow-logger.js";
 import { invalidateStateCache } from "../state.js";
+import { flushWorkflowProjections } from "../projection-flush.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { parseProject } from "../schemas/parsers.js";
 import { autoSession, getAutoRuntimeSnapshot, isAutoActive } from "../auto-runtime-state.js";
@@ -717,6 +720,7 @@ export interface TaskRecoveryResumeExecutorParams {
   evidence: Record<string, DomainJsonValue>;
 }
 export type ReopenSliceExecutorParams = ReopenSliceParams;
+export type SkipSliceExecutorParams = SkipSliceParams;
 export type ReopenMilestoneExecutorParams = ReopenMilestoneParams;
 export type ValidateMilestoneExecutorParams = ValidateMilestoneParams;
 export type ReassessRoadmapExecutorParams = ReassessRoadmapParams;
@@ -827,6 +831,9 @@ export async function executeTaskComplete(
       isError: true,
       };
     }
+    const projectionNotice = result.stale
+      ? "The readable status update is pending repair."
+      : null;
     if (result.escalation) {
       const recommended = result.escalation.options.find((option) => option.id === result.escalation?.recommendation);
       const optionIds = result.escalation.options.map((option) => option.id).join("|");
@@ -837,6 +844,7 @@ export async function executeTaskComplete(
             `Task completed with escalation decision required: ${result.escalation.question}`,
             `Recommendation: ${result.escalation.recommendation}${recommended ? ` (${recommended.label})` : ""} — ${result.escalation.recommendationRationale}`,
             `Resolve with: /gsd escalate resolve ${result.taskId} <${optionIds}|accept|reject-blocker> [rationale...]`,
+            ...(projectionNotice ? [projectionNotice] : []),
           ].join("\n"),
         }],
         details: {
@@ -846,17 +854,24 @@ export async function executeTaskComplete(
           milestoneId: result.milestoneId,
           summaryPath: result.summaryPath,
           escalation: result.escalation,
+          ...(result.stale ? { stale: true } : {}),
+          ...(result.duplicate ? { duplicate: true } : {}),
         },
       };
     }
     return {
-      content: [{ type: "text", text: `Completed task ${result.taskId} (${result.sliceId}/${result.milestoneId})` }],
+      content: [{
+        type: "text",
+        text: `Completed task ${result.taskId} (${result.sliceId}/${result.milestoneId})${projectionNotice ? `. ${projectionNotice}` : ""}`,
+      }],
       details: {
         operation: "complete_task",
         taskId: result.taskId,
         sliceId: result.sliceId,
         milestoneId: result.milestoneId,
         summaryPath: result.summaryPath,
+        ...(result.stale ? { stale: true } : {}),
+        ...(result.duplicate ? { duplicate: true } : {}),
       },
     };
   } catch (err) {
@@ -947,7 +962,8 @@ export async function executeTaskRecoveryResume(
 
 export async function executeSliceReopen(
   params: ReopenSliceExecutorParams,
-  basePath: string = process.cwd(),
+  basePath: string,
+  invocation: ExecutionInvocation,
 ): Promise<ToolExecutionResult> {
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
@@ -958,7 +974,7 @@ export async function executeSliceReopen(
     };
   }
   try {
-    const result = await handleReopenSlice(params, basePath);
+    const result = await handleReopenSlice(params, basePath, invocation);
     if ("error" in result) {
       return {
         content: [{ type: "text", text: `Error reopening slice: ${result.error}` }],
@@ -966,13 +982,29 @@ export async function executeSliceReopen(
         isError: true,
       };
     }
+    if (result.superseded) {
+      return {
+        content: [{ type: "text", text: `Reused a historical reopen receipt for slice ${result.sliceId} (${result.milestoneId}); it is no longer current.` }],
+        details: {
+          operation: "reopen_slice",
+          sliceId: result.sliceId,
+          milestoneId: result.milestoneId,
+          tasksReset: result.tasksReset,
+          duplicate: true,
+          superseded: true,
+        },
+      };
+    }
+    const projectionNotice = result.stale ? " The readable status update is pending repair." : "";
     return {
-      content: [{ type: "text", text: `Reopened slice ${result.sliceId} (${result.milestoneId})` }],
+      content: [{ type: "text", text: `Reopened slice ${result.sliceId} (${result.milestoneId}).${projectionNotice}` }],
       details: {
         operation: "reopen_slice",
         sliceId: result.sliceId,
         milestoneId: result.milestoneId,
         tasksReset: result.tasksReset,
+        ...(result.duplicate ? { duplicate: true } : {}),
+        ...(result.stale ? { stale: true } : {}),
       },
     };
   } catch (err) {
@@ -981,6 +1013,98 @@ export async function executeSliceReopen(
     return {
       content: [{ type: "text", text: `Error reopening slice: ${msg}` }],
       details: { operation: "reopen_slice", error: msg },
+      isError: true,
+    };
+  }
+}
+
+export async function executeSkipSlice(
+  params: SkipSliceExecutorParams,
+  basePath: string,
+  invocation: ExecutionInvocation,
+): Promise<ToolExecutionResult> {
+  const dbAvailable = await ensureDbOpen(basePath);
+  if (!dbAvailable) {
+    return {
+      content: [{ type: "text", text: "Error: GSD database is not available. Cannot skip slice." }],
+      details: { operation: "skip_slice", error: "db_unavailable" },
+      isError: true,
+    };
+  }
+  try {
+    const result = handleSkipSlice(params, invocation);
+    if (result.error) {
+      return {
+        content: [{ type: "text", text: `Error: ${result.error}` }],
+        details: {
+          operation: "skip_slice",
+          error: result.error,
+          errorCode: result.errorCode ?? "skip_failed",
+        },
+        isError: true,
+      };
+    }
+    if (result.superseded) {
+      return {
+        content: [{ type: "text", text: `Reused a historical cancellation receipt for slice ${result.sliceId} (${result.milestoneId}); it is no longer current.` }],
+        details: {
+          operation: "skip_slice",
+          sliceId: result.sliceId,
+          milestoneId: result.milestoneId,
+          duplicate: true,
+          superseded: true,
+        },
+      };
+    }
+
+    invalidateStateCache();
+    let projectionStale = false;
+    try {
+      const { rebuildState } = await import("../doctor.js");
+      await rebuildState(basePath);
+    } catch (err) {
+      projectionStale = true;
+      logError("tool", `skip_slice rebuildState failed: ${(err as Error).message}`, { tool: "gsd_skip_slice" });
+    }
+    try {
+      const flushed = await flushWorkflowProjections(basePath, { milestoneId: params.milestoneId });
+      projectionStale ||= flushed.stale;
+    } catch (err) {
+      projectionStale = true;
+      logError("tool", `skip_slice projection flush failed: ${(err as Error).message}`, { tool: "gsd_skip_slice" });
+    }
+
+    let suffix = ` Cascaded ${result.tasksSkipped} task(s) to skipped. Auto-mode will advance past this slice.`;
+    if (result.wasAlreadySkipped) {
+      if (result.tasksSkipped > 0) {
+        suffix = ` (already skipped; cascaded ${result.tasksSkipped} leftover task(s) to skipped).`;
+      } else {
+        suffix = " (already skipped; no pending tasks to cascade).";
+      }
+    }
+    const projectionNotice = projectionStale ? " The readable status update is pending repair." : "";
+    return {
+      content: [{
+        type: "text",
+        text: `Skipped slice ${params.sliceId} (${params.milestoneId}). Reason: ${params.reason ?? "User-directed skip"}.${suffix}${projectionNotice}`,
+      }],
+      details: {
+        operation: "skip_slice",
+        sliceId: params.sliceId,
+        milestoneId: params.milestoneId,
+        reason: params.reason,
+        tasksSkipped: result.tasksSkipped,
+        wasAlreadySkipped: result.wasAlreadySkipped,
+        ...(result.duplicate ? { duplicate: true } : {}),
+        ...(projectionStale ? { stale: true } : {}),
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logError("tool", `skip_slice tool failed: ${msg}`, { tool: "gsd_skip_slice", error: String(err) });
+    return {
+      content: [{ type: "text", text: `Error skipping slice: ${msg}` }],
+      details: { operation: "skip_slice", error: msg },
       isError: true,
     };
   }
@@ -1029,7 +1153,8 @@ export async function executeMilestoneReopen(
 
 export async function executeSliceComplete(
   params: SliceCompleteExecutorParams,
-  basePath: string = process.cwd(),
+  basePath: string,
+  invocation: ExecutionInvocation,
 ): Promise<ToolExecutionResult> {
   const unitGuard = blockIfWrongAutoUnit("complete-slice", "complete_slice");
   if (unitGuard) return unitGuard;
@@ -1113,7 +1238,7 @@ export async function executeSliceComplete(
       return r;
     }) as Array<{ id: string; what: string }>;
 
-    const result = await handleCompleteSlice(coerced as CompleteSliceParams, basePath);
+    const result = await handleCompleteSlice(coerced as CompleteSliceParams, basePath, invocation);
     if ("error" in result) {
       return {
         content: [{ type: "text", text: `Error completing slice: ${result.error}` }],
@@ -1121,14 +1246,31 @@ export async function executeSliceComplete(
       isError: true,
       };
     }
+    if (result.superseded) {
+      return {
+        content: [{ type: "text", text: `Reused a historical completion receipt for slice ${result.sliceId} (${result.milestoneId}); it is no longer current.` }],
+        details: {
+          operation: "complete_slice",
+          sliceId: result.sliceId,
+          milestoneId: result.milestoneId,
+          summaryPath: result.summaryPath,
+          uatPath: result.uatPath,
+          duplicate: true,
+          superseded: true,
+        },
+      };
+    }
+    const projectionNotice = result.stale ? " The readable status update is pending repair." : "";
     return {
-      content: [{ type: "text", text: `Completed slice ${result.sliceId} (${result.milestoneId})` }],
+      content: [{ type: "text", text: `Completed slice ${result.sliceId} (${result.milestoneId}).${projectionNotice}` }],
       details: {
         operation: "complete_slice",
         sliceId: result.sliceId,
         milestoneId: result.milestoneId,
         summaryPath: result.summaryPath,
         uatPath: result.uatPath,
+        ...(result.duplicate ? { duplicate: true } : {}),
+        ...(result.stale ? { stale: true } : {}),
       },
     };
   } catch (err) {
@@ -1167,9 +1309,11 @@ export async function executeCompleteMilestone(
       isError: true,
       };
     }
-    const message = result.alreadyComplete
-      ? `Milestone ${result.milestoneId} is already complete. Summary available at ${result.summaryPath}`
-      : `Completed milestone ${result.milestoneId}. Summary written to ${result.summaryPath}`;
+    const message = result.stale
+      ? `${result.alreadyComplete ? `Milestone ${result.milestoneId} is already complete.` : `Completed milestone ${result.milestoneId}.`} The readable status update is pending repair.`
+      : result.alreadyComplete
+        ? `Milestone ${result.milestoneId} is already complete. Summary available at ${result.summaryPath}`
+        : `Completed milestone ${result.milestoneId}. Summary written to ${result.summaryPath}`;
     return {
       content: [{ type: "text", text: message }],
       details: {

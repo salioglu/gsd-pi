@@ -204,12 +204,16 @@ function validateLifecycleIdentity(input: LifecycleCommandInput): void {
 }
 
 function isValidLifecycleTransition(
+  itemKind: LifecycleIdentity["itemKind"],
   from: CanonicalLifecycleStatus,
   to: CanonicalLifecycleStatus,
 ): boolean {
   if (from === to) return true;
   if (from === "pending") return to === "ready" || to === "cancelled";
-  if (from === "ready") return to === "in_progress" || to === "paused" || to === "cancelled";
+  if (from === "ready") {
+    return to === "in_progress" || to === "paused" || to === "cancelled" ||
+      (itemKind === "slice" && to === "completed");
+  }
   if (from === "in_progress") return to === "paused" || to === "completed" || to === "cancelled";
   if (from === "paused") return to === "ready" || to === "in_progress" || to === "cancelled";
   return (from === "completed" || from === "cancelled") && to === "ready";
@@ -415,7 +419,7 @@ export function adoptOrTransitionLifecycle(
 
   if (!existing) {
     const adoptedFromStatus = input.adoptedFromStatus ?? input.lifecycleStatus;
-    if (!isValidLifecycleTransition(adoptedFromStatus, input.lifecycleStatus)) {
+    if (!isValidLifecycleTransition(input.itemKind, adoptedFromStatus, input.lifecycleStatus)) {
       throw new Error("invalid workflow lifecycle transition");
     }
     const stateVersion = adoptedFromStatus === input.lifecycleStatus ? 0 : 1;
@@ -822,13 +826,13 @@ export function settleAttemptWithResult(
     }
   }
   if (input.cancellation && (input.outcome !== "interrupted" || input.recovery)) {
-    throw new Error("Task cancellation requires an interrupted non-recovery settlement");
+    throw new Error("Cancellation requires an interrupted non-recovery settlement");
   }
-  let requiredOperationType = "attempt.settle";
-  if (input.cancellation) requiredOperationType = "task.cancel";
-  else if (input.recovery) requiredOperationType = "attempt.interrupt";
-  if (operationType !== requiredOperationType) {
-    throw new Error(`Attempt settlement requires an ${requiredOperationType} Domain Operation`);
+  const allowedOperationTypes = input.cancellation
+    ? ["task.cancel", "slice.cancel"]
+    : [input.recovery ? "attempt.interrupt" : "attempt.settle"];
+  if (!allowedOperationTypes.includes(operationType)) {
+    throw new Error(`Attempt settlement requires a ${allowedOperationTypes.join(" or ")} Domain Operation`);
   }
   requireNonBlank(input.failureClass, "failureClass");
   if (typeof input.summary !== "string") throw new Error("summary must be a string");

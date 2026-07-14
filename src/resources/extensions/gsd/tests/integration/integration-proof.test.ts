@@ -54,7 +54,10 @@ import {
 
 // ── Tool handlers ─────────────────────────────────────────────────────────
 import { handleCompleteTask } from "../../tools/complete-task.ts";
-import { handleCompleteSlice } from "../../tools/complete-slice.ts";
+import {
+  handleCompleteSlice as handleCompleteSliceWithInvocation,
+} from "../../tools/complete-slice.ts";
+import { internalExecutionInvocation } from "../../execution-invocation.ts";
 
 // ── Markdown renderer ─────────────────────────────────────────────────────
 import {
@@ -86,6 +89,7 @@ import { runGSDDoctor } from "../../doctor.ts";
 
 // ── Undo/reset ────────────────────────────────────────────────────────────
 import { handleUndoTask, handleResetSlice } from "../../undo.ts";
+import { seedSliceCompletionAuthority } from "../slice-completion-fixture.ts";
 
 // ── Cache invalidation ───────────────────────────────────────────────────
 import { invalidateAllCaches } from "../../cache.ts";
@@ -96,6 +100,17 @@ import { invalidateAllCaches } from "../../cache.ts";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "gsd-integration-proof-"));
+}
+
+let completeSliceInvocationSequence = 0;
+function handleCompleteSlice(
+  params: Parameters<typeof handleCompleteSliceWithInvocation>[0],
+  basePath: string,
+  invocation = internalExecutionInvocation(
+    `test/integration-proof/complete-slice/${++completeSliceInvocationSequence}`,
+  ),
+) {
+  return handleCompleteSliceWithInvocation(params, basePath, invocation);
 }
 
 function makeCtx(): { notifications: Array<{ message: string; level: string }>; ctx: any } {
@@ -318,6 +333,11 @@ test("full lifecycle: migration through completion through doctor", async (t) =>
 
     const r2 = await handleCompleteTask(makeCompleteTaskParams("T02"), base);
     assert.ok(!("error" in r2), `T02 completion should succeed: ${JSON.stringify(r2)}`);
+    seedSliceCompletionAuthority({
+      milestoneId: "M001",
+      sliceId: "S01",
+      completedTaskIds: ["T01", "T02"],
+    });
 
     // ── (d) Verify DB rows and markdown summaries on disk (R004) ─────
     const t1After = getTask("M001", "S01", "T01");
@@ -516,6 +536,11 @@ test("undo task reopens canonical task state and re-renders markdown", async (t)
     migrateHierarchyToDb(base);
     await handleCompleteTask(makeCompleteTaskParams("T01"), base);
     await handleCompleteTask(makeCompleteTaskParams("T02"), base);
+    seedSliceCompletionAuthority({
+      milestoneId: "M001",
+      sliceId: "S01",
+      completedTaskIds: ["T01", "T02"],
+    });
     invalidateAllCaches();
 
     // Verify task-complete state while the parent slice is still open. A
@@ -574,6 +599,11 @@ test("reset slice reopens canonical task state and re-renders markdown", async (
     migrateHierarchyToDb(base);
     await handleCompleteTask(makeCompleteTaskParams("T01"), base);
     await handleCompleteTask(makeCompleteTaskParams("T02"), base);
+    seedSliceCompletionAuthority({
+      milestoneId: "M001",
+      sliceId: "S01",
+      completedTaskIds: ["T01", "T02"],
+    });
     invalidateAllCaches();
     await handleCompleteSlice(makeCompleteSliceParams(), base);
 
@@ -599,9 +629,9 @@ test("reset slice reopens canonical task state and re-renders markdown", async (
       { task_id: "T02", lifecycle_status: "ready" },
     ], "reset must reopen canonical Task lifecycle heads with their legacy rows");
 
-    // Slice should be active (not complete)
+    // Slice should be in progress (not complete)
     const sliceAfterReset = getSlice("M001", "S01");
-    assert.equal(sliceAfterReset?.status, "active", "S01 should be active after reset");
+    assert.equal(sliceAfterReset?.status, "in_progress", "S01 should be in progress after reset");
 
     // Task summaries should be deleted
     const t1SummaryPath = join(
