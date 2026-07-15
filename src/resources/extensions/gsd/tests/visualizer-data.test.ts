@@ -11,7 +11,7 @@ import {
   loadVisualizerData,
   type VisualizerMilestone,
 } from "../visualizer-data.ts";
-import { _getAdapter, closeDatabase, openDatabase } from "../gsd-db.ts";
+import { _getAdapter, closeDatabase, insertMilestone, insertSlice, openDatabase } from "../gsd-db.ts";
 import { createMemory } from "../memory-store.ts";
 import { generateHtmlReport } from "../export-html.ts";
 import { resetMetrics, type UnitMetrics } from "../metrics.ts";
@@ -131,6 +131,17 @@ test("loadVisualizerData scopes ETA rate to active milestone units", async () =>
         "- [ ] **S02: Remaining** `risk:low` `depends:[]`",
       ].join("\n"),
     );
+
+    // Milestone lifecycle is DB-authoritative: seed the DB so M001 derives as
+    // complete and M002 as the active milestone. loadVisualizerData reopens the
+    // project DB after it is closed here.
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Previous", status: "complete" });
+    insertSlice({ milestoneId: "M001", id: "S01", title: "Done", status: "complete", sequence: 1 });
+    insertMilestone({ id: "M002", title: "Active", status: "active" });
+    insertSlice({ milestoneId: "M002", id: "S01", title: "Done", status: "complete", sequence: 1 });
+    insertSlice({ milestoneId: "M002", id: "S02", title: "Remaining", status: "pending", sequence: 2 });
+    closeDatabase();
 
     const units = [
       makeMetricUnit("M001/S01/T01", 1_000, 61_000),
