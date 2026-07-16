@@ -26,6 +26,7 @@ import {
   _captureLegacyImportSourceSetForTest,
   captureLegacyImportSourceSet,
   revalidateLegacyImportSourceSet,
+  validateLegacyImportSourceRoots,
   type LegacyImportSourceCapture,
   type LegacyImportSourceRoot,
   type LegacyImportSourceTestHooks,
@@ -258,6 +259,117 @@ describe("legacy preview discovery", () => {
 });
 
 describe("legacy preview source fingerprint", () => {
+  test("legacy preview source root boundaries normalize hostile arrays and fields to typed errors", (t) => {
+    const base = withTemporaryDirectory(t);
+    const gsd = join(base, ".gsd");
+    directory(gsd);
+
+    const malformedRootArrays: ReadonlyArray<{
+      name: string;
+      create(): unknown;
+    }> = [
+      {
+        name: "throwing array index",
+        create() {
+          const roots = new Array<LegacyImportSourceRoot>(1);
+          Object.defineProperty(roots, "0", {
+            enumerable: true,
+            get() { throw new Error("raw array index getter escaped"); },
+          });
+          return roots;
+        },
+      },
+      {
+        name: "changing array index",
+        create() {
+          let reads = 0;
+          const roots = new Array<LegacyImportSourceRoot>(1);
+          Object.defineProperty(roots, "0", {
+            enumerable: true,
+            get() {
+              reads += 1;
+              return reads === 1 ? root("project", gsd) : root("Not-Canonical", gsd);
+            },
+          });
+          return roots;
+        },
+      },
+      {
+        name: "throwing root field",
+        create() {
+          const candidate = root("project", gsd) as unknown as Record<string, unknown>;
+          Object.defineProperty(candidate, "id", {
+            enumerable: true,
+            get() { throw new Error("raw root field getter escaped"); },
+          });
+          return [candidate];
+        },
+      },
+      {
+        name: "changing root field",
+        create() {
+          let reads = 0;
+          const candidate = root("project", gsd) as unknown as Record<string, unknown>;
+          Object.defineProperty(candidate, "id", {
+            enumerable: true,
+            get() { return ++reads === 1 ? "project" : "Not-Canonical"; },
+          });
+          return [candidate];
+        },
+      },
+      {
+        name: "function-valued field",
+        create() {
+          return [{ ...root("project", gsd), id: () => "project" }];
+        },
+      },
+      {
+        name: "sparse array",
+        create() {
+          return new Array<LegacyImportSourceRoot>(1);
+        },
+      },
+      {
+        name: "extra array property",
+        create() {
+          const roots = [root("project", gsd)] as LegacyImportSourceRoot[] & { extra?: boolean };
+          roots.extra = true;
+          return roots;
+        },
+      },
+      {
+        name: "symbol array property",
+        create() {
+          return Object.assign([root("project", gsd)], { [Symbol("extra")]: true });
+        },
+      },
+    ];
+
+    const boundaries = [
+      {
+        name: "validateLegacyImportSourceRoots",
+        invoke: (roots: unknown) => validateLegacyImportSourceRoots(roots),
+      },
+      {
+        name: "captureLegacyImportSourceSet",
+        invoke: (roots: unknown) => captureLegacyImportSourceSet({
+          roots: roots as readonly LegacyImportSourceRoot[],
+        }),
+      },
+    ];
+
+    for (const boundary of boundaries) {
+      for (const malformed of malformedRootArrays) {
+        const error = expectSourceError(
+          () => boundary.invoke(malformed.create()),
+          "LEGACY_IMPORT_SOURCE_ROOT_INVALID",
+        );
+        assert.equal(error.retryable, false, `${boundary.name}: ${malformed.name}`);
+        assert.deepEqual(error.context, {}, `${boundary.name}: ${malformed.name}`);
+      }
+    }
+  });
+
   test("legacy preview source fingerprint rejects invalid roots and supports explicit optional absence", (t) => {
     const base = withTemporaryDirectory(t);
     const gsd = join(base, ".gsd");

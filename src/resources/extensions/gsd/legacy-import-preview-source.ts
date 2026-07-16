@@ -23,6 +23,7 @@ import { hashLegacyImportBytes, hashLegacyImportValue } from "./legacy-import-pr
 
 const SOURCE_CAPTURE_VERSION = 1;
 const ROOT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const ROOT_KEYS = ["id", "kind", "physical_path", "logical_path", "presence"] as const;
 
 export type LegacyImportSourceRootKind = "project" | "external" | "worktree";
 export type LegacyImportSourceRootPresence = "required" | "optional";
@@ -209,21 +210,61 @@ function requireValidLogicalPath(value: string): void {
   }
 }
 
-function validateRoots(input: LegacyImportSourceCaptureInput): LegacyImportSourceRoot[] {
-  if (!Array.isArray(input.roots) || input.roots.length === 0) {
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactDataProperties(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  if (!isPlainRecord(value) || Object.getOwnPropertySymbols(value).length > 0) return false;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const observed = Object.keys(descriptors);
+  return observed.length === keys.length
+    && keys.every((key) => Object.hasOwn(descriptors, key) && Object.hasOwn(descriptors[key]!, "value"));
+}
+
+function hasExactArrayDataProperties(value: unknown): value is unknown[] {
+  if (!Array.isArray(value) || Object.getOwnPropertySymbols(value).length > 0) return false;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const names = Object.keys(descriptors);
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  if (
+    names.length !== value.length + 1
+    || lengthDescriptor === undefined
+    || !Object.hasOwn(lengthDescriptor, "value")
+  ) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = descriptors[String(index)];
+    if (descriptor === undefined || !Object.hasOwn(descriptor, "value")) return false;
+  }
+  return true;
+}
+
+export function validateLegacyImportSourceRoots(value: unknown): LegacyImportSourceRoot[] {
+  if (
+    !hasExactArrayDataProperties(value)
+    || value.length === 0
+    || !value.every((candidate) => hasExactDataProperties(candidate, ROOT_KEYS))
+  ) {
     throw sourceError(
       "LEGACY_IMPORT_SOURCE_ROOT_INVALID",
       "legacy import source capture requires at least one explicit root",
       false,
     );
   }
-  const roots = input.roots.map((candidate) => ({
-    id: candidate.id,
-    kind: candidate.kind,
-    physical_path: candidate.physical_path,
-    logical_path: candidate.logical_path,
-    presence: candidate.presence,
-  }));
+  let roots: LegacyImportSourceRoot[];
+  try {
+    roots = structuredClone(value) as unknown as LegacyImportSourceRoot[];
+  } catch (error) {
+    throw sourceError(
+      "LEGACY_IMPORT_SOURCE_ROOT_INVALID",
+      "legacy import source roots must be detached strict data",
+      false,
+      {},
+      error,
+    );
+  }
   const ids = new Set<string>();
   const logicalPaths: string[] = [];
   for (const root of roots) {
@@ -281,6 +322,22 @@ function validateRoots(input: LegacyImportSourceCaptureInput): LegacyImportSourc
   }
   roots.sort((left, right) => compareText(left.id, right.id));
   return roots;
+}
+
+function validateRoots(input: LegacyImportSourceCaptureInput): LegacyImportSourceRoot[] {
+  return validateLegacyImportSourceRoots(input.roots);
+}
+
+function declaredRoots(
+  roots: readonly LegacyImportSourceCapturedRoot[],
+): LegacyImportSourceRoot[] {
+  return roots.map((root) => ({
+    id: root.id,
+    kind: root.kind,
+    physical_path: root.physical_path,
+    logical_path: root.logical_path,
+    presence: root.presence,
+  }));
 }
 
 function identity(stat: BigIntStats): string {
@@ -877,7 +934,7 @@ function captureStableLegacyImportSourceSet(
 ): LegacyImportSourceCapture {
   const first = captureLegacyImportSourceSetInternal(input, hooks);
   hooks.after_initial_capture?.({ capture_hash: first.capture_hash });
-  const confirmed = captureLegacyImportSourceSetInternal({ roots: first.roots }, {});
+  const confirmed = captureLegacyImportSourceSetInternal({ roots: declaredRoots(first.roots) }, {});
   if (confirmed.capture_hash !== first.capture_hash) {
     throw sourceError(
       "LEGACY_IMPORT_SOURCE_CAPTURE_CHANGED",
@@ -904,7 +961,7 @@ export function revalidateLegacyImportSourceSet(
 ): LegacyImportSourceCapture {
   let observed: LegacyImportSourceCapture;
   try {
-    observed = captureLegacyImportSourceSet({ roots: capture.roots });
+    observed = captureLegacyImportSourceSet({ roots: declaredRoots(capture.roots) });
   } catch (error) {
     if (error instanceof LegacyImportSourceError && error.code === "LEGACY_IMPORT_SOURCE_CAPTURE_CHANGED") {
       throw new LegacyImportSourceError(
