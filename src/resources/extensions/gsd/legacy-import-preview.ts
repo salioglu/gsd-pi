@@ -565,12 +565,18 @@ function validateExpectedPreviewStructure(expected: unknown): expected is Legacy
     && hashLegacyImportValue(preview) === expected["preview_hash"];
 }
 
-function validateExpectedPreview(expected: unknown): asserts expected is LegacyImportPreviewArtifact {
+export function isValidLegacyImportPreviewArtifact(
+  expected: unknown,
+): expected is LegacyImportPreviewArtifact {
   try {
-    if (validateExpectedPreviewStructure(expected)) return;
+    return validateExpectedPreviewStructure(expected);
   } catch {
-    // Normalize strict JSON and malformed nested evidence failures below.
+    return false;
   }
+}
+
+function validateExpectedPreview(expected: unknown): asserts expected is LegacyImportPreviewArtifact {
+  if (isValidLegacyImportPreviewArtifact(expected)) return;
   throw new LegacyImportPreviewError(
     "revalidate",
     "LEGACY_IMPORT_PREVIEW_EXPECTED_INVALID",
