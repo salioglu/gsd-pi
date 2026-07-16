@@ -638,9 +638,18 @@ describe("legacy .gsd captured-byte interpretation", () => {
     const interpretation = interpretLegacyGsdCapture(capture);
     const manifestBytes = payloadBytes(capture, ".gsd/state-manifest.json");
     const sourceId = capturedSourceId(capture, ".gsd/state-manifest.json");
-    const [{ created_at: _milestoneCreatedAt, ...milestone }] = manifest.milestones;
-    const [{ created_at: _sliceCreatedAt, ...slice }] = manifest.slices;
-    const [task] = manifest.tasks;
+    const [{ created_at: _milestoneCreatedAt, completed_at: _milestoneCompletedAt, ...milestone }] = manifest.milestones;
+    const [{
+      created_at: _sliceCreatedAt,
+      completed_at: _sliceCompletedAt,
+      replan_triggered_at: _sliceReplanTriggeredAt,
+      ...slice
+    }] = manifest.slices;
+    const [{
+      completed_at: _taskCompletedAt,
+      escalation_override_applied_at: _taskEscalationOverrideAppliedAt,
+      ...task
+    }] = manifest.tasks;
     const [requirement] = manifest.requirements;
     const [{ imported_at: _artifactImportedAt, ...artifact }] = manifest.artifacts;
     const [{ created_at: _assessmentCreatedAt, ...assessment }] = manifest.assessments;
@@ -675,12 +684,12 @@ describe("legacy .gsd captured-byte interpretation", () => {
       assert.ok(candidate);
       assert.equal(candidate.classification, "compare", expected.property);
       assert.deepEqual(candidate.normalized, expected.normalized, `${expected.property}: canonical base row`);
-      assert.equal(candidate.raw.locator.json_pointer, pointer, expected.property);
-      assert.deepEqual(
-        candidate.raw.value,
-        manifest[expected.property][0],
-        `${expected.property}: exact manifest member evidence`,
-      );
+      const hasTemporalEvidence = ["milestones", "slices", "tasks", "artifacts", "assessments"].includes(expected.property);
+      assert.equal(candidate.raw.locator.json_pointer, hasTemporalEvidence ? undefined : pointer, expected.property);
+      const rawBytes = assertLocator(manifestBytes, candidate.raw.locator, candidate.candidate_id);
+      assert.deepEqual(candidate.raw.value, hasTemporalEvidence
+        ? rawBytes.toString("utf8")
+        : manifest[expected.property][0], `${expected.property}: exact manifest member evidence`);
       assert.equal(candidate.raw.source_id, sourceId, expected.property);
       assert.deepEqual(candidate.provenance, {
         source_id: sourceId,
@@ -689,7 +698,7 @@ describe("legacy .gsd captured-byte interpretation", () => {
       }, expected.property);
       assert.equal(
         candidate.raw.sha256,
-        hashLegacyImportBytes(assertLocator(manifestBytes, candidate.raw.locator, candidate.candidate_id)),
+        hashLegacyImportBytes(rawBytes),
         expected.property,
       );
     }
@@ -736,6 +745,33 @@ describe("legacy .gsd captured-byte interpretation", () => {
     }
     assert.equal(interpretation.sources[0]?.outcome, "mapped");
     assertDeepFrozen(interpretation);
+  });
+
+  test("keeps legacy timestamps out of structured StateManifest Preview values", (t) => {
+    const interpretation = interpretLegacyGsdCapture(captureFiles(t, {
+      "state-manifest.json": JSON.stringify(completeStateManifestV1(), null, 2),
+    }));
+    const temporalPaths: string[] = [];
+    const visit = (value: unknown, path: string): void => {
+      if (Array.isArray(value)) {
+        value.forEach((entry, index) => visit(entry, `${path}[${index}]`));
+      } else if (value !== null && typeof value === "object") {
+        for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+          const child = `${path}.${key}`;
+          if (key === "timestamp" || key.endsWith("_timestamp") || key.endsWith("_at")) temporalPaths.push(child);
+          visit(entry, child);
+        }
+      }
+    };
+    interpretation.candidates.forEach((candidate, index) => {
+      visit(candidate.raw.value, `candidates[${index}].raw.value`);
+      visit(candidate.normalized, `candidates[${index}].normalized`);
+    });
+    interpretation.complete_row_sets.forEach((complete, index) => {
+      visit((complete.preview_raw ?? complete.raw).value, `complete_row_sets[${index}].preview_raw.value`);
+    });
+
+    assert.deepEqual(temporalPaths, []);
   });
 
   test("classifies every self-contained StateManifest v1 row without duplicate assessment ownership", (t) => {

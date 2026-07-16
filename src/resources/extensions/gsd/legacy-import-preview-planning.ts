@@ -184,7 +184,6 @@ function buildFlatMembership(files: readonly SourceFile[]): FlatMembership {
       phaseTargets.set(normalizePhase(dash[1]), `M001/S${String(sequence).padStart(2, "0")}`);
     } else if (colon !== null) {
       observed += 1;
-      phaseTargets.set(normalizePhase(colon[1]), `legacy-phase-${String(Number(colon[1])).padStart(2, "0")}`);
     }
   }
   if (phaseTargets.size !== observed) {
@@ -491,15 +490,27 @@ function interpretFlatRoadmap(
   }
   rows.forEach(({ line, match, style }, index) => {
     if (style === "colon") {
-      const key = `legacy-phase-${String(Number(match[2])).padStart(2, "0")}`;
-      addCandidate(candidates, file, { kind: "slice", key, field: "title" }, match[3].trim(), "planning-roadmap-phase-title", line.start, line.end);
+      const phase = String(Number(match[2])).padStart(2, "0");
+      file.outcome = "preserved";
+      addCandidate(candidates, file, { kind: "legacy-roadmap-fragment", key: `phase-${phase}` }, {
+        disposition: "preserved",
+        grammar: "colon-phase",
+        legacy_phase_number: phase,
+        title: match[3].trim(),
+        checked: match[1].toLowerCase() === "x",
+      }, "unscoped-planning-phase-preserved", line.start, line.end, "preserve");
+      addDiagnosis(
+        diagnoses, file, "unscoped-planning-phase", "blocker",
+        "Roadmap phase has no deterministic milestone identity and remains preserved until a user selects its destination.",
+        "requires-user", line.start, line.end,
+      );
       const phasePrefix = `.planning/phases/${String(Number(match[2])).padStart(2, "0")}-`;
       const hasSummary = files.some((candidate) => candidate.entry.logical_path.startsWith(phasePrefix) && candidate.entry.logical_path.endsWith("-SUMMARY.md"));
       if (match[1].toLowerCase() === "x" && !hasSummary) {
         addDiagnosis(
           diagnoses, file, "conflicting-completion-evidence", "blocker",
           "Checked roadmap state lacks supporting summary evidence.", "requires-user",
-          line.start, line.end, { kind: "slice", key, field: "status" },
+          line.start, line.end,
         );
       }
       return;
@@ -618,7 +629,7 @@ function interpretFlatPlan(
   }
   const taskTarget = membership.taskTargets.get(file.entry.logical_path);
   if (taskTarget === undefined) {
-    file.outcome = "unparsed";
+    wholeFilePreservation(candidates, file, "unresolved-plan-membership-preserved-verbatim");
     addDiagnosis(
       diagnoses, file, "unresolved-plan-membership", "blocker",
       "Plan membership does not identify one roadmap phase and task position.", "requires-user",
@@ -708,7 +719,6 @@ function interpretFlatSummary(
         diagnoses, file, "conflicting-completion-evidence", "blocker",
         "An orphan summary conflicts with the unchecked roadmap state.", "requires-user",
         body.start, body.end,
-        { kind: "slice", key: `legacy-phase-${String(Number(match?.[1] ?? 0)).padStart(2, "0")}`, field: "status" },
       );
     } else {
       addDiagnosis(

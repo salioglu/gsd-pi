@@ -43,6 +43,7 @@ export interface LegacyImportCompleteRowSet {
   target_kind: string;
   member_keys: readonly string[];
   raw: LegacyImportRawValue;
+  preview_raw?: LegacyImportRawValue;
   provenance: LegacyImportProvenance;
 }
 

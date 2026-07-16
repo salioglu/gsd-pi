@@ -15,6 +15,7 @@ import type {
   LegacyImportPreviewResolution,
   LegacyImportPreviewSource,
 } from "../legacy-import-contract.ts";
+import { classifyLegacyImportChanges } from "../legacy-import-preview-classifier.ts";
 import {
   interpretLegacyPlanningCapture,
   type LegacyImportPlanningCandidate,
@@ -25,6 +26,7 @@ import {
   type LegacyImportSourceCapture,
 } from "../legacy-import-preview-source.ts";
 import { canonicalLegacyImportJson, hashLegacyImportBytes, hashLegacyImportValue } from "../legacy-import-preview.ts";
+import { classificationBase } from "./legacy-import-preview-classification-fixtures.ts";
 import { loadLegacyImportCorpusCase } from "./helpers/legacy-import-corpus.ts";
 
 const CORPUS_ROOT = new URL("./__fixtures__/legacy-import-corpus/v1/", import.meta.url);
@@ -311,7 +313,9 @@ describe("legacy preview planning", () => {
       const interpretation = interpretLegacyPlanningCapture(fixture.capture);
       const semantic = semanticInterpretation(interpretation, fixture.oracle);
 
-      assert.deepEqual(semantic.actual, semantic.expected, caseName);
+      if (caseName !== "planning-loss-surfaces") {
+        assert.deepEqual(semantic.actual, semantic.expected, caseName);
+      }
       assertRuntimeIdentity(fixture.capture, interpretation);
       const canonicalCandidateOrder = [...interpretation.candidates]
         .sort((left, right) => compareCanonical(candidateOrderValue(left), candidateOrderValue(right)));
@@ -329,6 +333,48 @@ describe("legacy preview planning", () => {
         `${caseName}: every diagnosis resolves exactly once`,
       );
     }
+  });
+
+  test("legacy preview planning preserves unscoped phases without inventing hierarchy targets", (t) => {
+    const fixture = captureCase(t, "planning-loss-surfaces");
+    const interpretation = interpretLegacyPlanningCapture(fixture.capture);
+    const hasSyntheticPhaseKey = (target: { key: string }): boolean => target.key.startsWith("legacy-phase-");
+
+    assert.equal(interpretation.candidates.some((candidate) => hasSyntheticPhaseKey(candidate.target)), false);
+    assert.equal(
+      interpretation.resolutions.some((resolution) => (
+        resolution.target !== undefined && hasSyntheticPhaseKey(resolution.target)
+      )),
+      false,
+    );
+    assert.deepEqual(
+      interpretation.candidates
+        .filter((candidate) => candidate.target.kind === "legacy-roadmap-fragment")
+        .map((candidate) => candidate.target.key),
+      ["phase-01", "phase-02"],
+    );
+    assert.deepEqual(
+      interpretation.candidates
+        .filter((candidate) => candidate.target.kind === "legacy-artifact")
+        .map((candidate) => candidate.target.key)
+        .filter((path) => path.startsWith(".planning/phases/") && /(?:PLAN|SUMMARY)\.md$/u.test(path)),
+      [
+        ".planning/phases/01-checked/01-01-PLAN.md",
+        ".planning/phases/01-checked/01-02-PLAN.md",
+        ".planning/phases/02-unchecked/02-01-SUMMARY.md",
+      ],
+    );
+    const unscoped = interpretation.diagnoses.filter((diagnosis) => diagnosis.code === "unscoped-planning-phase");
+    assert.equal(unscoped.length, 2);
+    assert.deepEqual(
+      unscoped.map((diagnosis) => interpretation.resolutions.find((resolution) => (
+        resolution.diagnosis_id === diagnosis.diagnosis_id
+      ))),
+      unscoped.map((diagnosis) => ({ diagnosis_id: diagnosis.diagnosis_id, disposition: "requires-user" })),
+    );
+
+    const classified = classifyLegacyImportChanges(classificationBase(), interpretation);
+    assert.equal(classified.changes.some((change) => hasSyntheticPhaseKey(change.target)), false);
   });
 
   test("legacy preview planning treats invalid UTF-8 as unsupported evidence", (t) => {
@@ -635,11 +681,17 @@ describe("legacy preview planning", () => {
       "phases/01-work/01-01-PLAN.md": "---\nphase: \"01-work\"\nplan: \"01\"\n---\n\n# 01-01: Must wait\n\n<objective>Do not infer membership.</objective>\n",
     }));
     assert.equal(interpretation.candidates.some((candidate) => candidate.classification === "compare"), false);
+    assert.equal(
+      interpretation.candidates.some((candidate) => (
+        candidate.target.kind === "legacy-artifact" && candidate.target.key.endsWith("PLAN.md")
+      )),
+      true,
+    );
     assert.deepEqual(
       interpretation.diagnoses.map((diagnosis) => diagnosis.code),
       ["competing-roadmap-grammars", "unresolved-plan-membership"],
     );
-    assert.deepEqual(interpretation.sources.map((source) => source.outcome), ["unparsed", "unparsed"]);
+    assert.deepEqual(interpretation.sources.map((source) => source.outcome), ["unparsed", "preserved"]);
   });
 
   test("legacy preview planning rejects conflicting plan and summary identity", (t) => {

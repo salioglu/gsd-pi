@@ -15,6 +15,10 @@ import type {
   LegacyImportDatabaseTargetInspectionRequest,
   LegacyImportDatabaseTargetSchemaEvidence,
 } from "./legacy-import-preview-database-target.js";
+import type {
+  LegacyImportGsdDatabaseEvidence,
+  LegacyImportGsdDatabaseObservation,
+} from "./legacy-import-preview-gsd.js";
 import { hashLegacyImportBytes, hashLegacyImportValue } from "./legacy-import-preview.js";
 
 const SQLITE_HEADER = Buffer.from("SQLite format 3\0", "binary");
@@ -23,6 +27,7 @@ const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 export type LegacyImportDatabaseTargetInspectionErrorStage =
   | "materialize"
   | "provider"
+  | "evidence"
   | "close"
   | "cleanup";
 
@@ -358,12 +363,216 @@ function inspectCopy(
   }
 }
 
-export function inspectLegacyImportDatabaseTarget(
+function evidenceError(
   request: LegacyImportDatabaseTargetInspectionRequest,
-  deps: LegacyImportDatabaseTargetInspectorDeps = DEFAULT_DEPS,
-): LegacyImportDatabaseTargetInspectionEvidence {
-  validateRequest(request);
-  if (headerEvidence(request.bytes) === undefined) return rejectedEvidence(request, "invalid-header");
+  code: string,
+  message: string,
+  context: Record<string, string> = {},
+): never {
+  throw new LegacyImportDatabaseTargetInspectionError(
+    "evidence",
+    code,
+    message,
+    false,
+    { ...requestContext(request), ...context },
+  );
+}
+
+function requireText(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0) throw new Error(`invalid ${label}`);
+  return value;
+}
+
+function tablePages(db: DbAdapter, table: string): number[] {
+  return db.prepare(`
+    SELECT pageno
+    FROM dbstat
+    WHERE name = ? AND pagetype IN ('leaf', 'overflow')
+    ORDER BY pageno
+  `).all(table).map((row) => {
+    const page = row["pageno"];
+    if (!Number.isSafeInteger(page) || (page as number) < 1) throw new Error("invalid database page");
+    return page as number;
+  });
+}
+
+function tableHasColumn(db: DbAdapter, table: "slices" | "slice_dependencies", column: string): boolean {
+  const query = table === "slices"
+    ? "PRAGMA table_info(slices)"
+    : "PRAGMA table_info(slice_dependencies)";
+  return db.prepare(query).all().some((row) => row["name"] === column);
+}
+
+function exactSpan(
+  request: LegacyImportDatabaseTargetInspectionRequest,
+  db: DbAdapter,
+  table: string,
+  field: string,
+  rawValue: string,
+): { start_byte: number; end_byte: number } {
+  const pageSize = firstValue(db.prepare("PRAGMA page_size").get());
+  if (!Number.isSafeInteger(pageSize) || (pageSize as number) < 512) {
+    throw new Error("invalid database page size");
+  }
+  const needle = Buffer.from(rawValue, "utf8");
+  const offsets: number[] = [];
+  for (const page of tablePages(db, table)) {
+    const pageStart = (page - 1) * (pageSize as number);
+    const pageBytes = request.bytes.subarray(pageStart, pageStart + (pageSize as number));
+    let offset = -1;
+    while ((offset = pageBytes.indexOf(needle, offset + 1)) !== -1) {
+      offsets.push(pageStart + offset);
+    }
+  }
+  if (offsets.length === 0) {
+    evidenceError(
+      request,
+      "LEGACY_IMPORT_DATABASE_EVIDENCE_SPAN_MISSING",
+      "legacy import database evidence has no exact retained-byte span",
+      { table, field, occurrence_count: "0" },
+    );
+  }
+  if (offsets.length > 1) {
+    evidenceError(
+      request,
+      "LEGACY_IMPORT_DATABASE_EVIDENCE_SPAN_AMBIGUOUS",
+      "legacy import database evidence has multiple retained-byte spans",
+      { table, field, occurrence_count: String(offsets.length) },
+    );
+  }
+  return { start_byte: offsets[0]!, end_byte: offsets[0]! + needle.length };
+}
+
+function dependencyObservations(
+  request: LegacyImportDatabaseTargetInspectionRequest,
+  db: DbAdapter,
+): LegacyImportGsdDatabaseObservation[] {
+  const observations: LegacyImportGsdDatabaseObservation[] = [];
+  if (tableHasColumn(db, "slices", "depends")) {
+    for (const row of db.prepare(`
+      SELECT milestone_id, id, depends
+      FROM slices
+      WHERE depends IS NOT NULL
+      ORDER BY milestone_id, id
+    `).all()) {
+      const milestoneId = requireText(row["milestone_id"], "slices.milestone_id");
+      const sliceId = requireText(row["id"], "slices.id");
+      const rawValue = requireText(row["depends"], "slices.depends");
+      const value = JSON.parse(rawValue) as unknown;
+      if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || entry.length === 0)) {
+        throw new Error("invalid slices.depends");
+      }
+      if (value.length === 0) continue;
+      const locator = exactSpan(request, db, "slices", "depends", rawValue);
+      observations.push({
+        table: "slices",
+        key: { milestone_id: milestoneId, id: sliceId },
+        field: "depends",
+        value,
+        raw: { locator, value: rawValue, sha256: hashLegacyImportBytes(rawValue) },
+      });
+    }
+  }
+  if (tableHasColumn(db, "slice_dependencies", "depends_on_slice_id")) {
+    for (const row of db.prepare(`
+      SELECT milestone_id, slice_id, depends_on_slice_id
+      FROM slice_dependencies
+      ORDER BY milestone_id, slice_id, depends_on_slice_id
+    `).all()) {
+      const milestoneId = requireText(row["milestone_id"], "slice_dependencies.milestone_id");
+      const sliceId = requireText(row["slice_id"], "slice_dependencies.slice_id");
+      const rawValue = requireText(row["depends_on_slice_id"], "slice_dependencies.depends_on_slice_id");
+      const locator = exactSpan(request, db, "slice_dependencies", "depends_on_slice_id", rawValue);
+      observations.push({
+        table: "slice_dependencies",
+        key: { milestone_id: milestoneId, slice_id: sliceId },
+        field: "depends_on_slice_id",
+        value: rawValue,
+        raw: { locator, value: rawValue, sha256: hashLegacyImportBytes(rawValue) },
+      });
+    }
+  }
+  return observations;
+}
+
+function inspectGsdDatabaseEvidenceCopy(
+  request: LegacyImportDatabaseTargetInspectionRequest,
+  path: string,
+  deps: LegacyImportDatabaseTargetInspectorDeps,
+): LegacyImportGsdDatabaseEvidence {
+  let connection: LegacyImportDatabaseTargetInspectionConnection;
+  try {
+    connection = deps.openReadOnly(path);
+  } catch (error) {
+    if (error instanceof LegacyImportDatabaseTargetInspectionError) throw error;
+    evidenceError(request, "LEGACY_IMPORT_DATABASE_EVIDENCE_OPEN_FAILED", "legacy import database evidence copy cannot be opened");
+  }
+  try {
+    let observations: LegacyImportGsdDatabaseObservation[];
+    try {
+      configureReadOnlyConnection(connection);
+      if (firstValue(connection.db.prepare("PRAGMA quick_check(1)").get()) !== "ok") {
+        evidenceError(
+          request,
+          "LEGACY_IMPORT_DATABASE_EVIDENCE_QUICK_CHECK_FAILED",
+          "legacy import database evidence copy failed integrity validation",
+        );
+      }
+      observations = dependencyObservations(request, connection.db);
+    } catch (error) {
+      if (error instanceof LegacyImportDatabaseTargetInspectionError) throw error;
+      evidenceError(
+        request,
+        "LEGACY_IMPORT_DATABASE_EVIDENCE_QUERY_FAILED",
+        "legacy import database dependency evidence cannot be queried",
+      );
+    }
+    const sliceCount = observations.filter((entry) => entry.table === "slices").length;
+    const dependencyCount = observations.length - sliceCount;
+    const value = {
+      evidence_version: 1 as const,
+      inspection_version: 1 as const,
+      capture_hash: request.capture_hash,
+      source_id: request.source_id,
+      source_sha256: request.source_sha256,
+      source_byte_size: request.source_byte_size,
+      coverage: [
+        {
+          table: "slices" as const,
+          field: "depends" as const,
+          complete: true as const,
+          row_count: sliceCount,
+        },
+        {
+          table: "slice_dependencies" as const,
+          field: "depends_on_slice_id" as const,
+          complete: true as const,
+          row_count: dependencyCount,
+        },
+      ],
+      observations,
+    };
+    return deepFreeze({ ...value, evidence_hash: hashLegacyImportValue(value) });
+  } finally {
+    try {
+      connection.db.close();
+    } catch {
+      throw new LegacyImportDatabaseTargetInspectionError(
+        "close",
+        "LEGACY_IMPORT_DATABASE_INSPECTION_CLOSE_FAILED",
+        "legacy import database inspection copy could not be closed safely",
+        true,
+        requestContext(request),
+      );
+    }
+  }
+}
+
+function inspectRetainedCopy<T>(
+  request: LegacyImportDatabaseTargetInspectionRequest,
+  deps: LegacyImportDatabaseTargetInspectorDeps,
+  inspect: (path: string) => T,
+): T {
   let directory: string;
   try {
     directory = deps.makeTemporaryDirectory();
@@ -395,7 +604,7 @@ export function inspectLegacyImportDatabaseTarget(
         requestContext(request),
       );
     }
-    return inspectCopy(request, path, deps);
+    return inspect(path);
   } finally {
     let copyChanged = false;
     if (copyCreated) {
@@ -428,4 +637,28 @@ export function inspectLegacyImportDatabaseTarget(
       );
     }
   }
+}
+
+export function inspectLegacyImportDatabaseTarget(
+  request: LegacyImportDatabaseTargetInspectionRequest,
+  deps: LegacyImportDatabaseTargetInspectorDeps = DEFAULT_DEPS,
+): LegacyImportDatabaseTargetInspectionEvidence {
+  validateRequest(request);
+  if (headerEvidence(request.bytes) === undefined) return rejectedEvidence(request, "invalid-header");
+  return inspectRetainedCopy(request, deps, (path) => inspectCopy(request, path, deps));
+}
+
+export function inspectLegacyImportGsdDatabaseEvidence(
+  request: LegacyImportDatabaseTargetInspectionRequest,
+  deps: LegacyImportDatabaseTargetInspectorDeps = DEFAULT_DEPS,
+): LegacyImportGsdDatabaseEvidence {
+  validateRequest(request);
+  if (headerEvidence(request.bytes) === undefined) {
+    evidenceError(
+      request,
+      "LEGACY_IMPORT_DATABASE_EVIDENCE_INVALID_HEADER",
+      "legacy import database evidence requires valid SQLite bytes",
+    );
+  }
+  return inspectRetainedCopy(request, deps, (path) => inspectGsdDatabaseEvidenceCopy(request, path, deps));
 }

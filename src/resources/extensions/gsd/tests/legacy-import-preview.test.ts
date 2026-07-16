@@ -2,7 +2,7 @@
 // File Purpose: Preview identity and atomic current-authority base snapshot tests.
 
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -33,14 +33,21 @@ import type { LegacyImportInterpretation } from "../legacy-import-preview-interp
 import { interpretLegacyPlanningCapture } from "../legacy-import-preview-planning.ts";
 import {
   captureLegacyImportSourceSet,
+  LegacyImportSourceError,
   type LegacyImportSourceCapture,
   type LegacyImportSourceRoot,
 } from "../legacy-import-preview-source.ts";
 import { interpretLegacySupplementalCapture } from "../legacy-import-preview-supplemental.ts";
 import {
+  _createLegacyImportPreviewForTest,
   canonicalLegacyImportJson,
+  createLegacyImportPreview,
   hashLegacyImportValue,
+  LegacyImportPreviewError,
+  revalidateLegacyImportPreview,
   sealLegacyImportPreview,
+  type LegacyImportPreviewArtifact,
+  type LegacyImportPreviewCreateInput,
   type LegacyImportPreviewSealInput,
 } from "../legacy-import-preview.ts";
 import { _getAdapter, closeDatabase, openDatabase } from "../gsd-db.ts";
@@ -980,4 +987,345 @@ describe("legacy preview task classification", () => {
     assert.equal(result.changes.some((change) => change.target.key === "M701"), false);
     assertStableClassificationHashes(result);
   });
+});
+
+interface PublicPreviewFixture {
+  database: NonNullable<ReturnType<typeof _getAdapter>>;
+  input: LegacyImportPreviewCreateInput;
+  statePath: string;
+}
+
+function publicPreviewFixture(t: { after(fn: () => void): void }): PublicPreviewFixture {
+  const directory = temporaryLegacyCorpusDirectory(t);
+  const gsdRoot = join(directory, ".gsd");
+  const statePath = join(gsdRoot, "STATE.md");
+  const databasePath = join(directory, "canonical.db");
+  mkdirSync(gsdRoot);
+  writeFileSync(statePath, "# State\n\nHuman narrative.\n");
+  assert.equal(openDatabase(databasePath), true);
+  const database = _getAdapter();
+  assert.ok(database);
+  return {
+    database,
+    input: {
+      roots: [{
+        id: "project-gsd",
+        kind: "project",
+        physical_path: gsdRoot,
+        logical_path: ".gsd",
+        presence: "required",
+      }],
+    },
+    statePath,
+  };
+}
+
+test("legacy public Preview composes and revalidates one deterministic read-only artifact", (t) => {
+  const { database, input, statePath } = publicPreviewFixture(t);
+  try {
+    const authority = database.prepare(`
+      SELECT revision, authority_epoch FROM project_authority WHERE singleton = 1
+    `).get();
+    assert.ok(authority);
+    assert.equal(database.prepare("SELECT max(version) AS version FROM schema_version").get()?.["version"], 44);
+    const totalChangesBefore = database.prepare("SELECT total_changes() AS count").get()?.["count"];
+
+    const first = createLegacyImportPreview(input);
+    const replay = createLegacyImportPreview(input);
+
+    assert.deepEqual(replay, first);
+    assert.equal(first.preview.import_kind, "legacy-markdown");
+    assert.equal(first.preview.importer_version, "1");
+    assert.equal(first.preview.base_project_revision, authority["revision"]);
+    assert.equal(first.preview.base_authority_epoch, authority["authority_epoch"]);
+    assert.equal(first.preview.base_database_schema_version, 44);
+    assert.equal(first.preview_hash, hashLegacyImportValue(first.preview));
+    assert.deepEqual(first.preview.counts, {
+      create: 0,
+      update: 0,
+      delete: 0,
+      preserve: 1,
+      unparsed: 0,
+      unresolved: 0,
+    });
+    assert.deepEqual(first.preview.sources.map((source) => ({
+      path: source.path,
+      parser_id: source.parser_id,
+      parser_version: source.parser_version,
+      outcome: source.outcome,
+    })), [{
+      path: ".gsd/STATE.md",
+      parser_id: "gsd-artifact-classifier",
+      parser_version: "1",
+      outcome: "preserved",
+    }]);
+    assert.deepEqual(first.preview.changes.map((change) => ({
+      action: change.action,
+      target: change.target,
+      normalized: change.normalized,
+      reason_code: change.reason_code,
+    })), [{
+      action: "preserve",
+      target: { kind: "legacy-artifact", key: ".gsd/STATE.md" },
+      normalized: { path: ".gsd/STATE.md", preservation: "verbatim" },
+      reason_code: "unrecognized-gsd-artifact-preserved",
+    }]);
+    assert.deepEqual(revalidateLegacyImportPreview(input, first), first);
+    assert.equal(database.prepare("SELECT total_changes() AS count").get()?.["count"], totalChangesBefore);
+
+    writeFileSync(statePath, "# State\n\nChanged after approval.\n");
+    assert.throws(
+      () => revalidateLegacyImportPreview(input, first),
+      (error: unknown) => error instanceof LegacyImportPreviewError
+        && error.stage === "revalidate"
+        && error.code === "LEGACY_IMPORT_PREVIEW_CHANGED"
+        && error.retryable,
+    );
+    assert.equal(database.prepare("SELECT total_changes() AS count").get()?.["count"], totalChangesBefore);
+  } finally {
+    closeDatabase();
+  }
+});
+
+test("legacy public Preview leaves an anchor-incomplete v44 database supplemental-only", (t) => {
+  const directory = temporaryLegacyCorpusDirectory(t);
+  const gsdRoot = join(directory, ".gsd");
+  mkdirSync(gsdRoot);
+  cpSync(
+    fileURLToPath(new URL("./composite-capstone/source/.gsd/gsd.db", LEGACY_CORPUS_ROOT)),
+    join(gsdRoot, "gsd.db"),
+  );
+  assert.equal(openDatabase(join(directory, "canonical.db")), true);
+  try {
+    const artifact = createLegacyImportPreview({
+      roots: [{
+        id: "unsupported-composite-gsd",
+        kind: "project",
+        physical_path: gsdRoot,
+        logical_path: ".gsd",
+        presence: "required",
+      }],
+    });
+
+    assert.deepEqual(artifact.preview.sources.map((source) => ({
+      path: source.path,
+      parser_id: source.parser_id,
+      outcome: source.outcome,
+    })), [{
+      path: ".gsd/gsd.db",
+      parser_id: "gsd-sqlite-target",
+      outcome: "unparsed",
+    }]);
+    assert.deepEqual(artifact.preview.diagnoses.map((diagnosis) => diagnosis.code), [
+      "unsupported-database-schema",
+    ]);
+    assert.deepEqual(artifact.preview.resolutions.map((resolution) => resolution.disposition), [
+      "unsupported",
+    ]);
+    assert.deepEqual(artifact.preview.counts, {
+      create: 0,
+      update: 0,
+      delete: 0,
+      preserve: 0,
+      unparsed: 1,
+      unresolved: 1,
+    });
+  } finally {
+    closeDatabase();
+  }
+});
+
+test("legacy public Preview leaves duplicate v44 schema metadata unsupported", (t) => {
+  const directory = temporaryLegacyCorpusDirectory(t);
+  const gsdRoot = join(directory, ".gsd");
+  mkdirSync(gsdRoot);
+  const sourceDatabase = new DatabaseSync(join(gsdRoot, "gsd.db"));
+  try {
+    sourceDatabase.exec(`
+      CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL);
+      INSERT INTO schema_version VALUES (44, 'first'), (44, 'duplicate');
+      CREATE TABLE project_authority (singleton INTEGER);
+      CREATE TABLE workflow_import_applications (id TEXT);
+      CREATE TABLE trigger_anchor (id INTEGER);
+      CREATE TRIGGER trg_workflow_lifecycle_reopen_authorization
+      AFTER INSERT ON trigger_anchor BEGIN SELECT 1; END;
+    `);
+  } finally {
+    sourceDatabase.close();
+  }
+  assert.equal(openDatabase(join(directory, "canonical.db")), true);
+  try {
+    const artifact = createLegacyImportPreview({
+      roots: [{
+        id: "duplicate-v44-gsd",
+        kind: "project",
+        physical_path: gsdRoot,
+        logical_path: ".gsd",
+        presence: "required",
+      }],
+    });
+
+    assert.deepEqual(artifact.preview.sources.map((source) => ({
+      path: source.path,
+      parser_id: source.parser_id,
+      outcome: source.outcome,
+    })), [{
+      path: ".gsd/gsd.db",
+      parser_id: "gsd-sqlite-target",
+      outcome: "unparsed",
+    }]);
+    assert.deepEqual(artifact.preview.diagnoses.map((diagnosis) => diagnosis.code), [
+      "invalid-database-schema-metadata",
+    ]);
+    assert.deepEqual(artifact.preview.resolutions.map((resolution) => resolution.disposition), [
+      "unsupported",
+    ]);
+    assert.equal(artifact.preview.counts.unparsed, 1);
+    assert.equal(artifact.preview.counts.unresolved, 1);
+  } finally {
+    closeDatabase();
+  }
+});
+
+test("legacy public Preview returns no artifact when a source changes after classification", (t) => {
+  const { input, statePath } = publicPreviewFixture(t);
+  let artifact: LegacyImportPreviewArtifact | undefined;
+  try {
+    assert.throws(
+      () => {
+        artifact = _createLegacyImportPreviewForTest(input, {
+          afterClassification() {
+            writeFileSync(statePath, "# State\n\nChanged during classification.\n");
+          },
+        });
+      },
+      (error: unknown) => error instanceof LegacyImportSourceError
+        && error.stage === "revalidate"
+        && error.code === "LEGACY_IMPORT_SOURCE_CHANGED",
+    );
+    assert.equal(artifact, undefined);
+  } finally {
+    closeDatabase();
+  }
+});
+
+test("legacy public Preview detects relevant-row drift even when revision and epoch do not advance", (t) => {
+  const { database, input } = publicPreviewFixture(t);
+  const authorityBefore = database.prepare(`
+    SELECT revision, authority_epoch FROM project_authority WHERE singleton = 1
+  `).get();
+  assert.ok(authorityBefore);
+  let artifact: LegacyImportPreviewArtifact | undefined;
+  try {
+    assert.throws(
+      () => {
+        artifact = _createLegacyImportPreviewForTest(input, {
+          afterSourceRevalidation() {
+            database.prepare(`
+              INSERT INTO decisions (id, decision) VALUES ('D-RACE', 'Changed without authority advance')
+            `).run();
+          },
+        });
+      },
+      (error: unknown) => error instanceof LegacyImportPreviewError
+        && error.stage === "create"
+        && error.code === "LEGACY_IMPORT_PREVIEW_BASE_CHANGED"
+        && error.retryable
+        && error.context["expected_revision"] === authorityBefore["revision"]
+        && error.context["observed_revision"] === authorityBefore["revision"]
+        && error.context["expected_authority_epoch"] === authorityBefore["authority_epoch"]
+        && error.context["observed_authority_epoch"] === authorityBefore["authority_epoch"]
+        && error.context["expected_base_hash"] !== error.context["observed_base_hash"],
+    );
+    assert.equal(artifact, undefined);
+  } finally {
+    closeDatabase();
+  }
+});
+
+test("legacy public Preview rejects invalid and semantically changed expected artifacts", (t) => {
+  const { input } = publicPreviewFixture(t);
+  try {
+    const expected = createLegacyImportPreview(input);
+    const invalidHash = structuredClone(expected) as LegacyImportPreviewArtifact;
+    invalidHash.preview_hash = hashLegacyImportValue("tampered Preview hash");
+
+    assert.throws(
+      () => revalidateLegacyImportPreview(input, invalidHash),
+      (error: unknown) => error instanceof LegacyImportPreviewError
+        && error.stage === "revalidate"
+        && error.code === "LEGACY_IMPORT_PREVIEW_EXPECTED_INVALID"
+        && !error.retryable,
+    );
+
+    const changed = structuredClone(expected) as LegacyImportPreviewArtifact;
+    assert.ok(changed.preview.diagnoses[0]);
+    changed.preview.diagnoses[0].message = "A rehashed semantic change must not retain approval.";
+    changed.preview_hash = hashLegacyImportValue(changed.preview);
+
+    assert.throws(
+      () => revalidateLegacyImportPreview(input, changed),
+      (error: unknown) => error instanceof LegacyImportPreviewError
+        && error.stage === "revalidate"
+        && error.code === "LEGACY_IMPORT_PREVIEW_CHANGED"
+        && error.retryable
+        && error.context["expected_preview_hash"] === changed.preview_hash
+        && error.context["observed_preview_hash"] === expected.preview_hash,
+    );
+  } finally {
+    closeDatabase();
+  }
+});
+
+describe("legacy public Preview expected artifact validation", () => {
+  const malformedPreview = {
+    preview_schema_version: 1,
+    preview_id: "not-a-preview-hash",
+    import_kind: "legacy-markdown",
+    importer_version: "1",
+    base_project_revision: -1,
+    base_authority_epoch: -1,
+    base_database_schema_version: 44,
+    source_set_hash: "not-a-source-hash",
+    change_set_hash: "not-a-change-hash",
+    counts: {},
+    sources: [],
+    changes: [],
+    diagnoses: [],
+    resolutions: [],
+  };
+  const invalidExpectedArtifacts: readonly (readonly [string, unknown])[] = [
+    ["null artifact", null],
+    ["null Preview", { preview: null, preview_hash: hashLegacyImportValue(null) }],
+    ["rehashed malformed envelope", {
+      preview: malformedPreview,
+      preview_hash: hashLegacyImportValue(malformedPreview),
+    }],
+  ];
+
+  for (const [label, invalidExpected] of invalidExpectedArtifacts) {
+    test(`rejects ${label} before source capture`, (t) => {
+      const missingRoot = join(temporaryLegacyCorpusDirectory(t), "missing-source-root");
+      const input: LegacyImportPreviewCreateInput = {
+        roots: [{
+          id: "must-not-capture",
+          kind: "project",
+          physical_path: missingRoot,
+          logical_path: ".gsd",
+          presence: "required",
+        }],
+      };
+
+      assert.throws(
+        () => revalidateLegacyImportPreview(
+          input,
+          invalidExpected as LegacyImportPreviewArtifact,
+        ),
+        (error: unknown) => error instanceof LegacyImportPreviewError
+          && error.stage === "revalidate"
+          && error.code === "LEGACY_IMPORT_PREVIEW_EXPECTED_INVALID"
+          && !error.retryable,
+      );
+    });
+  }
 });

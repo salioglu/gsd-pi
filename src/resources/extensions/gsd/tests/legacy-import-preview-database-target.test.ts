@@ -16,6 +16,7 @@ import type {
   LegacyImportPreviewSource,
 } from "../legacy-import-contract.ts";
 import {
+  inspectLegacyImportGsdDatabaseEvidence,
   inspectLegacyImportDatabaseTarget,
   LegacyImportDatabaseTargetInspectionError,
   type LegacyImportDatabaseTargetInspectorDeps,
@@ -28,6 +29,7 @@ import {
   type LegacyImportDatabaseTargetInspectionEvidence,
   type LegacyImportDatabaseTargetInspectionRequest,
 } from "../legacy-import-preview-database-target.ts";
+import { interpretLegacyGsdCapture } from "../legacy-import-preview-gsd.ts";
 import {
   decodeLegacyImportCapture,
   finalizeLegacyImportInterpretation,
@@ -85,6 +87,39 @@ function createDatabase(path: string, version: number | null, populated = false)
         INSERT INTO milestones VALUES ('M001');
         INSERT INTO decisions VALUES ('D001');
         INSERT INTO memories VALUES ('MEM001');
+      `);
+    }
+  } finally {
+    database.close();
+  }
+}
+
+function createLifecycleEvidenceDatabase(
+  path: string,
+  options: { encoding?: "UTF-16le"; duplicateDependency?: boolean } = {},
+): void {
+  const database = new DatabaseSync(path);
+  try {
+    if (options.encoding !== undefined) database.exec(`PRAGMA encoding='${options.encoding}'`);
+    database.exec(`
+      CREATE TABLE slices (
+        milestone_id TEXT NOT NULL,
+        id TEXT NOT NULL,
+        depends TEXT,
+        PRIMARY KEY (milestone_id, id)
+      );
+      CREATE TABLE slice_dependencies (
+        milestone_id TEXT NOT NULL,
+        slice_id TEXT NOT NULL,
+        depends_on_slice_id TEXT NOT NULL
+      );
+    `);
+    if (options.encoding !== undefined) {
+      database.prepare("INSERT INTO slices VALUES ('M001', 'S01', ?)").run('["UTF16-DEPENDENCY"]');
+    } else if (options.duplicateDependency === true) {
+      database.exec(`
+        INSERT INTO slice_dependencies VALUES ('M001', 'S01', 'REPEATED-DEPENDENCY');
+        INSERT INTO slice_dependencies VALUES ('M001', 'S02', 'REPEATED-DEPENDENCY');
       `);
     }
   } finally {
@@ -152,7 +187,7 @@ function assertTargetError(
 function assertInspectionError(
   fn: () => unknown,
   code: string,
-  stage: "materialize" | "provider" | "close" | "cleanup",
+  stage: "materialize" | "provider" | "evidence" | "close" | "cleanup",
   retryable: boolean,
 ): LegacyImportDatabaseTargetInspectionError {
   let inspected: LegacyImportDatabaseTargetInspectionError | undefined;
@@ -235,6 +270,190 @@ function normalizedResolutions(
     ...(resolution.target === undefined ? {} : { target: resolution.target }),
   })).sort(compareCanonical);
 }
+
+test("legacy preview database inspector collects exact retained-byte lifecycle dependency evidence", (t) => {
+  const base = temporaryDirectory(t);
+  const gsd = join(base, ".gsd");
+  cpSync(
+    fileURLToPath(new URL("./lifecycle-truth-matrix/source/.gsd", CORPUS_ROOT)),
+    gsd,
+    { recursive: true, dereference: false, verbatimSymlinks: true },
+  );
+  const databasePath = join(gsd, "gsd.db");
+  const beforeBytes = readFileSync(databasePath);
+  const capture = captureLegacyImportSourceSet({ roots: [root("project", "project", gsd, ".gsd")] });
+  const request = databaseRequest(capture);
+  const harness = inspectorHarness(t);
+
+  const first = inspectLegacyImportGsdDatabaseEvidence(request, harness.deps);
+  const second = inspectLegacyImportGsdDatabaseEvidence(request, harness.deps);
+
+  assert.deepEqual(second, first);
+  assert.deepEqual(first.coverage, [
+    { table: "slices", field: "depends", complete: true, row_count: 1 },
+    { table: "slice_dependencies", field: "depends_on_slice_id", complete: true, row_count: 1 },
+  ]);
+  assert.deepEqual(first.observations, [
+    {
+      table: "slices",
+      key: { milestone_id: "M001", id: "S02" },
+      field: "depends",
+      value: ["S00"],
+      raw: {
+        locator: { start_byte: 118696, end_byte: 118703 },
+        value: '["S00"]',
+        sha256: "sha256:4b3f2c064a7a7f5d23f1efe7776e52ccc4a5cfe3627ed1735ceb26ffe32103b0",
+      },
+    },
+    {
+      table: "slice_dependencies",
+      key: { milestone_id: "M001", slice_id: "S02" },
+      field: "depends_on_slice_id",
+      value: "S99",
+      raw: {
+        locator: { start_byte: 180209, end_byte: 180212 },
+        value: "S99",
+        sha256: "sha256:5c06606b31c31c3dfab03ce04ee502731830f6220178e10b5d006815de8b06ba",
+      },
+    },
+  ]);
+  assert.equal(first.capture_hash, capture.capture_hash);
+  assert.equal(first.source_id, request.source_id);
+  assert.equal(first.source_sha256, request.source_sha256);
+  assert.equal(first.source_byte_size, request.source_byte_size);
+  const evidenceValue = { ...first };
+  delete (evidenceValue as Partial<typeof first>).evidence_hash;
+  assert.equal(first.evidence_hash, hashLegacyImportValue(evidenceValue));
+  assert.equal(Object.isFrozen(first), true);
+  assert.equal(Object.isFrozen(first.observations), true);
+  assert.deepEqual(
+    interpretLegacyGsdCapture(capture, [first]).candidates
+      .filter((candidate) => candidate.reason_code === "dependency-conflict-raw-evidence")
+      .map((candidate) => [candidate.target.key, candidate.raw.locator] as const)
+      .sort(([left], [right]) => left.localeCompare(right)),
+    [
+      ["M001/S02/dependency-junction", { start_byte: 180209, end_byte: 180212 }],
+      ["M001/S02/depends-column", { start_byte: 118696, end_byte: 118703 }],
+    ],
+  );
+  assert.deepEqual(readFileSync(databasePath), beforeBytes);
+  assert.equal(harness.state.cleanupCalls, 2);
+  assert.equal(existsSync(harness.state.scratch), false);
+});
+
+test("legacy preview database inspector reports complete empty dependency coverage for absent legacy schema", (t) => {
+  const base = temporaryDirectory(t);
+  const scenarios = [
+    {
+      name: "absent-tables",
+      create(path: string) {
+        cpSync(
+          fileURLToPath(new URL("./action-matrix/source/.gsd/gsd.db", CORPUS_ROOT)),
+          path,
+        );
+      },
+    },
+    {
+      name: "absent-columns",
+      create(path: string) {
+        const database = new DatabaseSync(path);
+        try {
+          database.exec(`
+            CREATE TABLE slices (milestone_id TEXT NOT NULL, id TEXT NOT NULL);
+            CREATE TABLE slice_dependencies (milestone_id TEXT NOT NULL, slice_id TEXT NOT NULL);
+          `);
+        } finally {
+          database.close();
+        }
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const gsd = join(base, scenario.name);
+    mkdirSync(gsd);
+    scenario.create(join(gsd, "gsd.db"));
+    const capture = captureLegacyImportSourceSet({
+      roots: [root(scenario.name, "project", gsd, ".gsd")],
+    });
+
+    const evidence = inspectLegacyImportGsdDatabaseEvidence(databaseRequest(capture));
+
+    assert.deepEqual(evidence.coverage, [
+      { table: "slices", field: "depends", complete: true, row_count: 0 },
+      { table: "slice_dependencies", field: "depends_on_slice_id", complete: true, row_count: 0 },
+    ]);
+    assert.deepEqual(evidence.observations, []);
+  }
+});
+
+test("legacy preview database lifecycle evidence fails closed on missing and ambiguous retained-byte spans", (t) => {
+  const base = temporaryDirectory(t);
+  const scenarios = [
+    {
+      name: "missing",
+      value: "UTF16-DEPENDENCY",
+      code: "LEGACY_IMPORT_DATABASE_EVIDENCE_SPAN_MISSING",
+      options: { encoding: "UTF-16le" as const },
+      occurrences: "0",
+    },
+    {
+      name: "ambiguous",
+      value: "REPEATED-DEPENDENCY",
+      code: "LEGACY_IMPORT_DATABASE_EVIDENCE_SPAN_AMBIGUOUS",
+      options: { duplicateDependency: true },
+      occurrences: "2",
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const gsd = join(base, scenario.name);
+    mkdirSync(gsd);
+    createLifecycleEvidenceDatabase(join(gsd, "gsd.db"), scenario.options);
+    const capture = captureLegacyImportSourceSet({
+      roots: [root(scenario.name, "project", gsd, ".gsd")],
+    });
+    const request = databaseRequest(capture);
+
+    const error = assertInspectionError(
+      () => inspectLegacyImportGsdDatabaseEvidence(request),
+      scenario.code,
+      "evidence",
+      false,
+    );
+
+    assert.equal(error.context.occurrence_count, scenario.occurrences);
+    assert.equal(JSON.stringify(error).includes(scenario.value), false);
+  }
+});
+
+test("legacy preview database lifecycle evidence rejects malformed present dependency values", (t) => {
+  const gsd = join(temporaryDirectory(t), ".gsd");
+  mkdirSync(gsd);
+  const database = new DatabaseSync(join(gsd, "gsd.db"));
+  try {
+    database.exec(`
+      CREATE TABLE slices (
+        milestone_id TEXT NOT NULL,
+        id TEXT NOT NULL,
+        depends TEXT
+      );
+      INSERT INTO slices VALUES ('M001', 'S01', 'not-json');
+    `);
+  } finally {
+    database.close();
+  }
+  const capture = captureLegacyImportSourceSet({
+    roots: [root("malformed", "project", gsd, ".gsd")],
+  });
+
+  assertInspectionError(
+    () => inspectLegacyImportGsdDatabaseEvidence(databaseRequest(capture)),
+    "LEGACY_IMPORT_DATABASE_EVIDENCE_QUERY_FAILED",
+    "evidence",
+    false,
+  );
+});
 
 test("legacy preview database target inspects retained main-only bytes and leaves the source untouched", (t) => {
   const base = temporaryDirectory(t);

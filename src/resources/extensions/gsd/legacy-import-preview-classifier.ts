@@ -991,7 +991,15 @@ function validateCompleteMemberCandidates(
         { member_key: key },
       );
     }
-    if (canonicalLegacyImportJson(candidate.raw.value) !== canonicalLegacyImportJson(rawMember)) {
+    let candidateRawValue = candidate.raw.value;
+    if (candidate.raw.locator.json_pointer === undefined && typeof candidateRawValue === "string") {
+      try {
+        candidateRawValue = JSON.parse(candidateRawValue) as LegacyImportValue;
+      } catch {
+        // Non-JSON string evidence compares as retained below.
+      }
+    }
+    if (canonicalLegacyImportJson(candidateRawValue) !== canonicalLegacyImportJson(rawMember)) {
       fail(
         "LEGACY_IMPORT_CLASSIFICATION_COMPLETE_SET_INVALID",
         "legacy import complete row set member candidate contradicts the retained raw collection",
@@ -1154,7 +1162,10 @@ export function classifyLegacyImportChanges(
       excludedRows.add(completeAuthorityRow(rowSet, key));
       const target = { kind: rowSets[0].target_kind, key };
       const evidence: AmbiguityEvidence[] = [
-        ...rowSets.map((complete) => ({ raw: complete.raw, stableId: complete.complete_set_id })),
+        ...rowSets.map((complete) => ({
+          raw: complete.preview_raw ?? complete.raw,
+          stableId: complete.complete_set_id,
+        })),
         ...rowCandidates.map(({ candidate }) => ({
           raw: candidate.raw,
           stableId: candidate.candidate_id,
@@ -1266,7 +1277,7 @@ export function classifyLegacyImportChanges(
       pendingChanges.push({
         action: "delete",
         target,
-        raw: complete.raw,
+        raw: complete.preview_raw ?? complete.raw,
         normalized: null,
         provenance: complete.provenance,
         reason_code: "complete-snapshot-row-absent",

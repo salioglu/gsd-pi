@@ -473,11 +473,12 @@ function addJsonCandidate(
   normalized: LegacyImportValue,
   reason: string,
   classification: "compare" | "preserve" = "compare",
+  previewSafeRaw = false,
 ): void {
   candidates.push({
     classification,
     target,
-    raw: rawJsonValue(state, pointer),
+    raw: previewSafeRaw ? previewRawJsonValue(state, pointer) : rawJsonValue(state, pointer),
     normalized,
     provenance: {
       source_id: state.file.entry.source_id,
@@ -771,8 +772,30 @@ function rawJsonValue(state: ManifestState, pointer: string): LegacyImportRawVal
   };
 }
 
-function withoutFields(record: JsonRecord, fields: readonly string[]): JsonRecord {
-  return Object.fromEntries(Object.entries(record).filter(([field]) => !fields.includes(field)));
+function isTemporalField(field: string): boolean {
+  return field === "timestamp" || field.endsWith("_timestamp") || field.endsWith("_at");
+}
+
+function containsTemporalField(value: LegacyImportValue): boolean {
+  if (Array.isArray(value)) return value.some(containsTemporalField);
+  if (value === null || typeof value !== "object") return false;
+  return Object.entries(value).some(([field, child]) => isTemporalField(field) || containsTemporalField(child));
+}
+
+function withoutTemporalFields(value: LegacyImportValue): LegacyImportValue {
+  if (Array.isArray(value)) return value.map(withoutTemporalFields);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).flatMap(([field, child]) => (
+    isTemporalField(field) ? [] : [[field, withoutTemporalFields(child)]]
+  )));
+}
+
+function previewRawJsonValue(state: ManifestState, pointer: string): LegacyImportRawValue {
+  const raw = rawJsonValue(state, pointer);
+  if (!containsTemporalField(raw.value)) return raw;
+  const bytes = state.file.bytes.subarray(raw.locator.start_byte, raw.locator.end_byte);
+  const { json_pointer: _jsonPointer, ...locator } = raw.locator;
+  return { ...raw, locator, value: bytes.toString("utf8") };
 }
 
 function withRepositoryDefault(record: JsonRecord): JsonRecord {
@@ -797,6 +820,8 @@ function addManifestCollectionCandidates(
       { kind: targetKind, key },
       normalizedFor(record),
       `state-manifest-${targetKind}-row`,
+      "compare",
+      true,
     );
   }
 }
@@ -813,11 +838,13 @@ function addCompleteManifestCollection(
   normalizedFor: (record: ManifestRecord) => JsonRecord,
 ): void {
   addManifestCollectionCandidates(state, candidates, property, targetKind, collection, keyFor, normalizedFor);
+  const raw = rawJsonValue(state, `/${property}`);
   completeRowSets.push({
     row_set: rowSet,
     target_kind: targetKind,
     member_keys: collection.map(keyFor),
-    raw: rawJsonValue(state, `/${property}`),
+    raw,
+    ...(containsTemporalField(raw.value) ? { preview_raw: previewRawJsonValue(state, `/${property}`) } : {}),
     provenance: {
       source_id: state.file.entry.source_id,
       parser_id: state.file.parserId,
@@ -859,45 +886,45 @@ function interpretVersionedManifestRows(
     "decision",
     versioned.decisions,
     (record) => record.value.id as string,
-    (record) => record.value,
+    (record) => withoutTemporalFields(record.value) as JsonRecord,
   );
   const hasScopedHierarchy = state.milestones.length > 0 || state.slices.length > 0 || state.tasks.length > 0;
   if (hasScopedHierarchy) {
     addManifestHierarchyCollection(
       state, candidates, completeRowSets, "milestones", "milestone", state.milestones,
       manifestMilestoneKey,
-      (record) => withoutFields(record.value, ["created_at"]),
+      (record) => withoutTemporalFields(record.value) as JsonRecord,
     );
     addManifestHierarchyCollection(
       state, candidates, completeRowSets, "slices", "slice", state.slices,
       manifestSliceKey,
-      (record) => withRepositoryDefault(withoutFields(record.value, ["created_at"])),
+      (record) => withRepositoryDefault(withoutTemporalFields(record.value) as JsonRecord),
     );
     addManifestHierarchyCollection(
       state, candidates, completeRowSets, "tasks", "task", state.tasks,
       manifestTaskKey,
-      (record) => withRepositoryDefault(record.value),
+      (record) => withRepositoryDefault(withoutTemporalFields(record.value) as JsonRecord),
     );
   }
   if (versioned.requirements !== undefined) {
     addCompleteManifestCollection(
       state, candidates, completeRowSets, "requirements", "requirements", "requirement", versioned.requirements,
       (record) => record.value.id as string,
-      (record) => record.value,
+      (record) => withoutTemporalFields(record.value) as JsonRecord,
     );
   }
   if (versioned.artifacts !== undefined) {
     addCompleteManifestCollection(
       state, candidates, completeRowSets, "artifacts", "artifacts", "artifact", versioned.artifacts,
       (record) => record.value.path as string,
-      (record) => withoutFields(record.value, ["imported_at"]),
+      (record) => withoutTemporalFields(record.value) as JsonRecord,
     );
   }
   if (versioned.assessments !== undefined && !versioned.delegateAssessments) {
     addCompleteManifestCollection(
       state, candidates, completeRowSets, "assessments", "assessments", "assessment", versioned.assessments,
       manifestAssessmentKey,
-      (record) => withoutFields(record.value, ["created_at"]),
+      (record) => withoutTemporalFields(record.value) as JsonRecord,
     );
   }
 }
