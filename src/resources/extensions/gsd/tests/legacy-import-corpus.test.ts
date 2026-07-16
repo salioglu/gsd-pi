@@ -570,3 +570,415 @@ test("legacy corpus validator reports case, JSON path, source, and locator conte
     /\[case synthetic-smoke\] at \$\.changes\[0\]\.raw\.locator:.*source_id=source-decisions.*locator=.*expected_disposition=mapped/,
   );
 });
+
+test("legacy corpus planning validates every required planning family without inferred ambiguity", () => {
+  const corpusRoot = new URL("./__fixtures__/legacy-import-corpus/v1/", import.meta.url);
+  const caseNames = [
+    "planning-flat-complete",
+    "planning-milestone-dirs",
+    "planning-multi-milestone",
+    "planning-multi-milestone-heading",
+    "planning-multi-milestone-details",
+    "planning-multi-milestone-summary",
+    "planning-multi-milestone-completed-range",
+    "planning-multi-milestone-emoji-range",
+    "planning-number-aliases",
+    "planning-loss-surfaces",
+  ] as const;
+  const cases = caseNames.map((caseName) => loadLegacyImportCorpusCase(corpusRoot, caseName));
+
+  for (const corpusCase of cases) {
+    validateLegacyImportCorpusCase(corpusCase);
+  }
+
+  const byName = new Map(cases.map((corpusCase) => [corpusCase.name, corpusCase.oracle]));
+  const oracle = (caseName: (typeof caseNames)[number]) => {
+    const result = byName.get(caseName);
+    assert.ok(result, `missing ${caseName}`);
+    return result;
+  };
+  const targetKeys = (caseName: (typeof caseNames)[number]) =>
+    oracle(caseName).changes.map((change) => change.target.key).sort();
+  const diagnosisCodes = (caseName: (typeof caseNames)[number]) =>
+    oracle(caseName).diagnoses.map((diagnosis) => diagnosis.code).sort();
+
+  assert.equal(oracle("planning-flat-complete").counts.unresolved, 0);
+  assert.deepEqual(targetKeys("planning-flat-complete"), [
+    "M001",
+    "M001/S01",
+    "M001/S01/T01",
+    "M001/S01/T01",
+    "R001",
+  ]);
+
+  const grammarCases = [
+    [
+      "planning-multi-milestone-heading",
+      "heading",
+      [
+        {
+          target: { kind: "milestone", key: "M001" },
+          normalized: {
+            grammar: "heading",
+            id: "M001",
+            title: "Foundation",
+            status: "complete",
+            sequence: 1,
+          },
+        },
+        {
+          target: { kind: "milestone", key: "M002" },
+          normalized: {
+            grammar: "heading",
+            id: "M002",
+            title: "Delivery",
+            status: "active",
+            sequence: 2,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M001/S01" },
+          normalized: {
+            grammar: "heading",
+            id: "S01",
+            milestone_id: "M001",
+            title: "Repository Foundation",
+            status: "complete",
+            sequence: 1,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M002/S01" },
+          normalized: {
+            grammar: "heading",
+            id: "S01",
+            milestone_id: "M002",
+            title: "Delivery Path",
+            status: "pending",
+            sequence: 1,
+          },
+        },
+      ],
+    ],
+    [
+      "planning-multi-milestone-details",
+      "details",
+      [
+        {
+          target: { kind: "milestone", key: "M001" },
+          normalized: {
+            grammar: "details",
+            id: "M001",
+            title: "Foundation",
+            status: "complete",
+            sequence: 1,
+          },
+        },
+        {
+          target: { kind: "milestone", key: "M002" },
+          normalized: {
+            grammar: "details",
+            id: "M002",
+            title: "Delivery",
+            status: "active",
+            sequence: 2,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M001/S01" },
+          normalized: {
+            grammar: "details",
+            id: "S01",
+            milestone_id: "M001",
+            title: "Repository Foundation",
+            status: "complete",
+            sequence: 1,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M002/S01" },
+          normalized: {
+            grammar: "details",
+            id: "S01",
+            milestone_id: "M002",
+            title: "Delivery Path",
+            status: "pending",
+            sequence: 1,
+          },
+        },
+      ],
+    ],
+    [
+      "planning-multi-milestone-summary",
+      "summary",
+      [
+        {
+          target: { kind: "milestone", key: "M001" },
+          normalized: {
+            grammar: "summary",
+            id: "M001",
+            title: "v1.0 Foundation",
+            status: "complete",
+            sequence: 1,
+          },
+        },
+        {
+          target: { kind: "milestone", key: "M002" },
+          normalized: {
+            grammar: "summary",
+            id: "M002",
+            title: "v2.0 Delivery",
+            status: "active",
+            sequence: 2,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M001/S01" },
+          normalized: {
+            grammar: "summary",
+            id: "S01",
+            milestone_id: "M001",
+            title: "Repository Foundation",
+            status: "complete",
+            sequence: 1,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M002/S01" },
+          normalized: {
+            grammar: "summary",
+            id: "S01",
+            milestone_id: "M002",
+            title: "Delivery Path",
+            status: "pending",
+            sequence: 1,
+          },
+        },
+      ],
+    ],
+    [
+      "planning-multi-milestone-completed-range",
+      "completed-range",
+      [
+        {
+          target: { kind: "milestone", key: "M001" },
+          normalized: {
+            grammar: "completed-range",
+            id: "M001",
+            title: "v1.0 Completed Foundation",
+            status: "complete",
+            sequence: 1,
+          },
+        },
+        {
+          target: { kind: "milestone", key: "M002" },
+          normalized: {
+            grammar: "completed-range",
+            id: "M002",
+            title: "v2.0 Completed Delivery",
+            status: "complete",
+            sequence: 2,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M001/S01" },
+          normalized: {
+            grammar: "completed-range",
+            id: "S01",
+            milestone_id: "M001",
+            title: "Phase 1",
+            status: "complete",
+            sequence: 1,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M001/S02" },
+          normalized: {
+            grammar: "completed-range",
+            id: "S02",
+            milestone_id: "M001",
+            title: "Phase 2",
+            status: "complete",
+            sequence: 2,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M002/S01" },
+          normalized: {
+            grammar: "completed-range",
+            id: "S01",
+            milestone_id: "M002",
+            title: "Phase 3",
+            status: "complete",
+            sequence: 1,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M002/S02" },
+          normalized: {
+            grammar: "completed-range",
+            id: "S02",
+            milestone_id: "M002",
+            title: "Phase 4",
+            status: "complete",
+            sequence: 2,
+          },
+        },
+      ],
+    ],
+    [
+      "planning-multi-milestone-emoji-range",
+      "emoji-range",
+      [
+        {
+          target: { kind: "milestone", key: "M001" },
+          normalized: {
+            grammar: "emoji-range",
+            id: "M001",
+            title: "Migration",
+            status: "active",
+            sequence: 1,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M001/S01" },
+          normalized: {
+            grammar: "emoji-range",
+            id: "S01",
+            milestone_id: "M001",
+            title: "Foundation",
+            status: "complete",
+            sequence: 1,
+          },
+        },
+        {
+          target: { kind: "slice", key: "M001/S02" },
+          normalized: {
+            grammar: "emoji-range",
+            id: "S02",
+            milestone_id: "M001",
+            title: "Delivery",
+            status: "pending",
+            sequence: 2,
+          },
+        },
+      ],
+    ],
+  ] as const;
+  for (const [caseName, grammar, expectedOutputs] of grammarCases) {
+    const preview = oracle(caseName);
+    assert.equal(preview.counts.unresolved, 0, `${grammar} grammar must map without user input`);
+    assert.deepEqual(
+      preview.changes.map((change) => ({ target: change.target, normalized: change.normalized })),
+      expectedOutputs,
+    );
+    assert.ok(preview.sources.every((source) => source.outcome === "mapped"));
+  }
+
+  const mixedRoadmap = oracle("planning-multi-milestone");
+  assert.deepEqual(diagnosisCodes("planning-multi-milestone"), ["competing-roadmap-grammars"]);
+  assert.deepEqual(mixedRoadmap.sources.map((source) => [source.path, source.outcome]), [
+    [".planning/ROADMAP.md", "unparsed"],
+  ]);
+  assert.deepEqual(
+    mixedRoadmap.changes.map((change) => ({
+      action: change.action,
+      target: change.target,
+      normalized: change.normalized,
+    })),
+    [
+      { action: "preserve", target: { kind: "legacy-roadmap-fragment", key: "details" }, normalized: { disposition: "preserved", grammar: "details" } },
+      { action: "preserve", target: { kind: "legacy-roadmap-fragment", key: "heading" }, normalized: { disposition: "preserved", grammar: "heading" } },
+      { action: "preserve", target: { kind: "legacy-roadmap-fragment", key: "ranges" }, normalized: { disposition: "preserved", grammar: "ranges" } },
+      { action: "preserve", target: { kind: "legacy-roadmap-fragment", key: "summary" }, normalized: { disposition: "preserved", grammar: "summary" } },
+    ],
+  );
+  assert.ok(mixedRoadmap.resolutions.some((resolution) => resolution.disposition === "requires-user"));
+
+  const milestoneDirectories = oracle("planning-milestone-dirs");
+  assert.deepEqual(
+    targetKeys("planning-milestone-dirs").filter((key) => key.startsWith("M001")),
+    ["M001", "M001/S01", "M001/S01/T01"],
+  );
+  assert.ok(
+    milestoneDirectories.changes.every((change) =>
+      change.target.kind === "legacy-artifact" || !change.target.key.startsWith("v1.0")),
+    "legacy milestone labels are provenance, never canonical keys",
+  );
+  assert.deepEqual(diagnosisCodes("planning-milestone-dirs"), ["duplicate-phase-number"]);
+  assert.deepEqual(
+    milestoneDirectories.changes
+      .filter((change) => ["M001", "M001/S01", "M001/S01/T01"].includes(change.target.key))
+      .map((change) => ({
+        target: change.target,
+        legacyProvenance: (change.normalized as { legacy_provenance?: unknown }).legacy_provenance,
+      })),
+    [
+      { target: { kind: "milestone", key: "M001" }, legacyProvenance: { milestone_id: "v1.0" } },
+      { target: { kind: "slice", key: "M001/S01" }, legacyProvenance: { milestone_id: "v1.0", phase_number: "01", phase_slug: "foundation" } },
+      { target: { kind: "task", key: "M001/S01/T01" }, legacyProvenance: { milestone_id: "v1.0", phase_number: "01", phase_slug: "foundation", plan_number: "01" } },
+    ],
+  );
+  assert.deepEqual(milestoneDirectories.resolutions, [
+    {
+      diagnosis_id: "diagnosis-duplicate-phase-number",
+      disposition: "requires-user",
+    },
+  ]);
+
+  const aliases = oracle("planning-number-aliases");
+  assert.deepEqual(
+    aliases.sources.filter((source) => source.outcome === "mapped").map((source) => source.path),
+    [
+      ".planning/ROADMAP.md",
+      ".planning/phases/01.2-alias-ordering/01.2-03-PLAN.md",
+      ".planning/phases/01.2-alias-ordering/01.2-03b-PLAN.md",
+      ".planning/phases/01.2-alias-ordering/01.2-04-PLAN.md",
+    ],
+  );
+  assert.deepEqual(targetKeys("planning-number-aliases"), [
+    "M001/S01",
+    "M001/S01/T01",
+    "M001/S01/T02",
+    "M001/S01/T03",
+  ]);
+  assert.deepEqual(diagnosisCodes("planning-number-aliases"), ["plan-number-conflict"]);
+  assert.ok(aliases.resolutions.some((resolution) => resolution.disposition === "requires-user"));
+
+  const lossSurfaces = oracle("planning-loss-surfaces");
+  assert.ok(diagnosisCodes("planning-loss-surfaces").includes("malformed-roadmap-row"));
+  assert.ok(diagnosisCodes("planning-loss-surfaces").includes("placeholder-plan"));
+  assert.ok(diagnosisCodes("planning-loss-surfaces").includes("conflicting-completion-evidence"));
+  assert.ok(
+    lossSurfaces.changes.some(
+      (change) => change.reason_code === "legacy-skipped-means-cancelled" && change.normalized === "cancelled",
+    ),
+  );
+  assert.ok(
+    lossSurfaces.changes.some(
+      (change) =>
+        change.reason_code === "orphan-summary-preserved-verbatim" && change.action === "preserve",
+    ),
+  );
+  assert.ok(
+    lossSurfaces.sources.some(
+      (source) => source.path.startsWith(".planning/.archive/") && source.outcome === "ignored-with-reason",
+    ),
+  );
+
+  const sources = cases.flatMap((corpusCase) => corpusCase.oracle.sources);
+  assert.deepEqual(
+    [...new Set(sources.map((source) => source.parser_id))].sort(),
+    [
+      "gsd-lifecycle-truth",
+      "planning-milestone-directory-parser",
+      "planning-parser",
+      "planning-roadmap-parser",
+      "planning-supplemental-classifier",
+    ],
+  );
+  assert.deepEqual(
+    [...new Set(sources.map((source) => source.outcome))].sort(),
+    ["ignored-with-reason", "mapped", "preserved", "unparsed"],
+  );
+});
