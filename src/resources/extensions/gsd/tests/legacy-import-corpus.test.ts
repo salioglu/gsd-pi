@@ -1918,3 +1918,374 @@ test("legacy corpus supplemental preserves evidence without replay or filesystem
 
   assert.deepEqual(fingerprints(), before, "read-only production checks must not mutate corpus bytes");
 });
+
+test("legacy corpus capstone classifies database targets and changes without applying", () => {
+  const corpusRoot = new URL("./__fixtures__/legacy-import-corpus/v1/", import.meta.url);
+  const caseNames = ["db-target-matrix", "action-matrix", "composite-capstone"] as const;
+  const cases = caseNames.map((caseName) => loadLegacyImportCorpusCase(corpusRoot, caseName));
+  for (const corpusCase of cases) validateLegacyImportCorpusCase(corpusCase);
+
+  const byName = new Map(cases.map((corpusCase) => [corpusCase.name, corpusCase]));
+  const corpusCase = (caseName: (typeof caseNames)[number]) => {
+    const result = byName.get(caseName);
+    assert.ok(result, `missing ${caseName}`);
+    return result;
+  };
+  const oracle = (caseName: (typeof caseNames)[number]) => corpusCase(caseName).oracle;
+  const sourceRows = (caseName: (typeof caseNames)[number]) =>
+    oracle(caseName).sources.map((source) => [source.path, source.parser_id, source.outcome]);
+  const changeRows = (caseName: (typeof caseNames)[number]) =>
+    oracle(caseName).changes.map((change) => [
+      change.change_id,
+      change.action,
+      change.target.kind,
+      change.target.key,
+      change.target.field ?? null,
+      change.reason_code,
+    ]);
+  const diagnosisRows = (caseName: (typeof caseNames)[number]) =>
+    oracle(caseName).diagnoses.map((diagnosis) => [
+      diagnosis.diagnosis_id,
+      diagnosis.code,
+      diagnosis.severity,
+      diagnosis.source_id,
+    ]);
+  const semanticHash = (caseName: (typeof caseNames)[number]) => legacyImportCorpusHash(
+    oracle(caseName).changes.map((change) => ({
+      action: change.action,
+      target: change.target,
+      normalized: change.normalized,
+      reason: change.reason_code,
+    })),
+  );
+  const fingerprints = () => caseNames.flatMap((caseName) => {
+    const loaded = loadLegacyImportCorpusCase(corpusRoot, caseName);
+    return loaded.files.map((file) => [caseName, file.path, file.entryKind, file.byteSize, file.sha256]);
+  });
+  const before = fingerprints();
+  const corpusPath = fileURLToPath(corpusRoot);
+
+  assert.deepEqual(sourceRows("db-target-matrix"), [
+    ["corrupt/.gsd/gsd.db", "gsd-sqlite-target", "unparsed"],
+    ["current-v44/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
+    ["future-v45/.gsd/gsd.db", "gsd-sqlite-target", "unparsed"],
+    ["historical-v30/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
+    ["historical-v34/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
+    ["historical-v43/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
+    ["unversioned-populated/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
+    ["wal-present/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
+    ["wal-present/.gsd/gsd.db-shm", "gsd-sqlite-target", "preserved"],
+    ["wal-present/.gsd/gsd.db-wal", "gsd-sqlite-target", "preserved"],
+  ]);
+  assert.deepEqual(changeRows("db-target-matrix"), []);
+  assert.deepEqual(diagnosisRows("db-target-matrix"), [
+    ["diagnosis-corrupt-database", "corrupt-database", "blocker", "database-corrupt"],
+    ["diagnosis-future-schema", "future-schema-version", "blocker", "database-future-v45"],
+    ["diagnosis-historical-v30", "historical-schema-version", "info", "database-historical-v30"],
+    ["diagnosis-historical-v34", "historical-schema-version", "info", "database-historical-v34"],
+    ["diagnosis-historical-v43", "historical-schema-version", "info", "database-historical-v43"],
+    ["diagnosis-unversioned-populated", "unversioned-populated-database", "warning", "database-unversioned-populated"],
+    ["diagnosis-wal-sidecars", "wal-sidecars-present", "warning", "database-wal-main"],
+  ]);
+  assert.deepEqual(oracle("db-target-matrix").resolutions, [
+    { diagnosis_id: "diagnosis-corrupt-database", disposition: "unsupported" },
+    { diagnosis_id: "diagnosis-future-schema", disposition: "unsupported" },
+    {
+      diagnosis_id: "diagnosis-historical-v30",
+      disposition: "mapped",
+      target: { kind: "database-target", key: "historical-v30/.gsd/gsd.db" },
+    },
+    {
+      diagnosis_id: "diagnosis-historical-v34",
+      disposition: "mapped",
+      target: { kind: "database-target", key: "historical-v34/.gsd/gsd.db" },
+    },
+    {
+      diagnosis_id: "diagnosis-historical-v43",
+      disposition: "mapped",
+      target: { kind: "database-target", key: "historical-v43/.gsd/gsd.db" },
+    },
+    {
+      diagnosis_id: "diagnosis-unversioned-populated",
+      disposition: "mapped",
+      target: { kind: "database-target", key: "unversioned-populated/.gsd/gsd.db" },
+    },
+    {
+      diagnosis_id: "diagnosis-wal-sidecars",
+      disposition: "preserved",
+      target: { kind: "database-target", key: "wal-present/.gsd/gsd.db" },
+    },
+  ]);
+
+  const targetRoot = join(corpusPath, "db-target-matrix", "source");
+  const inspectTarget = <T>(scenario: string, inspect: (database: DatabaseSync) => T): T => {
+    const database = new DatabaseSync(join(targetRoot, scenario, ".gsd", "gsd.db"), { readOnly: true });
+    try {
+      database.exec("PRAGMA query_only=ON");
+      return inspect(database);
+    } finally {
+      database.close();
+    }
+  };
+  const objectExists = (database: DatabaseSync, type: "table" | "trigger", name: string) =>
+    database.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type = ? AND name = ?")
+      .get(type, name)?.count === 1;
+  const validTargetScenarios = [
+    "current-v44",
+    "future-v45",
+    "historical-v30",
+    "historical-v34",
+    "historical-v43",
+    "unversioned-populated",
+  ];
+  for (const scenario of validTargetScenarios) {
+    assert.equal(inspectTarget(scenario, (database) => database.prepare("PRAGMA integrity_check").get()?.integrity_check), "ok");
+  }
+  assert.deepEqual(
+    Object.fromEntries(validTargetScenarios.map((scenario) => [scenario, inspectTarget(
+      scenario,
+      (database) => database.prepare("SELECT max(version) AS version FROM schema_version").get()?.version ?? 0,
+    )])),
+    {
+      "current-v44": 44,
+      "future-v45": 45,
+      "historical-v30": 30,
+      "historical-v34": 34,
+      "historical-v43": 43,
+      "unversioned-populated": 0,
+    },
+  );
+  assert.equal(inspectTarget("historical-v30", (database) => objectExists(database, "table", "project_authority")), false);
+  assert.equal(inspectTarget("historical-v34", (database) => objectExists(database, "table", "workflow_import_applications")), false);
+  assert.equal(inspectTarget("historical-v43", (database) => objectExists(database, "trigger", "trg_workflow_lifecycle_reopen_authorization")), false);
+  assert.deepEqual(inspectTarget("current-v44", (database) => ({
+    authority: objectExists(database, "table", "project_authority"),
+    imports: objectExists(database, "table", "workflow_import_applications"),
+    reopen: objectExists(database, "trigger", "trg_workflow_lifecycle_reopen_authorization"),
+    applications: database.prepare("SELECT count(*) AS count FROM workflow_import_applications").get()?.count,
+  })), { authority: true, imports: true, reopen: true, applications: 0 });
+  assert.deepEqual(inspectTarget("unversioned-populated", (database) => ({
+    versions: database.prepare("SELECT count(*) AS count FROM schema_version").get()?.count,
+    milestones: database.prepare("SELECT count(*) AS count FROM milestones").get()?.count,
+    decisions: database.prepare("SELECT count(*) AS count FROM decisions").get()?.count,
+    memories: database.prepare("SELECT count(*) AS count FROM memories").get()?.count,
+  })), { versions: 0, milestones: 1, decisions: 1, memories: 1 });
+  assert.throws(() => {
+    const database = new DatabaseSync(join(targetRoot, "corrupt", ".gsd", "gsd.db"), { readOnly: true });
+    try {
+      database.prepare("PRAGMA integrity_check").get();
+    } finally {
+      database.close();
+    }
+  });
+  assert.deepEqual(
+    corpusCase("db-target-matrix").files
+      .filter((file) => file.path.endsWith("gsd.db-shm") || file.path.endsWith("gsd.db-wal"))
+      .map((file) => [file.path, file.byteSize, file.sha256]),
+    [
+      [
+        "wal-present/.gsd/gsd.db-shm",
+        32768,
+        "sha256:dc06e3e3a3ea75ab42b898b5947b5f0071579dfdb39f8a552f03af572b83115f",
+      ],
+      [
+        "wal-present/.gsd/gsd.db-wal",
+        1104,
+        "sha256:4f0b8e33edb0a524f59653e497e07b20a05b8e60b4572c6c2a32d13b3d9cb2ef",
+      ],
+    ],
+  );
+  const walRoot = join(targetRoot, "wal-present", ".gsd");
+  const walBytes = readFileSync(join(walRoot, "gsd.db-wal"));
+  const shmBytes = readFileSync(join(walRoot, "gsd.db-shm"));
+  assert.ok([0x377f0682, 0x377f0683].includes(walBytes.readUInt32BE(0)));
+  assert.equal(walBytes.readUInt32BE(8), 512);
+  assert.equal((walBytes.byteLength - 32) / (24 + 512), 2);
+  assert.equal(walBytes.readUInt32BE(16), walBytes.readUInt32BE(40));
+  assert.equal(walBytes.readUInt32BE(20), walBytes.readUInt32BE(44));
+  assert.equal(shmBytes.byteLength, 32768);
+  assert.ok(shmBytes.some((byte) => byte !== 0), "SHM witness must contain binary index state");
+
+  assert.deepEqual(sourceRows("action-matrix"), [
+    [".gsd/STATE.md", "gsd-lifecycle-truth", "preserved"],
+    [".gsd/gsd.db", "gsd-sqlite-target", "mapped"],
+    [".gsd/state-manifest.json", "gsd-lifecycle-truth", "mapped"],
+  ]);
+  assert.deepEqual(changeRows("action-matrix"), [
+    ["change-create-d001", "create", "decision", "D001", null, "candidate-row-absent-from-base"],
+    ["change-delete-d003", "delete", "decision", "D003", null, "complete-snapshot-row-absent"],
+    ["change-preserve-state-narrative", "preserve", "artifact", ".gsd/STATE.md", null, "unmodeled-state-narrative-preserved"],
+    ["change-update-d002", "update", "decision", "D002", null, "candidate-row-differs-from-base"],
+  ]);
+  assert.equal(semanticHash("action-matrix"), "sha256:c506889b432b279c3efd7a292463a752fedc9b07189206dd750ee77d126618ef");
+  assert.deepEqual(oracle("action-matrix").counts, {
+    create: 1, update: 1, delete: 1, preserve: 1, unparsed: 0, unresolved: 0,
+  });
+  assert.deepEqual(oracle("action-matrix").diagnoses, []);
+  assert.deepEqual(oracle("action-matrix").resolutions, []);
+
+  const actionRoot = join(corpusPath, "action-matrix", "source");
+  const manifest = readManifest(actionRoot);
+  assert.ok(manifest, "action matrix must contain a producer-valid complete StateManifest");
+  const actionDatabase = new DatabaseSync(join(actionRoot, ".gsd", "gsd.db"), { readOnly: true });
+  try {
+    actionDatabase.exec("PRAGMA query_only=ON");
+    assert.deepEqual({ ...actionDatabase.prepare(`
+      SELECT
+        (SELECT max(version) FROM schema_version) AS schema_version,
+        revision,
+        authority_epoch
+      FROM project_authority WHERE singleton = 1
+    `).get() }, { schema_version: 44, revision: 17, authority_epoch: 2 });
+    assert.equal(actionDatabase.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
+    const baseDecisions = actionDatabase.prepare("SELECT * FROM decisions ORDER BY id").all()
+      .map((row) => ({ ...row }));
+    assert.deepEqual(baseDecisions.map((decision) => decision.id), ["D002", "D003", "D004"]);
+    assert.deepEqual(manifest.decisions.map((decision) => decision.id), ["D001", "D002", "D004"]);
+    const baseD002 = baseDecisions.find((decision) => decision.id === "D002");
+    const manifestD002 = manifest.decisions.find((decision) => decision.id === "D002");
+    assert.notDeepEqual(baseD002, manifestD002, "updates require a changed complete-snapshot row");
+    const updateD002 = oracle("action-matrix").changes.find(
+      (change) => change.action === "update" && change.target.key === "D002",
+    );
+    assert.ok(updateD002);
+    assert.deepEqual(updateD002.normalized, manifestD002);
+    assert.ok(baseDecisions.some((decision) => decision.id === "D003"));
+    assert.ok(!manifest.decisions.some((decision) => decision.id === "D003"));
+    const deleteD003 = oracle("action-matrix").changes.find(
+      (change) => change.action === "delete" && change.target.key === "D003",
+    );
+    assert.ok(deleteD003);
+    assert.equal(deleteD003.normalized, null);
+    assert.equal(deleteD003.raw.locator.json_pointer, "/decisions");
+    assert.deepEqual(deleteD003.raw.value, manifest.decisions);
+    assert.deepEqual(
+      baseDecisions.find((decision) => decision.id === "D004"),
+      manifest.decisions.find((decision) => decision.id === "D004"),
+      "identical complete-snapshot rows must be no-ops",
+    );
+    assert.ok(!oracle("action-matrix").changes.some((change) => change.target.key === "D004"));
+    assert.equal(objectExists(actionDatabase, "table", "workflow_import_applications"), true);
+    assert.equal(
+      actionDatabase.prepare("SELECT count(*) AS count FROM workflow_import_applications").get()?.count,
+      0,
+    );
+  } finally {
+    actionDatabase.close();
+  }
+
+  assert.deepEqual(sourceRows("composite-capstone"), [
+    [".gsd-worktrees/M008/git-marker.txt", "gsd-worktree-topology", "preserved"],
+    [".gsd/DECISIONS.md", "gsd-decisions-table", "mapped"],
+    [".gsd/KNOWLEDGE.md", "gsd-knowledge-graph", "preserved"],
+    [".gsd/REQUIREMENTS.md", "gsd-requirements-sections", "mapped"],
+    [".gsd/event-log.jsonl", "gsd-workflow-events", "preserved"],
+    [".gsd/gsd.db", "gsd-sqlite-target", "mapped"],
+    [".gsd/milestones/M007-capstone-alpha/M007-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
+    [".gsd/milestones/M702-clean/M702-ROADMAP.md", "gsd-nested-hierarchy", "mapped"],
+    [".gsd/phases/07-capstone-beta/07-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
+    [".gsd/state-manifest.json", "gsd-assessment-truth", "mapped"],
+    [".gsd/workflow-runs/capstone/run-001/GRAPH.yaml", "gsd-workflow-run-graph", "preserved"],
+    [".gsd/workflows/capstone.yaml", "gsd-workflow-definition", "preserved"],
+    [".planning/ROADMAP.md", "planning-roadmap-parser", "mapped"],
+  ]);
+  assert.deepEqual(changeRows("composite-capstone"), [
+    ["change-create-assessment-m702-s01-run-uat", "create", "assessment", "M702/S01/run-uat", null, "structured-run-uat"],
+    ["change-create-decision-d701", "create", "decision", "D701", null, "capstone-clean-decision"],
+    ["change-create-milestone-m701", "create", "milestone", "M701", null, "capstone-clean-planning-milestone"],
+    ["change-create-milestone-m702", "create", "milestone", "M702", null, "capstone-clean-gsd-milestone"],
+    ["change-create-requirement-r701", "create", "requirement", "R701", null, "capstone-clean-requirement"],
+    ["change-create-slice-m702-s01", "create", "slice", "M702/S01", null, "capstone-clean-gsd-lifecycle"],
+    ["change-preserve-history", "preserve", "legacy-workflow-event", ".gsd/event-log.jsonl#L001", null, "history-evidence-only"],
+    ["change-preserve-knowledge", "preserve", "legacy-knowledge-source", ".gsd/KNOWLEDGE.md", null, "knowledge-evidence-only"],
+    ["change-preserve-workflow-definition", "preserve", "legacy-workflow-definition", ".gsd/workflows/capstone.yaml", null, "workflow-definition-evidence-only"],
+    ["change-preserve-workflow-graph", "preserve", "legacy-workflow-run-graph", "capstone/run-001", null, "workflow-graph-evidence-only"],
+    ["change-preserve-worktree", "preserve", "legacy-worktree-topology", ".gsd-worktrees/M008", null, "worktree-evidence-only"],
+  ]);
+  assert.deepEqual(diagnosisRows("composite-capstone"), [
+    ["diagnosis-hybrid-m007-conflicting-content", "hybrid-conflicting-content", "blocker", "capstone-hybrid-m007-nested"],
+    ["diagnosis-hybrid-m007-duplicate-logical-milestone", "duplicate-logical-milestone", "blocker", "capstone-hybrid-m007-flat"],
+  ]);
+  assert.deepEqual(oracle("composite-capstone").resolutions, [
+    { diagnosis_id: "diagnosis-hybrid-m007-conflicting-content", disposition: "requires-user" },
+    { diagnosis_id: "diagnosis-hybrid-m007-duplicate-logical-milestone", disposition: "requires-user" },
+  ]);
+  assert.deepEqual(oracle("composite-capstone").counts, {
+    create: 6, update: 0, delete: 0, preserve: 5, unparsed: 2, unresolved: 2,
+  });
+  assert.equal(semanticHash("composite-capstone"), "sha256:a48305cde510b614171a68da43a655fd725d60f3d3c8eef3c6fa64d89e5b7950");
+  assert.ok(!oracle("composite-capstone").changes.some((change) => change.target.key.includes("M007")));
+  assert.ok(oracle("composite-capstone").changes
+    .filter((change) => change.target.kind.startsWith("legacy-"))
+    .every((change) => change.action === "preserve"));
+
+  const capstoneRoot = join(corpusPath, "composite-capstone", "source");
+  const capstoneManifest = readManifest(capstoneRoot);
+  assert.ok(capstoneManifest, "capstone must contain a producer-valid structured truth source");
+  assert.deepEqual(capstoneManifest.assessments?.map((assessment) => ({
+    key: `${assessment.milestone_id}/${assessment.slice_id}/${assessment.scope}`,
+    status: assessment.status,
+  })), [{ key: "M702/S01/run-uat", status: "pass" }]);
+
+  const capstoneDatabase = new DatabaseSync(
+    join(capstoneRoot, ".gsd", "gsd.db"),
+    { readOnly: true },
+  );
+  try {
+    capstoneDatabase.exec("PRAGMA query_only=ON");
+    assert.deepEqual({ ...capstoneDatabase.prepare(`
+      SELECT
+        (SELECT max(version) FROM schema_version) AS schema_version,
+        revision,
+        authority_epoch,
+        (SELECT count(*) FROM workflow_import_applications) AS import_applications,
+        (SELECT count(*) FROM decisions WHERE id = 'D701') AS base_decisions,
+        (SELECT count(*) FROM requirements WHERE id = 'R701') AS base_requirements,
+        (SELECT count(*) FROM milestones WHERE id IN ('M701', 'M702')) AS base_milestones,
+        (SELECT count(*) FROM slices WHERE milestone_id = 'M702' AND id = 'S01') AS base_slices
+      FROM project_authority WHERE singleton = 1
+    `).get() }, {
+      schema_version: 44,
+      revision: 27,
+      authority_epoch: 3,
+      import_applications: 0,
+      base_decisions: 0,
+      base_requirements: 0,
+      base_milestones: 0,
+      base_slices: 0,
+    });
+    assert.equal(capstoneDatabase.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
+  } finally {
+    capstoneDatabase.close();
+  }
+
+  assert.deepEqual(
+    caseNames.map((caseName) => [
+      legacyImportCorpusHash(oracle(caseName).sources),
+      legacyImportCorpusHash(oracle(caseName).changes),
+      legacyImportCorpusHash(oracle(caseName).diagnoses),
+      legacyImportCorpusHash(oracle(caseName).resolutions),
+    ]),
+    [
+      [
+        "sha256:5512ca657bc6b00e33daf1734ffb0d6c277b1d8a3e3216ff4316c9fb8643c3c3",
+        "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "sha256:a2321edd2f8e33f882dee1ef40642a261a632d124af84d485ee7b81b8f33adcf",
+        "sha256:d7449477e6c5f9414fe547e7f291658f4cd855c8942f78fa48b68067ed5aed55",
+      ],
+      [
+        "sha256:c3b70bb96e975620892927e4306d0ee7bb42220594b2cde1eb09390fac0be4d1",
+        "sha256:5ee816447ea03a7c8d1ffb391c2b49e7dc3e3cc6ec348c06c777a166c9f51099",
+        "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      ],
+      [
+        "sha256:060402a7bc26f3b869dc224f2194101cb9712200399e7951fb5bb82e1b49a8a9",
+        "sha256:2caf378b56fadca2116319210cdc808166a03d4bac92f778c7d730a6e7897906",
+        "sha256:48e704be969fea42c819b8ca27876897f1228bdcffb462dc041ca9f6d801832a",
+        "sha256:309d793c6e8788d9c245c52c70fc059e0e389794fef78f8cefb79289a017ccd9",
+      ],
+    ],
+  );
+  assert.deepEqual(fingerprints(), before, "capstone classification must not mutate corpus bytes or paths");
+});
