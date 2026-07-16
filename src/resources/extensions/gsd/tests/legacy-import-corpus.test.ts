@@ -12,7 +12,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { pathToFileURL } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 
 import {
@@ -40,6 +41,7 @@ import {
   type LegacyImportSurface,
 } from "../legacy-import-surfaces.ts";
 import { SCHEMA_VERSION } from "../gsd-db.ts";
+import { readManifest } from "../workflow-manifest.ts";
 import {
   legacyImportCorpusHash,
   loadLegacyImportCorpusCase,
@@ -980,5 +982,467 @@ test("legacy corpus planning validates every required planning family without in
   assert.deepEqual(
     [...new Set(sources.map((source) => source.outcome))].sort(),
     ["ignored-with-reason", "mapped", "preserved", "unparsed"],
+  );
+});
+
+test("legacy corpus gsd truth preserves hierarchy evidence and refuses competing authority", () => {
+  const corpusRoot = new URL("./__fixtures__/legacy-import-corpus/v1/", import.meta.url);
+  const caseNames = [
+    "gsd-nested",
+    "gsd-flat",
+    "gsd-alias-hybrid",
+    "registries",
+    "registries-lowercase",
+    "lifecycle-truth-matrix",
+    "assessment-matrix",
+  ] as const;
+  const cases = caseNames.map((caseName) => loadLegacyImportCorpusCase(corpusRoot, caseName));
+
+  for (const corpusCase of cases) {
+    validateLegacyImportCorpusCase(corpusCase);
+  }
+
+  const corpusPath = fileURLToPath(corpusRoot);
+  for (const caseName of ["lifecycle-truth-matrix", "assessment-matrix"] as const) {
+    const manifest = readManifest(`${corpusPath}${caseName}/source`);
+    assert.ok(manifest, `${caseName} must contain a producer-valid StateManifest`);
+    assert.equal(manifest.version, 1);
+    assert.ok(Array.isArray(manifest.verification_evidence));
+  }
+  const dependencyDatabase = new DatabaseSync(
+    `${corpusPath}lifecycle-truth-matrix/source/.gsd/gsd.db`,
+    { readOnly: true },
+  );
+  try {
+    const conflict = dependencyDatabase.prepare(`
+      SELECT
+        (SELECT version FROM schema_version) AS schema_version,
+        (SELECT depends FROM slices WHERE milestone_id = 'M001' AND id = 'S02') AS depends_json,
+        (SELECT depends_on_slice_id FROM slice_dependencies
+          WHERE milestone_id = 'M001' AND slice_id = 'S02') AS junction_dependency
+    `).get() as Record<string, unknown>;
+    assert.deepEqual({ ...conflict }, {
+      schema_version: 44,
+      depends_json: '["S00"]',
+      junction_dependency: "S99",
+    });
+    const integrity = dependencyDatabase.prepare("PRAGMA integrity_check").get() as Record<
+      string,
+      unknown
+    >;
+    assert.deepEqual(Object.values(integrity), ["ok"]);
+  } finally {
+    dependencyDatabase.close();
+  }
+
+  const byName = new Map(cases.map((corpusCase) => [corpusCase.name, corpusCase.oracle]));
+  const oracle = (caseName: (typeof caseNames)[number]) => {
+    const result = byName.get(caseName);
+    assert.ok(result, `missing ${caseName}`);
+    return result;
+  };
+  const targetKeys = (caseName: (typeof caseNames)[number]) =>
+    oracle(caseName).changes.map((change) => change.target.key);
+  const diagnosisCodes = (caseName: (typeof caseNames)[number]) =>
+    oracle(caseName).diagnoses.map((diagnosis) => diagnosis.code);
+  const sourcePaths = (caseName: (typeof caseNames)[number]) =>
+    oracle(caseName).sources.map((source) => source.path);
+  const sourceRows = (caseName: (typeof caseNames)[number]) =>
+    oracle(caseName).sources.map((source) => [source.path, source.parser_id, source.outcome]);
+  const diagnosisRows = (caseName: (typeof caseNames)[number]) =>
+    oracle(caseName).diagnoses.map((diagnosis) => [
+      diagnosis.diagnosis_id,
+      diagnosis.code,
+      diagnosis.source_id,
+    ]);
+  const changeFor = (caseName: (typeof caseNames)[number], key: string, field?: string) => {
+    const matches = oracle(caseName).changes.filter(
+      (change) => change.target.key === key && change.target.field === field,
+    );
+    assert.equal(matches.length, 1, `${caseName} must have one exact change for ${key}`);
+    return matches[0]!;
+  };
+  const semanticChange = (caseName: (typeof caseNames)[number], key: string, field?: string) => {
+    const change = changeFor(caseName, key, field);
+    return {
+      action: change.action,
+      target: change.target,
+      normalized: change.normalized,
+      reason: change.reason_code,
+    };
+  };
+  const changeRows = (caseName: (typeof caseNames)[number]) =>
+    oracle(caseName).changes.map((change) => [
+      change.action,
+      change.target.kind,
+      change.target.key,
+      change.target.field ?? null,
+      change.normalized,
+      change.reason_code,
+    ]);
+
+  assert.deepEqual(sourceRows("gsd-nested"), [
+    [".gsd/milestones/M001-foundation/M001-ROADMAP.md", "gsd-nested-hierarchy", "mapped"],
+    [".gsd/milestones/M001-foundation/slices/S01-core/S01-PLAN.md", "gsd-nested-hierarchy", "mapped"],
+    [".gsd/milestones/M001-foundation/slices/S02-api/S02-PLAN.md", "gsd-nested-hierarchy", "mapped"],
+    [".gsd/milestones/M001-foundation/slices/S03-client/tasks/T01-PLAN.md", "gsd-nested-hierarchy", "mapped"],
+    [".gsd/milestones/M001-foundation/slices/S04-release/T01-PLAN.md", "gsd-nested-hierarchy", "mapped"],
+    [".gsd/milestones/M002-delivery/M002-ROADMAP.md", "gsd-nested-hierarchy", "mapped"],
+    [".gsd/milestones/M002-delivery/slices/S01-ship/S01-PLAN.md", "gsd-nested-hierarchy", "mapped"],
+    [".gsd/milestones/M003-operations/M003-ROADMAP.md", "gsd-nested-hierarchy", "mapped"],
+    [".gsd/milestones/M004-experiments/M004-ROADMAP.md", "gsd-nested-hierarchy", "mapped"],
+    [".gsd/milestones/M099-ghost/M099-CONTEXT.md", "gsd-nested-hierarchy", "preserved"],
+  ]);
+  assert.deepEqual(changeRows("gsd-nested"), [
+    ["create", "milestone", "M001", null, { id: "M001", title: "Foundation" }, "nested-milestone-heading"],
+    ["create", "slice", "M001/S01", null, { id: "S01", milestone_id: "M001", status: "complete", title: "Core setup", depends_on: [] }, "nested-roadmap-checklist"],
+    ["create", "task", "M001/S01/T01", null, { id: "T01", milestone_id: "M001", slice_id: "S01", status: "complete", title: "Create the project skeleton" }, "nested-checkbox-task"],
+    ["create", "slice", "M001/S02", null, { id: "S02", milestone_id: "M001", status: "pending", title: "API wiring", depends_on: ["S01"] }, "nested-roadmap-checklist"],
+    ["create", "task", "M001/S02/T01", null, { id: "T01", milestone_id: "M001", slice_id: "S02", status: "pending", title: "Connect the service boundary" }, "nested-heading-task"],
+    ["create", "slice", "M001/S03", null, { id: "S03", milestone_id: "M001", status: "pending", title: "Client flow", depends_on: ["S01", "S02"] }, "nested-roadmap-dependency-range"],
+    ["create", "task", "M001/S03/T01", null, { id: "T01", milestone_id: "M001", slice_id: "S03", status: "pending", title: "Build the client flow" }, "nested-task-subdirectory"],
+    ["create", "slice", "M001/S04", null, { id: "S04", milestone_id: "M001", status: "pending", title: "Release checks", depends_on: ["S02", "S03"] }, "nested-roadmap-dependency-range"],
+    ["create", "task", "M001/S04/T01", null, { id: "T01", milestone_id: "M001", slice_id: "S04", status: "pending", title: "Run release checks" }, "nested-flat-task-within-slice"],
+    ["create", "milestone", "M002", null, { id: "M002", title: "Delivery" }, "nested-milestone-heading"],
+    ["create", "slice", "M002/S01", null, { id: "S01", milestone_id: "M002", status: "complete", title: "Ship candidate", depends_on: [], risk: "medium" }, "nested-roadmap-table"],
+    ["create", "task", "M002/S01/T01", null, { id: "T01", milestone_id: "M002", slice_id: "S01", status: "complete", title: "Publish the candidate" }, "nested-xml-task"],
+    ["create", "milestone", "M003", null, { id: "M003", title: "Operations" }, "nested-milestone-heading"],
+    ["create", "slice", "M003/S01", null, { id: "S01", milestone_id: "M003", status: "pending", title: "Observability" }, "nested-roadmap-prose"],
+    ["create", "milestone", "M004", null, { id: "M004", title: "Experiments" }, "nested-milestone-heading"],
+    ["create", "slice", "M004/S01", null, { id: "S01", milestone_id: "M004", status: "pending", title: "Explore the idea", sketch: true, tasks: [] }, "nested-sketch-placeholder"],
+    ["preserve", "artifact", ".gsd/milestones/M099-ghost/M099-CONTEXT.md", null, { reason: "ghost-milestone-without-roadmap" }, "nested-ghost-preserved"],
+  ]);
+  assert.deepEqual(diagnosisRows("gsd-nested"), []);
+
+  assert.deepEqual(sourceRows("gsd-flat"), [
+    [".gsd/phases/01-foundation/01-01-PLAN.md", "gsd-flat-hierarchy", "mapped"],
+    [".gsd/phases/01-foundation/01-01-SUMMARY.md", "gsd-flat-hierarchy", "mapped"],
+    [".gsd/phases/01-foundation/01-02-SUMMARY.md", "gsd-flat-hierarchy", "unparsed"],
+    [".gsd/phases/01-foundation/01-ROADMAP.md", "gsd-flat-hierarchy", "mapped"],
+    [".gsd/phases/01-foundation/NOTES.md", "gsd-artifact-classifier", "preserved"],
+    [".gsd/phases/15-observability/15-ROADMAP.md", "gsd-flat-hierarchy", "mapped"],
+    [".gsd/phases/M016-delivery/M016-ROADMAP.md", "gsd-flat-hierarchy", "mapped"],
+  ]);
+  assert.deepEqual(changeRows("gsd-flat"), [
+    ["create", "milestone", "M001", null, { id: "M001", title: "Foundation" }, "flat-milestone-alias"],
+    ["create", "slice", "M001/S01", null, { id: "S01", milestone_id: "M001", status: "pending", title: "Core setup" }, "flat-slice-checklist"],
+    ["create", "task", "M001/S01/T01", null, { id: "T01", milestone_id: "M001", slice_id: "S01", status: "pending", title: "Create the project skeleton" }, "flat-task-frontmatter-parent"],
+    ["update", "task", "M001/S01/T01", "status", "complete", "flat-matching-summary-attestation"],
+    ["create", "milestone", "M015", null, { id: "M015", source_alias: "15", title: "Observability" }, "flat-bare-numeric-milestone"],
+    ["create", "slice", "M015/S01", null, { id: "S01", milestone_id: "M015", status: "pending", title: "Add telemetry" }, "flat-slice-checklist"],
+    ["create", "milestone", "M016", null, { id: "M016", source_alias: "M016-delivery", title: "Delivery" }, "flat-descriptor-milestone"],
+    ["create", "slice", "M016/S01", null, { id: "S01", milestone_id: "M016", status: "pending", title: "Release candidate" }, "flat-slice-checklist"],
+    ["preserve", "artifact", ".gsd/phases/01-foundation/NOTES.md", null, { reason: "unknown-phase-suffix" }, "flat-unknown-artifact-preserved"],
+  ]);
+  assert.deepEqual(diagnosisRows("gsd-flat"), [
+    ["diagnosis-flat-wrong-parent-summary", "task-summary-parent-conflict", "flat-wrong-parent-summary"],
+  ]);
+
+  const hybrid = oracle("gsd-alias-hybrid");
+  assert.deepEqual(sourceRows("gsd-alias-hybrid"), [
+    [".gsd/milestones/M002-delivery/M002-ROADMAP.md", "gsd-hybrid-hierarchy", "mapped"],
+    [".gsd/milestones/M003-platform/M003-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
+    [".gsd/milestones/M004-payments/M004-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
+    [".gsd/milestones/M007-abc123/M007-abc123-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
+    [".gsd/milestones/M015-telemetry/M015-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
+    [".gsd/phases/01-foundation/01-ROADMAP.md", "gsd-hybrid-hierarchy", "mapped"],
+    [".gsd/phases/03-platform/03-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
+    [".gsd/phases/03-services/03-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
+    [".gsd/phases/04-billing/04-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
+    [".gsd/phases/05-def456-team-search/05-ROADMAP.md", "gsd-hybrid-hierarchy", "mapped"],
+    [".gsd/phases/07-abc123-alpha-team/07-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
+    [".gsd/phases/15-observability/15-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
+  ]);
+  assert.deepEqual(changeRows("gsd-alias-hybrid"), [
+    ["create", "milestone", "M001", null, { id: "M001", layout: "flat", title: "Flat foundation" }, "hybrid-non-overlap"],
+    ["create", "slice", "M001/S01", null, { id: "S01", milestone_id: "M001", status: "pending", title: "Core setup" }, "hybrid-non-overlap"],
+    ["create", "milestone", "M002", null, { id: "M002", layout: "nested", title: "Nested delivery" }, "hybrid-non-overlap"],
+    ["create", "slice", "M002/S01", null, { id: "S01", milestone_id: "M002", status: "pending", title: "Ship candidate" }, "hybrid-non-overlap"],
+    ["create", "milestone", "M005-def456", null, { id: "M005-def456", layout: "flat", title: "Team search" }, "hybrid-non-overlap-team-id"],
+    ["create", "slice", "M005-def456/S01", null, { id: "S01", milestone_id: "M005-def456", status: "pending", title: "Index records" }, "hybrid-non-overlap-team-id"],
+  ]);
+  assert.deepEqual(diagnosisRows("gsd-alias-hybrid"), [
+    ["diagnosis-hybrid-ambiguous-m003-path", "ambiguous-path", "hybrid-flat-m003-services"],
+    ["diagnosis-hybrid-ambiguous-team-m007", "ambiguous-team-milestone-alias", "hybrid-nested-m007-abc123"],
+    ["diagnosis-hybrid-content-m004", "hybrid-conflicting-content", "hybrid-nested-m004"],
+    ["diagnosis-hybrid-duplicate-m003", "duplicate-logical-milestone", "hybrid-nested-m003"],
+    ["diagnosis-hybrid-duplicate-m015", "duplicate-logical-milestone", "hybrid-nested-m015"],
+    ["diagnosis-hybrid-status-m004", "hybrid-conflicting-status", "hybrid-nested-m004"],
+  ]);
+  assert.ok(
+    hybrid.resolutions.every(
+      (resolution) => resolution.disposition === "requires-user" && !("target" in resolution),
+    ),
+  );
+
+  assert.ok(targetKeys("registries").includes("D001"));
+  assert.ok(targetKeys("registries").includes("D002"));
+  assert.ok(targetKeys("registries").includes("R001"));
+  assert.ok(targetKeys("registries").includes("NET-01"));
+  assert.deepEqual(
+    oracle("registries").changes
+      .filter((change) => change.action === "create")
+      .map((change) => change.target.key)
+      .sort(),
+    ["D001", "D002", "NET-01", "R001", "R030", "R040"],
+  );
+  assert.deepEqual(diagnosisCodes("registries").sort(), [
+    "duplicate-requirement-id",
+    "freeform-decision-content",
+    "invalid-decision-id",
+    "invalid-made-by",
+    "invalid-requirement-id",
+    "requirement-status-conflict",
+  ]);
+  const registryProjection = (caseName: "registries" | "registries-lowercase") =>
+    oracle(caseName).changes
+      .filter((change) => change.action === "create")
+      .map((change) => ({
+        target: change.target,
+        normalized: change.normalized,
+        reason: change.reason_code,
+      }));
+  assert.deepEqual(changeRows("registries"), [
+    ["create", "decision", "D001", null, { id: "D001", when_context: "M001", scope: "storage", decision: "Choose persistence", choice: "SQLite", rationale: "Local durable authority", revisable: "No", made_by: "agent", superseded_by: "D002" }, "canonical-seven-column-decision"],
+    ["create", "decision", "D002", null, { id: "D002", when_context: "M002", scope: "storage", decision: "Refine persistence (amends D001)", choice: "WAL mode", rationale: "Safe concurrent reads", revisable: "Yes", made_by: "human", superseded_by: null }, "canonical-eight-column-decision"],
+    ["preserve", "legacy-decision-row", "D003", null, { id: "D003", when_context: "M003", scope: "storage", decision: "Refine durability (amends D002)", choice: "Full sync", rationale: "Safer checkpoints", revisable: "Yes", amends: "D002", unresolved_field: "made_by" }, "invalid-made-by-preserved"],
+    ["preserve", "legacy-decision-fragment", ".gsd/DECISIONS.md#freeform", null, { path: ".gsd/DECISIONS.md", fragment: "freeform", preservation: "verbatim" }, "freeform-decision-content-preserved"],
+    ["create", "requirement", "NET-01", null, { id: "NET-01", class: "", status: "validated", description: "The offline handoff path has executable proof.", why: "", source: "", primary_owner: "", supporting_slices: "", validation: "M002/S01", notes: "Focused handoff test passed." }, "categorical-requirement-id"],
+    ["create", "requirement", "R001", null, { id: "R001", class: "core-capability", status: "active", description: "Persist workflow truth in one local database.", why: "Agents must resume without projection drift.", source: "user", primary_owner: "M001/S01", supporting_slices: "M001/S02", validation: "unmapped", notes: "Markdown is a projection." }, "canonical-active-requirement"],
+    ["create", "requirement", "R030", null, { id: "R030", class: "", status: "deferred", description: "Replicate canonical state to another machine.", why: "", source: "", primary_owner: "none", supporting_slices: "none", validation: "unmapped", notes: "" }, "requirement-field-aliases-normalized"],
+    ["create", "requirement", "R040", null, { id: "R040", class: "", status: "out-of-scope", description: "Do not require a hosted service.", why: "", source: "", primary_owner: "none", supporting_slices: "none", validation: "n/a", notes: "" }, "canonical-out-of-scope-requirement"],
+  ]);
+  assert.deepEqual(registryProjection("registries-lowercase"), registryProjection("registries"));
+  assert.deepEqual(
+    semanticChange("registries-lowercase", "D003"),
+    semanticChange("registries", "D003"),
+  );
+  assert.deepEqual(
+    semanticChange("registries-lowercase", ".gsd/decisions.md#freeform"),
+    {
+      action: "preserve",
+      target: { kind: "legacy-decision-fragment", key: ".gsd/decisions.md#freeform" },
+      normalized: { path: ".gsd/decisions.md", fragment: "freeform", preservation: "verbatim" },
+      reason: "freeform-decision-content-preserved",
+    },
+  );
+  assert.deepEqual(sourcePaths("registries"), [".gsd/DECISIONS.md", ".gsd/REQUIREMENTS.md"]);
+  assert.deepEqual(sourcePaths("registries-lowercase"), [".gsd/decisions.md", ".gsd/requirements.md"]);
+  assert.deepEqual(diagnosisCodes("registries-lowercase"), diagnosisCodes("registries"));
+  for (const caseName of ["registries", "registries-lowercase"] as const) {
+    assert.ok(
+      oracle(caseName).resolutions
+        .filter((resolution) => resolution.disposition === "requires-user")
+        .every((resolution) => !("target" in resolution)),
+    );
+  }
+
+  const lifecycle = oracle("lifecycle-truth-matrix");
+  assert.ok(sourcePaths("lifecycle-truth-matrix").includes(".gsd/gsd.db"));
+  assert.ok(sourcePaths("lifecycle-truth-matrix").includes(".gsd/state-manifest.json"));
+  assert.ok(sourcePaths("lifecycle-truth-matrix").includes(".gsd/milestones/M003/M003-PARKED.md"));
+  assert.ok(sourcePaths("lifecycle-truth-matrix").includes(".gsd/milestones/M004/slices/S01/tasks/T01/T01-SUMMARY.md"));
+  assert.deepEqual(changeRows("lifecycle-truth-matrix"), [
+    ["create", "milestone-status", "M002", null, "complete", "all-roadmap-slices-checked"],
+    ["preserve", "legacy-evidence", "M001/structured-status", null, { status: "active", authority: "state-manifest" }, "structured-lifecycle-conflict-evidence"],
+    ["preserve", "legacy-evidence", "M001/S02/structured-status", null, { status: "active", authority: "state-manifest" }, "adopted-lifecycle-authority"],
+    ["preserve", "legacy-evidence", "M001/S02/depends-column", null, { representation: "database slices.depends", value: ["S00"] }, "dependency-conflict-raw-evidence"],
+    ["preserve", "legacy-evidence", "M001/S02/dependency-junction", null, { representation: "database slice_dependencies", value: ["S99"] }, "dependency-conflict-raw-evidence"],
+    ["create", "task-status", "M001/S01/T02", null, "complete", "flat-checkbox-complete"],
+    ["create", "task", "M001/S02/T01", "full_summary_md", "# Canonical summary\n\nFull Markdown retained.", "manifest-task-full-summary-preserved"],
+    ["create", "task", "M001/S02/T01", "narrative", "Canonical narrative retained from the manifest.", "manifest-task-narrative-preserved"],
+    ["create", "task-status", "M001/S02/T02", null, "cancelled", "legacy-skipped-means-cancelled"],
+    ["create", "task-status", "M001/S02/T01", null, "active", "manifest-task-status"],
+    ["preserve", "legacy-artifact", ".gsd/milestones/M001/slices/S02/S02-SUMMARY.md", "full_summary_md", { structured_value: null, preservation: "verbatim-artifact" }, "markdown-task-full-summary-md-loss"],
+    ["preserve", "legacy-artifact", ".gsd/milestones/M001/slices/S01/tasks/T01/T01-PLAN.md", "narrative", { structured_value: null, preservation: "verbatim-artifact" }, "markdown-task-narrative-loss"],
+    ["preserve", "legacy-evidence", "M001/summary-status", null, { status: "complete", authority: "summary-projection" }, "milestone-summary-precedence"],
+    ["create", "task-status", "M001/S01/T01", null, "pending", "nested-task-requires-matching-summary"],
+    ["create", "milestone-status", "M003", null, "parked", "parked-marker-without-summary"],
+    ["create", "slice", "M001/S03", null, { status: "pending", is_sketch: true, task_count: 0 }, "sketch-slice-has-no-task-inference"],
+    ["create", "slice-status", "M004/S01", null, "complete", "all-tasks-complete-with-slice-summary"],
+    ["create", "task-status", "M004/S01/T01", null, "complete", "matching-task-summary-attestation"],
+    ["create", "task-status", "M004/S01/T02", null, "complete", "flat-checkbox-complete"],
+  ]);
+  assert.deepEqual(diagnosisCodes("lifecycle-truth-matrix").sort(), [
+    "checkbox-only-completion-advisory",
+    "incomplete-success-signal",
+    "markdown-task-full-summary-md-loss",
+    "markdown-task-narrative-loss",
+    "projection-conflicts-with-adopted-lifecycle",
+    "projection-conflicts-with-adopted-lifecycle",
+    "slice-summary-upgrades-unchecked-roadmap",
+    "slices-depends-vs-slice-dependencies-conflict",
+    "summary-overrides-unchecked-task",
+    "task-summary-parent-conflict",
+  ]);
+  assert.ok(
+    lifecycle.changes.every(
+      (change) =>
+        change.action === "preserve" ||
+        (change.target.key !== "M001" && change.target.key !== "M001/S02"),
+    ),
+  );
+  assert.ok(
+    lifecycle.resolutions.some(
+      (resolution) =>
+        resolution.diagnosis_id === "diagnosis-dependency-representation-conflict" &&
+        resolution.disposition === "requires-user" &&
+        !("target" in resolution),
+    ),
+  );
+  const dependencyDiagnosis = lifecycle.diagnoses.find(
+    (diagnosis) => diagnosis.diagnosis_id === "diagnosis-dependency-representation-conflict",
+  );
+  assert.deepEqual(
+    dependencyDiagnosis && {
+      code: dependencyDiagnosis.code,
+      severity: dependencyDiagnosis.severity,
+      sourceId: dependencyDiagnosis.source_id,
+      rawValue: dependencyDiagnosis.raw_value,
+      message: dependencyDiagnosis.message,
+    },
+    {
+      code: "slices-depends-vs-slice-dependencies-conflict",
+      severity: "blocker",
+      sourceId: "lifecycle-dependency-database",
+      rawValue: {
+        redacted: true,
+        sha256: "sha256:5c06606b31c31c3dfab03ce04ee502731830f6220178e10b5d006815de8b06ba",
+      },
+      message:
+        "The database slices.depends column conflicts with the database slice_dependencies junction row; both representations are preserved.",
+    },
+  );
+
+  const assessments = oracle("assessment-matrix");
+  assert.ok(sourcePaths("assessment-matrix").includes(".gsd/state-manifest.json"));
+  assert.ok(sourcePaths("assessment-matrix").includes(".gsd/milestones/M001/slices/S08/S08-BACKFILL-ASSESSMENT.md"));
+  assert.ok(sourcePaths("assessment-matrix").includes(".gsd/milestones/M001/M001-VALIDATION.md"));
+  assert.deepEqual(
+    readManifest(`${corpusPath}assessment-matrix/source`)?.assessments,
+    [
+      {
+        path: "milestones/M001/slices/S01/S01-ASSESSMENT.md",
+        milestone_id: "M001",
+        slice_id: "S01",
+        task_id: null,
+        status: "pass",
+        scope: "run-uat",
+        full_content: "**Verdict:** PASS\n\nStructured UAT passed.",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        path: "milestones/M001/slices/S02/S02-ASSESSMENT.md",
+        milestone_id: "M001",
+        slice_id: "S02",
+        task_id: null,
+        status: "passed",
+        scope: "run-uat",
+        full_content: "**Verdict:** PASSED\n\nLegacy passed alias.",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        path: "milestones/M001/slices/S03/S03-ASSESSMENT.md",
+        milestone_id: "M001",
+        slice_id: "S03",
+        task_id: null,
+        status: "fail",
+        scope: "run-uat",
+        full_content: "**Verdict:** FAIL\n\nStructured UAT failed.",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        path: "milestones/M001/slices/S04/S04-ASSESSMENT.md",
+        milestone_id: "M001",
+        slice_id: "S04",
+        task_id: null,
+        status: "partial",
+        scope: "run-uat",
+        full_content: "**Verdict:** PARTIAL\n\nOne check passed and one failed.",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        path: "milestones/M001/M001-VALIDATION.md",
+        milestone_id: "M001",
+        slice_id: null,
+        task_id: null,
+        status: "needs-attention",
+        scope: "milestone-validation",
+        full_content:
+          "**Verdict:** NEEDS ATTENTION\n\nStructured milestone validation requires attention.",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        path: "milestones/M010/slices/S01/S01-ASSESSMENT.md",
+        milestone_id: "M010",
+        slice_id: "S01",
+        task_id: null,
+        status: "pass",
+        scope: "run-uat",
+        full_content: "**Verdict:** PASS\n\nClean structured UAT passed.",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        path: "milestones/M010/M010-VALIDATION.md",
+        milestone_id: "M010",
+        slice_id: null,
+        task_id: null,
+        status: "pass",
+        scope: "milestone-validation",
+        full_content: "**Verdict:** PASS\n\nClean structured milestone validation passed.",
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+  );
+  assert.deepEqual(changeRows("assessment-matrix"), [
+    ["preserve", "legacy-artifact", "M001/S08/backfill-assessment", null, { verdict: "pass", authority: "artifact-only" }, "fabricated-backfill-placeholder-not-uat"],
+    ["create", "assessment", "M010/milestone-validation", null, { scope: "milestone-validation", verdict: "pass", authority: "structured" }, "structured-milestone-validation"],
+    ["create", "assessment", "M010/S01/run-uat", null, { scope: "run-uat", verdict: "pass", authority: "structured" }, "structured-run-uat"],
+    ["preserve", "legacy-evidence", "M001/structured-milestone-validation-evidence", null, { scope: "milestone-validation", verdict: "needs-attention", authority: "structured" }, "structured-conflict-evidence"],
+    ["preserve", "legacy-artifact", "M001/S05/assessment-artifact", null, { verdict: null, authority: "artifact-only" }, "invalid-partial-verdict"],
+    ["preserve", "legacy-artifact", "M001/S06/assessment-artifact", null, { verdict: null, authority: "artifact-only" }, "malformed-assessment-verdict"],
+    ["preserve", "legacy-artifact", "M001/S07/assessment-artifact", null, { verdict: null, authority: "artifact-only" }, "missing-assessment-verdict"],
+    ["preserve", "legacy-artifact", "M001/roadmap-assessment", null, { verdict: "pass", authority: "planning-only" }, "roadmap-assessment-not-uat"],
+    ["create", "assessment", "M001/S03/run-uat", null, { scope: "run-uat", verdict: "fail", authority: "structured" }, "structured-run-uat"],
+    ["create", "assessment", "M001/S04/run-uat", null, { scope: "run-uat", verdict: "partial", authority: "structured", result_shape: "mixed" }, "structured-run-uat"],
+    ["preserve", "legacy-evidence", "M001/S01/structured-run-uat-evidence", null, { scope: "run-uat", verdict: "pass", authority: "structured", conflicted: true }, "structured-run-uat"],
+    ["create", "assessment", "M001/S02/run-uat", null, { scope: "run-uat", verdict: "pass", authority: "structured", legacy_verdict: "passed" }, "legacy-passed-normalized-to-pass"],
+    ["preserve", "legacy-artifact", "M001/S01/assessment-artifact", null, { verdict: "fail", authority: "artifact-only", precedence: 1 }, "assessment-artifact-not-structured-authority"],
+    ["preserve", "legacy-artifact", "M001/S01/uat-artifact", null, { verdict: "pass", authority: "artifact-only", precedence: 2 }, "uat-artifact-secondary-to-assessment"],
+    ["preserve", "legacy-artifact", "M001/file-only-validation", null, { verdict: "pass", authority: "artifact-only" }, "file-validation-not-authority"],
+  ]);
+  assert.deepEqual(diagnosisCodes("assessment-matrix"), [
+    "fabricated-backfill-placeholder-not-uat",
+    "file-validation-not-authority",
+    "invalid-partial-verdict",
+    "malformed-assessment-verdict",
+    "missing-assessment-verdict",
+    "roadmap-assessment-not-uat",
+    "structured-assessment-vs-artifact-conflict",
+    "structured-milestone-validation-vs-artifact-conflict",
+    "uat-vs-assessment-conflict",
+  ]);
+  assert.ok(!targetKeys("assessment-matrix").includes("M001/S01/run-uat"));
+  assert.ok(!targetKeys("assessment-matrix").includes("M001/milestone-validation"));
+  assert.ok(
+    assessments.resolutions
+      .filter((resolution) => resolution.disposition === "requires-user")
+      .every((resolution) => !("target" in resolution)),
+  );
+
+  const sources = cases.flatMap((corpusCase) => corpusCase.oracle.sources);
+  assert.deepEqual(
+    [...new Set(sources.map((source) => source.parser_id))].sort(),
+    [
+      "gsd-artifact-classifier",
+      "gsd-assessment-truth",
+      "gsd-decisions-table",
+      "gsd-flat-hierarchy",
+      "gsd-hybrid-hierarchy",
+      "gsd-lifecycle-truth",
+      "gsd-nested-hierarchy",
+      "gsd-requirements-sections",
+      "gsd-sqlite-target",
+    ],
   );
 });
