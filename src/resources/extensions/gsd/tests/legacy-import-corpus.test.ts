@@ -2,6 +2,7 @@
 // File Purpose: Contract tests for the versioned legacy-import surface registry and Preview envelope.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -107,6 +108,12 @@ function assertLegacyImportSurfaceRegistry(registry: readonly LegacyImportSurfac
   }
 }
 
+function surfaceById(id: string): LegacyImportSurface {
+  const surface = SUPPORTED_LEGACY_SURFACES.find((candidate) => candidate.id === id);
+  assert.ok(surface, `missing legacy surface ${id}`);
+  return surface;
+}
+
 test("legacy import surface registry pins every approved source and target family", () => {
   assertLegacyImportSurfaceRegistry(SUPPORTED_LEGACY_SURFACES);
   assert.deepEqual(
@@ -146,6 +153,60 @@ test("legacy import surface registry rejects duplicate IDs and missing metadata"
     () => assertLegacyImportSurfaceRegistry(missingMetadata),
     /database-targets: description is required/,
   );
+});
+
+test("legacy import surface registry pins worktree logs and legacy truth-loss scenarios", () => {
+  assert.deepEqual(surfaceById("jsonl-workflow-history").pathPatterns, [
+    ".gsd/event-log.jsonl",
+    ".gsd/event-log-M*.jsonl.archived",
+    ".gsd-worktrees/*/.gsd/event-log.jsonl",
+    ".gsd/worktrees/*/.gsd/event-log.jsonl",
+    "$GSD_STATE_DIR/projects/*/worktrees/*/.gsd/event-log.jsonl",
+  ]);
+
+  const lifecycleScenarios = surfaceById("gsd-lifecycle-truth").requiredScenarios;
+  for (const scenario of [
+    "manifest-task-narrative-preserved",
+    "manifest-task-full-summary-md-preserved",
+    "markdown-task-narrative-loss",
+    "markdown-task-full-summary-md-loss",
+    "slices-depends-vs-slice-dependencies-conflict",
+  ]) {
+    assert.ok(lifecycleScenarios.includes(scenario), `gsd-lifecycle-truth must cover ${scenario}`);
+  }
+
+  const assessmentScenarios = surfaceById("gsd-assessment-truth").requiredScenarios;
+  for (const scenario of [
+    "run-uat-assessment",
+    "roadmap-assessment",
+    "fabricated-backfill-placeholder-assessment",
+  ]) {
+    assert.ok(assessmentScenarios.includes(scenario), `gsd-assessment-truth must cover ${scenario}`);
+  }
+});
+
+test("legacy import surface registry matches workflow_import_applications Preview DDL", () => {
+  const schemaSource = readFileSync(
+    new URL("../db-projection-import-kernel-closeout-foundation-schema.ts", import.meta.url),
+    "utf8",
+  );
+  const previewCheck = schemaSource.match(
+    /preview_json TEXT NOT NULL CHECK \(([\s\S]*?)\n      \),\n      backup_ref/,
+  )?.[1];
+  assert.ok(previewCheck, "workflow_import_applications must retain its preview_json CHECK");
+
+  const scalarKeys = [...previewCheck.matchAll(/json_extract\(preview_json, '\$\.([a-z_]+)'\)/g)]
+    .map((match) => match[1]);
+  const countKeys = [...previewCheck.matchAll(/json_extract\(preview_json, '\$\.counts\.([a-z_]+)'\)/g)]
+    .map((match) => match[1]);
+  const arrayKeys = [...previewCheck.matchAll(/json_type\(preview_json, '\$\.([a-z_]+)'\) IS 'array'/g)]
+    .map((match) => match[1]);
+
+  assert.deepEqual(
+    [...scalarKeys, "counts", ...arrayKeys],
+    LEGACY_IMPORT_PREVIEW_TOP_LEVEL_KEYS,
+  );
+  assert.deepEqual(countKeys, LEGACY_IMPORT_PREVIEW_COUNT_KEYS);
 });
 
 test("legacy import surface registry pins the deterministic Preview envelope contract", () => {
