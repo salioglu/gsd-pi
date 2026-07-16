@@ -6,10 +6,10 @@
   "base_project_revision": 0,
   "base_authority_epoch": 0,
   "base_database_schema_version": 44,
-  "source_set_hash": "sha256:bb50ce358f599af13c80a02d1e3da76aa1b3ec418c5894fc9bda662ab657d3cc",
-  "change_set_hash": "sha256:1a6a86c67215e79ce351801370aa6afad1fc8758ee4adbc67b2a398ea8ca7ce6",
+  "source_set_hash": "sha256:d6be2fe9ebe133715e4ae55ae69020b27dd3dcef3f741121a86ecf0e3d2eba80",
+  "change_set_hash": "sha256:70462a42ec24f89007b6a86625122192bb2e407098f0dec12be6fd62ec4857ad",
   "counts": {
-    "create": 5,
+    "create": 7,
     "update": 0,
     "delete": 0,
     "preserve": 10,
@@ -111,7 +111,7 @@
       "kind": "json",
       "byte_size": 2937,
       "sha256": "sha256:cd5ec8c3176499705b7e32342efefb3d11d6b9c35001a186476ac74b9a09851a",
-      "parser_id": "gsd-assessment-truth",
+      "parser_id": "gsd-lifecycle-truth",
       "parser_version": "1",
       "encoding": "utf-8",
       "outcome": "mapped"
@@ -133,7 +133,7 @@
       "target": {"kind": "assessment", "key": "M010/milestone-validation"},
       "raw": {"source_id": "assessment-manifest", "locator": {"start_byte": 2737, "end_byte": 2743, "line": 18, "json_pointer": "/assessments/6/status"}, "value": "pass", "sha256": "sha256:fedce8e8af485c2586f54c43a9b656dc70b41eb9be8c64b69c98391847dd4baf"},
       "normalized": {"scope": "milestone-validation", "verdict": "pass", "authority": "structured"},
-      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-assessment-truth", "parser_version": "1"},
+      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
       "reason_code": "structured-milestone-validation"
     },
     {
@@ -142,7 +142,7 @@
       "target": {"kind": "assessment", "key": "M010/S01/run-uat"},
       "raw": {"source_id": "assessment-manifest", "locator": {"start_byte": 2492, "end_byte": 2498, "line": 17, "json_pointer": "/assessments/5/status"}, "value": "pass", "sha256": "sha256:fedce8e8af485c2586f54c43a9b656dc70b41eb9be8c64b69c98391847dd4baf"},
       "normalized": {"scope": "run-uat", "verdict": "pass", "authority": "structured"},
-      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-assessment-truth", "parser_version": "1"},
+      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
       "reason_code": "structured-run-uat"
     },
     {
@@ -151,7 +151,7 @@
       "target": {"kind": "legacy-evidence", "key": "M001/structured-milestone-validation-evidence"},
       "raw": {"source_id": "assessment-manifest", "locator": {"start_byte": 2178, "end_byte": 2195, "line": 16, "json_pointer": "/assessments/4/status"}, "value": "needs-attention", "sha256": "sha256:29f1a22d612ab120bd4d13736376bd7c471d0947f9408ac025a3f31179efeb27"},
       "normalized": {"scope": "milestone-validation", "verdict": "needs-attention", "authority": "structured"},
-      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-assessment-truth", "parser_version": "1"},
+      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
       "reason_code": "structured-conflict-evidence"
     },
     {
@@ -171,6 +171,24 @@
       "normalized": {"verdict": null, "authority": "artifact-only"},
       "provenance": {"source_id": "assessment-malformed", "parser_id": "gsd-assessment-truth", "parser_version": "1"},
       "reason_code": "malformed-assessment-verdict"
+    },
+    {
+      "change_id": "change-manifest-milestone-status-m001",
+      "action": "create",
+      "target": {"kind": "milestone-status", "key": "M001"},
+      "raw": {"source_id": "assessment-manifest", "locator": {"start_byte": 141, "end_byte": 149, "line": 5, "json_pointer": "/milestones/0/status"}, "value": "active", "sha256": "sha256:db0fb2bf5ebc424454c3e11b5ee8bfb43af24a52e561aa49e94143831dc6fd93"},
+      "normalized": "active",
+      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "reason_code": "manifest-milestone-status"
+    },
+    {
+      "change_id": "change-manifest-milestone-status-m010",
+      "action": "create",
+      "target": {"kind": "milestone-status", "key": "M010"},
+      "raw": {"source_id": "assessment-manifest", "locator": {"start_byte": 580, "end_byte": 588, "line": 6, "json_pointer": "/milestones/1/status"}, "value": "active", "sha256": "sha256:db0fb2bf5ebc424454c3e11b5ee8bfb43af24a52e561aa49e94143831dc6fd93"},
+      "normalized": "active",
+      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "reason_code": "manifest-milestone-status"
     },
     {
       "change_id": "change-missing-verdict-preserved",
@@ -196,7 +214,7 @@
       "target": {"kind": "assessment", "key": "M001/S03/run-uat"},
       "raw": {"source_id": "assessment-manifest", "locator": {"start_byte": 1673, "end_byte": 1679, "line": 14, "json_pointer": "/assessments/2/status"}, "value": "fail", "sha256": "sha256:34e382cfb94027bb2ebfad2bcd3affd03b843b3d285b73bc2760d19b65abd85f"},
       "normalized": {"scope": "run-uat", "verdict": "fail", "authority": "structured"},
-      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-assessment-truth", "parser_version": "1"},
+      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
       "reason_code": "structured-run-uat"
     },
     {
@@ -205,7 +223,7 @@
       "target": {"kind": "assessment", "key": "M001/S04/run-uat"},
       "raw": {"source_id": "assessment-manifest", "locator": {"start_byte": 1923, "end_byte": 1932, "line": 15, "json_pointer": "/assessments/3/status"}, "value": "partial", "sha256": "sha256:8ac24611cfe47c129e37108bc6adc6843c4fe8fb9c37c27fac8a1835ba660307"},
       "normalized": {"scope": "run-uat", "verdict": "partial", "authority": "structured", "result_shape": "mixed"},
-      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-assessment-truth", "parser_version": "1"},
+      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
       "reason_code": "structured-run-uat"
     },
     {
@@ -214,7 +232,7 @@
       "target": {"kind": "legacy-evidence", "key": "M001/S01/structured-run-uat-evidence"},
       "raw": {"source_id": "assessment-manifest", "locator": {"start_byte": 1171, "end_byte": 1177, "line": 12, "json_pointer": "/assessments/0/status"}, "value": "pass", "sha256": "sha256:fedce8e8af485c2586f54c43a9b656dc70b41eb9be8c64b69c98391847dd4baf"},
       "normalized": {"scope": "run-uat", "verdict": "pass", "authority": "structured", "conflicted": true},
-      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-assessment-truth", "parser_version": "1"},
+      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
       "reason_code": "structured-run-uat"
     },
     {
@@ -223,7 +241,7 @@
       "target": {"kind": "assessment", "key": "M001/S02/run-uat"},
       "raw": {"source_id": "assessment-manifest", "locator": {"start_byte": 1421, "end_byte": 1429, "line": 13, "json_pointer": "/assessments/1/status"}, "value": "passed", "sha256": "sha256:559532ad927252eed5d9b6687d55203a96b956d822055f4570f196a93a42bece"},
       "normalized": {"scope": "run-uat", "verdict": "pass", "authority": "structured", "legacy_verdict": "passed"},
-      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-assessment-truth", "parser_version": "1"},
+      "provenance": {"source_id": "assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
       "reason_code": "legacy-passed-normalized-to-pass"
     },
     {

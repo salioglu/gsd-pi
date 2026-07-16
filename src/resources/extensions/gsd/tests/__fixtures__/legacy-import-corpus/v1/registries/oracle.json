@@ -7,9 +7,9 @@
   "base_authority_epoch": 0,
   "base_database_schema_version": 44,
   "source_set_hash": "sha256:e54a5e612ecf1065a508f3e9c9efac596fb5a3c7756bd984a88183587701ecb6",
-  "change_set_hash": "sha256:8981e1585f4dd00158223da0b785bacdfa078844623bb7bfee804a2c43acc7fe",
+  "change_set_hash": "sha256:a1dadeaf15c01c2aa25e2cf1793dfd8f51a805ba1c6cdfcd9e47fe1bb7f3ef42",
   "counts": {
-    "create": 6,
+    "create": 5,
     "update": 0,
     "delete": 0,
     "preserve": 2,
@@ -210,42 +210,6 @@
         "parser_version": "1"
       },
       "reason_code": "categorical-requirement-id"
-    },
-    {
-      "change_id": "change-requirement-r001",
-      "action": "create",
-      "target": {
-        "kind": "requirement",
-        "key": "R001"
-      },
-      "raw": {
-        "source_id": "source-requirements",
-        "locator": {
-          "start_byte": 27,
-          "end_byte": 368,
-          "line": 5
-        },
-        "value": "### R001 — Durable project authority\n- Class: core-capability\n- Status: active\n- Description: Persist workflow truth in one local database.\n- Why it matters: Agents must resume without projection drift.\n- Source: user\n- Primary owning slice: M001/S01\n- Supporting slices: M001/S02\n- Validation: unmapped\n- Notes: Markdown is a projection.\n",
-        "sha256": "sha256:b35a988b5419bff3951e1f30b60dd48a4b50b970bc4e2cb4b91a8897d3a547c8"
-      },
-      "normalized": {
-        "id": "R001",
-        "class": "core-capability",
-        "status": "active",
-        "description": "Persist workflow truth in one local database.",
-        "why": "Agents must resume without projection drift.",
-        "source": "user",
-        "primary_owner": "M001/S01",
-        "supporting_slices": "M001/S02",
-        "validation": "unmapped",
-        "notes": "Markdown is a projection."
-      },
-      "provenance": {
-        "source_id": "source-requirements",
-        "parser_id": "gsd-requirements-sections",
-        "parser_version": "1"
-      },
-      "reason_code": "canonical-active-requirement"
     },
     {
       "change_id": "change-requirement-r030",

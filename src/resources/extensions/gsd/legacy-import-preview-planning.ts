@@ -1,76 +1,31 @@
 // Project/App: gsd-pi
 // File Purpose: Pure actionless interpretation of captured legacy .planning bytes.
 
-import { isUtf8 } from "node:buffer";
-
 import type {
-  LegacyImportPreviewDiagnosis,
-  LegacyImportPreviewResolution,
-  LegacyImportPreviewSource,
-  LegacyImportProvenance,
-  LegacyImportRawValue,
   LegacyImportTarget,
   LegacyImportValue,
-  LegacyImportSha256,
 } from "./legacy-import-contract.js";
-import type {
-  LegacyImportSourceCapture,
-  LegacyImportSourceEntry,
-} from "./legacy-import-preview-source.js";
 import {
-  canonicalLegacyImportJson,
-  hashLegacyImportBytes,
-  hashLegacyImportValue,
-} from "./legacy-import-preview.js";
+  addLegacyImportCandidate,
+  addLegacyImportDiagnosis,
+  decodeLegacyImportCapture,
+  finalizeLegacyImportInterpretation,
+  type LegacyImportDecodedSourceFile,
+  type LegacyImportInterpretation,
+  type LegacyImportInterpretationCandidate,
+  type LegacyImportPendingCandidate,
+  type LegacyImportPendingDiagnosis,
+  type LegacyImportSourceLine,
+} from "./legacy-import-preview-interpretation.js";
+import type { LegacyImportSourceCapture } from "./legacy-import-preview-source.js";
 
-export interface LegacyImportPlanningCandidate {
-  candidate_id: LegacyImportSha256;
-  ordinal: number;
-  classification: "compare" | "preserve";
-  target: LegacyImportTarget;
-  raw: LegacyImportRawValue;
-  normalized: LegacyImportValue;
-  provenance: LegacyImportProvenance;
-  reason_code: string;
-}
+export type LegacyImportPlanningCandidate = LegacyImportInterpretationCandidate;
+export type LegacyImportPlanningInterpretation = LegacyImportInterpretation;
 
-export interface LegacyImportPlanningInterpretation {
-  sources: readonly LegacyImportPreviewSource[];
-  candidates: readonly LegacyImportPlanningCandidate[];
-  diagnoses: readonly LegacyImportPreviewDiagnosis[];
-  resolutions: readonly LegacyImportPreviewResolution[];
-}
-
-interface Line {
-  text: string;
-  start: number;
-  end: number;
-  line: number;
-}
-
-interface SourceFile {
-  entry: LegacyImportSourceEntry;
-  bytes: Buffer;
-  text: string;
-  lines: readonly Line[];
-  parserId: string;
-  kind: "markdown" | "json";
-  encoding: "utf-8" | "binary";
-  outcome: "mapped" | "preserved" | "unparsed" | "ignored-with-reason";
-}
-
-interface PendingCandidate {
-  classification: "compare" | "preserve";
-  target: LegacyImportTarget;
-  raw: LegacyImportRawValue;
-  normalized: LegacyImportValue;
-  provenance: LegacyImportProvenance;
-  reason_code: string;
-}
-
-interface PendingDiagnosis extends LegacyImportPreviewDiagnosis {
-  resolution: Omit<LegacyImportPreviewResolution, "diagnosis_id">;
-}
+type Line = LegacyImportSourceLine;
+type SourceFile = LegacyImportDecodedSourceFile;
+type PendingCandidate = LegacyImportPendingCandidate;
+type PendingDiagnosis = LegacyImportPendingDiagnosis;
 
 interface FlatMembership {
   phaseTargets: ReadonlyMap<string, string>;
@@ -81,62 +36,6 @@ const PARSER_VERSION = "1";
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function candidateOrderValue(candidate: PendingCandidate): LegacyImportValue {
-  return [
-    candidate.target.kind,
-    candidate.target.key,
-    candidate.target.field === undefined ? 0 : 1,
-    candidate.target.field ?? "",
-    candidate.raw.source_id,
-    candidate.raw.locator.start_byte,
-    candidate.reason_code,
-    candidate.classification,
-  ];
-}
-
-function deepFreeze<T>(value: T, seen = new Set<object>()): T {
-  if (value === null || typeof value !== "object" || seen.has(value)) return value;
-  seen.add(value);
-  for (const child of Object.values(value)) deepFreeze(child, seen);
-  return Object.freeze(value);
-}
-
-function linesFor(bytes: Buffer): Line[] {
-  const lines: Line[] = [];
-  let start = 0;
-  let number = 1;
-  for (let index = 0; index <= bytes.length; index += 1) {
-    if (index !== bytes.length && bytes[index] !== 10) continue;
-    let end = index;
-    if (end > start && bytes[end - 1] === 13) end -= 1;
-    if (start < bytes.length || index < bytes.length) {
-      lines.push({ text: bytes.subarray(start, end).toString("utf8"), start, end, line: number });
-    }
-    start = index + 1;
-    number += 1;
-  }
-  return lines;
-}
-
-function lineAtByte(file: SourceFile, start: number): number {
-  let line = 1;
-  for (const candidate of file.lines) {
-    if (candidate.start > start) break;
-    line = candidate.line;
-  }
-  return line;
-}
-
-function rawValue(file: SourceFile, start = 0, end = file.bytes.length): LegacyImportRawValue {
-  const bytes = file.bytes.subarray(start, end);
-  return {
-    source_id: file.entry.source_id,
-    locator: { start_byte: start, end_byte: end, line: lineAtByte(file, start) },
-    value: bytes.toString("utf8"),
-    sha256: hashLegacyImportBytes(bytes),
-  };
 }
 
 function parserFor(path: string): string {
@@ -160,141 +59,17 @@ function parserFor(path: string): string {
 }
 
 function sourceFiles(capture: LegacyImportSourceCapture): SourceFile[] {
-  const { capture_hash: captureHash, ...captureValue } = capture;
-  if (capture.capture_version !== 1 || hashLegacyImportValue(captureValue) !== captureHash) {
-    throw new Error("captured planning source set identity is inconsistent");
-  }
-  const payloads = new Map<string, LegacyImportSourceCapture["payloads"][number]>();
-  for (const payload of capture.payloads) {
-    if (payloads.has(payload.payload_id)) throw new Error(`captured planning payload ${payload.payload_id} is duplicated`);
-    payloads.set(payload.payload_id, payload);
-  }
-  const sourceIds = new Set<string>();
-  const logicalPaths = new Set<string>();
-  const roots = new Map(capture.roots.map((root) => [root.id, root]));
-  if (roots.size !== capture.roots.length) throw new Error("captured planning roots are duplicated");
-  return capture.entries.flatMap((entry) => {
-    const root = roots.get(entry.root_id);
-    if (
-      root === undefined
-      || root.observed !== "present"
-      || !(
-        entry.logical_path === root.logical_path
-        || entry.logical_path.startsWith(`${root.logical_path}/`)
-      )
-      || entry.source_id !== hashLegacyImportValue({
-        source_capture_version: 1,
-        root_kind: root.kind,
-        logical_path: entry.logical_path,
-      })
-    ) throw new Error(`captured planning source ${entry.logical_path} identity is inconsistent`);
-    if (sourceIds.has(entry.source_id) || logicalPaths.has(entry.logical_path)) {
-      throw new Error(`captured planning source ${entry.logical_path} is duplicated`);
-    }
-    sourceIds.add(entry.source_id);
-    logicalPaths.add(entry.logical_path);
-    if ((entry.kind !== "file" && entry.kind !== "symlink") || !entry.logical_path.startsWith(".planning/")) {
-      return [];
-    }
-    if (entry.payload_id === undefined || entry.byte_size === undefined || entry.sha256 === undefined) {
-      throw new Error(`captured planning source ${entry.logical_path} lacks retained bytes`);
-    }
-    const payload = payloads.get(entry.payload_id);
-    if (payload === undefined) throw new Error(`captured planning payload ${entry.payload_id} is missing`);
-    const expectedPayloadId = hashLegacyImportValue({
-      source_capture_version: 1,
-      kind: entry.kind,
-      physical_identity: entry.physical_identity,
-    });
-    const bytes = Buffer.from(payload.bytes_base64, "base64");
-    if (
-      entry.payload_id !== expectedPayloadId
-      || payload.payload_id !== expectedPayloadId
-      || bytes.toString("base64") !== payload.bytes_base64
-      || payload.kind !== entry.kind
-      || bytes.length !== payload.byte_size
-      || bytes.length !== entry.byte_size
-      || hashLegacyImportBytes(bytes) !== payload.sha256
-      || payload.sha256 !== entry.sha256
-    ) throw new Error(`captured planning payload ${entry.payload_id} is inconsistent`);
-    const validUtf8 = entry.kind === "file" && isUtf8(bytes);
-    return [{
-      entry,
-      bytes,
-      text: validUtf8 ? bytes.toString("utf8") : "",
-      lines: validUtf8 ? linesFor(bytes) : [],
-      parserId: parserFor(entry.logical_path),
-      kind: entry.logical_path.endsWith(".json") ? "json" as const : "markdown" as const,
-      encoding: validUtf8 ? "utf-8" as const : "binary" as const,
-      outcome: "mapped" as const,
-    }];
-  }).sort((left, right) => compareText(left.entry.logical_path, right.entry.logical_path));
-}
-
-function sourceRecord(file: SourceFile): LegacyImportPreviewSource {
-  return {
-    source_id: file.entry.source_id,
-    path: file.entry.logical_path,
-    kind: file.kind,
-    byte_size: file.bytes.length,
-    sha256: file.entry.sha256!,
-    parser_id: file.parserId,
-    parser_version: PARSER_VERSION,
-    encoding: file.encoding,
-    outcome: file.outcome,
-  };
-}
-
-function addCandidate(
-  candidates: PendingCandidate[],
-  file: SourceFile,
-  target: LegacyImportTarget,
-  normalized: LegacyImportValue,
-  reasonCode: string,
-  start = 0,
-  end = file.bytes.length,
-  classification: "compare" | "preserve" = "compare",
-): void {
-  candidates.push({
-    classification,
-    target,
-    raw: rawValue(file, start, end),
-    normalized,
-    provenance: {
-      source_id: file.entry.source_id,
-      parser_id: file.parserId,
-      parser_version: PARSER_VERSION,
-    },
-    reason_code: reasonCode,
+  return decodeLegacyImportCapture(capture, {
+    sourceLabel: "planning",
+    includes: (entry) => entry.logical_path.startsWith(".planning/"),
+    parserId: parserFor,
+    kind: (path) => path.endsWith(".json") ? "json" : "markdown",
+    parserVersion: PARSER_VERSION,
   });
 }
 
-function addDiagnosis(
-  diagnoses: PendingDiagnosis[],
-  file: SourceFile,
-  code: string,
-  severity: "info" | "warning" | "blocker",
-  message: string,
-  disposition: "mapped" | "preserved" | "requires-user" | "unsupported",
-  start = 0,
-  end = file.bytes.length,
-  target?: LegacyImportTarget,
-  raw: LegacyImportValue = file.bytes.subarray(start, end).toString("utf8"),
-): void {
-  const identity = {
-    code,
-    severity,
-    source_id: file.entry.source_id,
-    locator: { start_byte: start, end_byte: end, line: lineAtByte(file, start) },
-    raw_value: raw,
-    message,
-  };
-  diagnoses.push({
-    diagnosis_id: hashLegacyImportValue(identity),
-    ...identity,
-    resolution: { disposition, ...(target === undefined ? {} : { target }) },
-  });
-}
+const addCandidate = addLegacyImportCandidate;
+const addDiagnosis = addLegacyImportDiagnosis;
 
 function wholeFilePreservation(
   candidates: PendingCandidate[],
@@ -1254,29 +1029,5 @@ export function interpretLegacyPlanningCapture(
     }
   }
 
-  const orderedPending = candidates.sort((left, right) => compareText(
-    canonicalLegacyImportJson(candidateOrderValue(left)),
-    canonicalLegacyImportJson(candidateOrderValue(right)),
-  ));
-  const finalizedCandidates = orderedPending.map((candidate, index): LegacyImportPlanningCandidate => ({
-    candidate_id: hashLegacyImportValue(candidate),
-    ordinal: index + 1,
-    ...candidate,
-  }));
-  const orderedDiagnoses = diagnoses.sort((left, right) => {
-    const { resolution: _leftResolution, ...leftValue } = left;
-    const { resolution: _rightResolution, ...rightValue } = right;
-    return compareText(canonicalLegacyImportJson(leftValue), canonicalLegacyImportJson(rightValue));
-  });
-  const finalizedDiagnoses = orderedDiagnoses.map(({ resolution: _resolution, ...diagnosis }) => diagnosis);
-  const resolutions = orderedDiagnoses.map((diagnosis): LegacyImportPreviewResolution => ({
-    diagnosis_id: diagnosis.diagnosis_id,
-    ...diagnosis.resolution,
-  }));
-  return deepFreeze({
-    sources: files.map(sourceRecord),
-    candidates: finalizedCandidates,
-    diagnoses: finalizedDiagnoses,
-    resolutions,
-  });
+  return finalizeLegacyImportInterpretation(files, candidates, diagnoses);
 }

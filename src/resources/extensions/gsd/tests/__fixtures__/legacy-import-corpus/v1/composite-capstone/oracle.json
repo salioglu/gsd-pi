@@ -6,10 +6,10 @@
   "base_project_revision": 27,
   "base_authority_epoch": 3,
   "base_database_schema_version": 44,
-  "source_set_hash": "sha256:060402a7bc26f3b869dc224f2194101cb9712200399e7951fb5bb82e1b49a8a9",
-  "change_set_hash": "sha256:2caf378b56fadca2116319210cdc808166a03d4bac92f778c7d730a6e7897906",
+  "source_set_hash": "sha256:2c70aab2c384fac876f719307f88a09b81273bda71e1d4ffbf0d2c3037f2a042",
+  "change_set_hash": "sha256:30b03a603b0ecdcdb47a6c4038660455fe172f00d3c297e2f7fc7f49d8f95730",
   "counts": {
-    "create": 6,
+    "create": 7,
     "update": 0,
     "delete": 0,
     "preserve": 5,
@@ -100,7 +100,7 @@
       "kind": "markdown",
       "byte_size": 161,
       "sha256": "sha256:6d0adcd67b778c95bdfa3fda55ff7b8ff8e2a9a1ba1e0b9d7970eaa1a29f62a1",
-      "parser_id": "gsd-nested-hierarchy",
+      "parser_id": "gsd-hybrid-hierarchy",
       "parser_version": "1",
       "encoding": "utf-8",
       "outcome": "mapped"
@@ -122,7 +122,7 @@
       "kind": "json",
       "byte_size": 909,
       "sha256": "sha256:cc0709715dd557cd7d98b5571d5e2365e25795b45ec80636ed9b4d5acc79b27c",
-      "parser_id": "gsd-assessment-truth",
+      "parser_id": "gsd-lifecycle-truth",
       "parser_version": "1",
       "encoding": "utf-8",
       "outcome": "mapped"
@@ -173,7 +173,7 @@
         "sha256": "sha256:fedce8e8af485c2586f54c43a9b656dc70b41eb9be8c64b69c98391847dd4baf"
       },
       "normalized": { "scope": "run-uat", "verdict": "pass", "authority": "structured" },
-      "provenance": { "source_id": "capstone-assessment-manifest", "parser_id": "gsd-assessment-truth", "parser_version": "1" },
+      "provenance": { "source_id": "capstone-assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1" },
       "reason_code": "structured-run-uat"
     },
     {
@@ -196,7 +196,7 @@
         "made_by": "user"
       },
       "provenance": { "source_id": "capstone-decisions", "parser_id": "gsd-decisions-table", "parser_version": "1" },
-      "reason_code": "capstone-clean-decision"
+      "reason_code": "scope-first-decision-row"
     },
     {
       "change_id": "change-create-milestone-m701",
@@ -222,9 +222,23 @@
         "value": "# M702: Clean database adoption",
         "sha256": "sha256:10abf5b77f0df556069472d1d56edad36a168e44bad7c1f9d346f735d61a3ab8"
       },
-      "normalized": { "id": "M702", "layout": "nested", "status": "active", "title": "Clean database adoption" },
-      "provenance": { "source_id": "capstone-nested-m702", "parser_id": "gsd-nested-hierarchy", "parser_version": "1" },
-      "reason_code": "capstone-clean-gsd-milestone"
+      "normalized": { "id": "M702", "layout": "nested", "title": "Clean database adoption" },
+      "provenance": { "source_id": "capstone-nested-m702", "parser_id": "gsd-hybrid-hierarchy", "parser_version": "1" },
+      "reason_code": "hybrid-non-overlap"
+    },
+    {
+      "change_id": "change-create-milestone-status-m702",
+      "action": "create",
+      "target": { "kind": "milestone-status", "key": "M702" },
+      "raw": {
+        "source_id": "capstone-assessment-manifest",
+        "locator": { "start_byte": 141, "end_byte": 149, "line": 5, "json_pointer": "/milestones/0/status" },
+        "value": "active",
+        "sha256": "sha256:db0fb2bf5ebc424454c3e11b5ee8bfb43af24a52e561aa49e94143831dc6fd93"
+      },
+      "normalized": "active",
+      "provenance": { "source_id": "capstone-assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1" },
+      "reason_code": "manifest-milestone-status"
     },
     {
       "change_id": "change-create-requirement-r701",
@@ -238,7 +252,7 @@
       },
       "normalized": { "id": "R701", "description": "Preview before apply", "primary_owner": "M702/S01", "status": "active" },
       "provenance": { "source_id": "capstone-requirements", "parser_id": "gsd-requirements-sections", "parser_version": "1" },
-      "reason_code": "capstone-clean-requirement"
+      "reason_code": "colon-heading-requirement"
     },
     {
       "change_id": "change-create-slice-m702-s01",
@@ -251,8 +265,8 @@
         "sha256": "sha256:5a93350366aabf2fd9f4e1900cb121f084d899fdac8db5b53bf87e1648d40bdb"
       },
       "normalized": { "id": "S01", "milestone_id": "M702", "status": "complete", "title": "Classify legacy evidence" },
-      "provenance": { "source_id": "capstone-nested-m702", "parser_id": "gsd-nested-hierarchy", "parser_version": "1" },
-      "reason_code": "capstone-clean-gsd-lifecycle"
+      "provenance": { "source_id": "capstone-nested-m702", "parser_id": "gsd-hybrid-hierarchy", "parser_version": "1" },
+      "reason_code": "hybrid-non-overlap"
     },
     {
       "change_id": "change-preserve-history",

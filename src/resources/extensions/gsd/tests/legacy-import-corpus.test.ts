@@ -477,10 +477,10 @@ test("legacy corpus manifest seals exact structure and aggregate accounting", ()
   assert.deepEqual(manifest.totals, {
     cases: 26,
     sources: 179,
-    changes: 204,
+    changes: 205,
     diagnoses: 94,
     resolutions: 94,
-    create: 102,
+    create: 103,
     update: 3,
     delete: 1,
     preserve: 98,
@@ -1677,14 +1677,14 @@ test("legacy corpus gsd truth preserves hierarchy evidence and refuses competing
 
   assert.ok(targetKeys("registries").includes("D001"));
   assert.ok(targetKeys("registries").includes("D002"));
-  assert.ok(targetKeys("registries").includes("R001"));
+  assert.ok(!targetKeys("registries").includes("R001"));
   assert.ok(targetKeys("registries").includes("NET-01"));
   assert.deepEqual(
     oracle("registries").changes
       .filter((change) => change.action === "create")
       .map((change) => change.target.key)
       .sort(),
-    ["D001", "D002", "NET-01", "R001", "R030", "R040"],
+    ["D001", "D002", "NET-01", "R030", "R040"],
   );
   assert.deepEqual(diagnosisCodes("registries").sort(), [
     "duplicate-requirement-id",
@@ -1708,7 +1708,6 @@ test("legacy corpus gsd truth preserves hierarchy evidence and refuses competing
     ["preserve", "legacy-decision-row", "D003", null, { id: "D003", when_context: "M003", scope: "storage", decision: "Refine durability (amends D002)", choice: "Full sync", rationale: "Safer checkpoints", revisable: "Yes", amends: "D002", unresolved_field: "made_by" }, "invalid-made-by-preserved"],
     ["preserve", "legacy-decision-fragment", ".gsd/DECISIONS.md#freeform", null, { path: ".gsd/DECISIONS.md", fragment: "freeform", preservation: "verbatim" }, "freeform-decision-content-preserved"],
     ["create", "requirement", "NET-01", null, { id: "NET-01", class: "", status: "validated", description: "The offline handoff path has executable proof.", why: "", source: "", primary_owner: "", supporting_slices: "", validation: "M002/S01", notes: "Focused handoff test passed." }, "categorical-requirement-id"],
-    ["create", "requirement", "R001", null, { id: "R001", class: "core-capability", status: "active", description: "Persist workflow truth in one local database.", why: "Agents must resume without projection drift.", source: "user", primary_owner: "M001/S01", supporting_slices: "M001/S02", validation: "unmapped", notes: "Markdown is a projection." }, "canonical-active-requirement"],
     ["create", "requirement", "R030", null, { id: "R030", class: "", status: "deferred", description: "Replicate canonical state to another machine.", why: "", source: "", primary_owner: "none", supporting_slices: "none", validation: "unmapped", notes: "" }, "requirement-field-aliases-normalized"],
     ["create", "requirement", "R040", null, { id: "R040", class: "", status: "out-of-scope", description: "Do not require a hosted service.", why: "", source: "", primary_owner: "none", supporting_slices: "none", validation: "n/a", notes: "" }, "canonical-out-of-scope-requirement"],
   ]);
@@ -1901,6 +1900,8 @@ test("legacy corpus gsd truth preserves hierarchy evidence and refuses competing
     ["preserve", "legacy-evidence", "M001/structured-milestone-validation-evidence", null, { scope: "milestone-validation", verdict: "needs-attention", authority: "structured" }, "structured-conflict-evidence"],
     ["preserve", "legacy-artifact", "M001/S05/assessment-artifact", null, { verdict: null, authority: "artifact-only" }, "invalid-partial-verdict"],
     ["preserve", "legacy-artifact", "M001/S06/assessment-artifact", null, { verdict: null, authority: "artifact-only" }, "malformed-assessment-verdict"],
+    ["create", "milestone-status", "M001", null, "active", "manifest-milestone-status"],
+    ["create", "milestone-status", "M010", null, "active", "manifest-milestone-status"],
     ["preserve", "legacy-artifact", "M001/S07/assessment-artifact", null, { verdict: null, authority: "artifact-only" }, "missing-assessment-verdict"],
     ["preserve", "legacy-artifact", "M001/roadmap-assessment", null, { verdict: "pass", authority: "planning-only" }, "roadmap-assessment-not-uat"],
     ["create", "assessment", "M001/S03/run-uat", null, { scope: "run-uat", verdict: "fail", authority: "structured" }, "structured-run-uat"],
@@ -2649,20 +2650,21 @@ test("legacy corpus capstone classifies database targets and changes without app
     [".gsd/event-log.jsonl", "gsd-workflow-events", "preserved"],
     [".gsd/gsd.db", "gsd-sqlite-target", "mapped"],
     [".gsd/milestones/M007-capstone-alpha/M007-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
-    [".gsd/milestones/M702-clean/M702-ROADMAP.md", "gsd-nested-hierarchy", "mapped"],
+    [".gsd/milestones/M702-clean/M702-ROADMAP.md", "gsd-hybrid-hierarchy", "mapped"],
     [".gsd/phases/07-capstone-beta/07-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
-    [".gsd/state-manifest.json", "gsd-assessment-truth", "mapped"],
+    [".gsd/state-manifest.json", "gsd-lifecycle-truth", "mapped"],
     [".gsd/workflow-runs/capstone/run-001/GRAPH.yaml", "gsd-workflow-run-graph", "preserved"],
     [".gsd/workflows/capstone.yaml", "gsd-workflow-definition", "preserved"],
     [".planning/ROADMAP.md", "planning-roadmap-parser", "mapped"],
   ]);
   assert.deepEqual(changeRows("composite-capstone"), [
     ["change-create-assessment-m702-s01-run-uat", "create", "assessment", "M702/S01/run-uat", null, "structured-run-uat"],
-    ["change-create-decision-d701", "create", "decision", "D701", null, "capstone-clean-decision"],
+    ["change-create-decision-d701", "create", "decision", "D701", null, "scope-first-decision-row"],
     ["change-create-milestone-m701", "create", "milestone", "M701", null, "capstone-clean-planning-milestone"],
-    ["change-create-milestone-m702", "create", "milestone", "M702", null, "capstone-clean-gsd-milestone"],
-    ["change-create-requirement-r701", "create", "requirement", "R701", null, "capstone-clean-requirement"],
-    ["change-create-slice-m702-s01", "create", "slice", "M702/S01", null, "capstone-clean-gsd-lifecycle"],
+    ["change-create-milestone-m702", "create", "milestone", "M702", null, "hybrid-non-overlap"],
+    ["change-create-milestone-status-m702", "create", "milestone-status", "M702", null, "manifest-milestone-status"],
+    ["change-create-requirement-r701", "create", "requirement", "R701", null, "colon-heading-requirement"],
+    ["change-create-slice-m702-s01", "create", "slice", "M702/S01", null, "hybrid-non-overlap"],
     ["change-preserve-history", "preserve", "legacy-workflow-event", ".gsd/event-log.jsonl#L001", null, "history-evidence-only"],
     ["change-preserve-knowledge", "preserve", "legacy-knowledge-source", ".gsd/KNOWLEDGE.md", null, "knowledge-evidence-only"],
     ["change-preserve-workflow-definition", "preserve", "legacy-workflow-definition", ".gsd/workflows/capstone.yaml", null, "workflow-definition-evidence-only"],
@@ -2678,9 +2680,9 @@ test("legacy corpus capstone classifies database targets and changes without app
     { diagnosis_id: "diagnosis-hybrid-m007-duplicate-logical-milestone", disposition: "requires-user" },
   ]);
   assert.deepEqual(oracle("composite-capstone").counts, {
-    create: 6, update: 0, delete: 0, preserve: 5, unparsed: 2, unresolved: 2,
+    create: 7, update: 0, delete: 0, preserve: 5, unparsed: 2, unresolved: 2,
   });
-  assert.equal(semanticHash("composite-capstone"), "sha256:a48305cde510b614171a68da43a655fd725d60f3d3c8eef3c6fa64d89e5b7950");
+  assert.equal(semanticHash("composite-capstone"), "sha256:47174a2b4b09f24ac287aa0b9c95571a7048ab2ac40ce815b97978c7dbb86efe");
   assert.ok(!oracle("composite-capstone").changes.some((change) => change.target.key.includes("M007")));
   assert.ok(oracle("composite-capstone").changes
     .filter((change) => change.target.kind.startsWith("legacy-"))
@@ -2747,8 +2749,8 @@ test("legacy corpus capstone classifies database targets and changes without app
         "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       ],
       [
-        "sha256:060402a7bc26f3b869dc224f2194101cb9712200399e7951fb5bb82e1b49a8a9",
-        "sha256:2caf378b56fadca2116319210cdc808166a03d4bac92f778c7d730a6e7897906",
+        "sha256:2c70aab2c384fac876f719307f88a09b81273bda71e1d4ffbf0d2c3037f2a042",
+        "sha256:30b03a603b0ecdcdb47a6c4038660455fe172f00d3c297e2f7fc7f49d8f95730",
         "sha256:48e704be969fea42c819b8ca27876897f1228bdcffb462dc041ca9f6d801832a",
         "sha256:309d793c6e8788d9c245c52c70fc059e0e389794fef78f8cefb79289a017ccd9",
       ],

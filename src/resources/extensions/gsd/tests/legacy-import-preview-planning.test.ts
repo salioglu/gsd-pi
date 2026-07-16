@@ -470,6 +470,89 @@ describe("legacy preview planning", () => {
     assert.throws(() => interpretLegacyPlanningCapture(rootCapture), /source .* identity is inconsistent/u);
   });
 
+  test("legacy preview planning validates the complete retained capture before selecting sources", (t) => {
+    const base = temporaryDirectory(t);
+    const planning = join(base, ".planning");
+    mkdirSync(planning);
+    writeFileSync(join(base, "outside.md"), "# External evidence\n");
+    writeFileSync(join(planning, "ROADMAP.md"), "# Roadmap\n");
+    const capture = captureLegacyImportSourceSet({
+      roots: [
+        { id: "planning", kind: "project", physical_path: planning, logical_path: ".planning", presence: "required" },
+        { id: "outside", kind: "external", physical_path: join(base, "outside.md"), logical_path: "outside.md", presence: "required" },
+      ],
+    });
+
+    const excludedPayloadCapture = structuredClone(capture);
+    const excludedEntry = excludedPayloadCapture.entries.find((entry) => entry.root_id === "outside")!;
+    const excludedPayload = excludedPayloadCapture.payloads.find(
+      (payload) => payload.payload_id === excludedEntry.payload_id,
+    )!;
+    excludedPayload.bytes_base64 = Buffer.from("# Corrupted external evidence\n").toString("base64");
+    const { capture_hash: _excludedHash, ...excludedValue } = excludedPayloadCapture;
+    excludedPayloadCapture.capture_hash = hashLegacyImportValue(excludedValue);
+    assert.throws(() => interpretLegacyPlanningCapture(excludedPayloadCapture), /captured planning payload/u);
+
+    const orphanCapture = structuredClone(capture);
+    orphanCapture.entries = orphanCapture.entries.filter((entry) => entry.root_id !== "outside");
+    const { capture_hash: _orphanHash, ...orphanValue } = orphanCapture;
+    orphanCapture.capture_hash = hashLegacyImportValue(orphanValue);
+    assert.throws(() => interpretLegacyPlanningCapture(orphanCapture), /captured planning payload .* is orphaned/u);
+
+    const directoryMetadataCapture = structuredClone(capture);
+    const directoryEntry = directoryMetadataCapture.entries.find((entry) => entry.kind === "directory")!;
+    directoryEntry.byte_size = 0;
+    const { capture_hash: _directoryHash, ...directoryValue } = directoryMetadataCapture;
+    directoryMetadataCapture.capture_hash = hashLegacyImportValue(directoryValue);
+    assert.throws(() => interpretLegacyPlanningCapture(directoryMetadataCapture), /source .* metadata is inconsistent/u);
+
+    const removedRootCapture = structuredClone(capture);
+    const removedPayloadIds = new Set(removedRootCapture.entries
+      .filter((entry) => entry.root_id === "outside")
+      .map((entry) => entry.payload_id)
+      .filter((payloadId) => payloadId !== undefined));
+    removedRootCapture.entries = removedRootCapture.entries.filter((entry) => entry.root_id !== "outside");
+    removedRootCapture.payloads = removedRootCapture.payloads.filter(
+      (payload) => !removedPayloadIds.has(payload.payload_id),
+    );
+    const { capture_hash: _removedRootHash, ...removedRootValue } = removedRootCapture;
+    removedRootCapture.capture_hash = hashLegacyImportValue(removedRootValue);
+    assert.throws(() => interpretLegacyPlanningCapture(removedRootCapture), /root outside lacks a retained root entry/u);
+
+    const invalidKindCapture = structuredClone(capture);
+    (invalidKindCapture.entries[0] as unknown as { kind: string }).kind = "device";
+    const { capture_hash: _invalidKindHash, ...invalidKindValue } = invalidKindCapture;
+    invalidKindCapture.capture_hash = hashLegacyImportValue(invalidKindValue);
+    assert.throws(() => interpretLegacyPlanningCapture(invalidKindCapture), /source .* identity is inconsistent/u);
+
+    const missingRootMetadataCapture = structuredClone(capture);
+    delete missingRootMetadataCapture.roots[0].physical_identity;
+    const { capture_hash: _missingRootHash, ...missingRootValue } = missingRootMetadataCapture;
+    missingRootMetadataCapture.capture_hash = hashLegacyImportValue(missingRootValue);
+    assert.throws(() => interpretLegacyPlanningCapture(missingRootMetadataCapture), /root .* metadata is inconsistent/u);
+
+    const numericIdentityCapture = structuredClone(capture);
+    (numericIdentityCapture.entries[0] as unknown as { physical_identity: number }).physical_identity = 42;
+    const { capture_hash: _numericIdentityHash, ...numericIdentityValue } = numericIdentityCapture;
+    numericIdentityCapture.capture_hash = hashLegacyImportValue(numericIdentityValue);
+    assert.throws(() => interpretLegacyPlanningCapture(numericIdentityCapture), /source .* identity is inconsistent/u);
+
+    const mismatchedRootCapture = structuredClone(capture);
+    mismatchedRootCapture.roots[0].physical_identity = "mismatched-root-identity";
+    const { capture_hash: _mismatchedRootHash, ...mismatchedRootValue } = mismatchedRootCapture;
+    mismatchedRootCapture.capture_hash = hashLegacyImportValue(mismatchedRootValue);
+    assert.throws(() => interpretLegacyPlanningCapture(mismatchedRootCapture), /root .* identity is inconsistent/u);
+
+    const absentRequiredRootCapture = structuredClone(removedRootCapture);
+    const absentRequiredRoot = absentRequiredRootCapture.roots.find((root) => root.id === "outside")!;
+    absentRequiredRoot.observed = "absent";
+    delete absentRequiredRoot.physical_identity;
+    delete absentRequiredRoot.real_path;
+    const { capture_hash: _absentRequiredHash, ...absentRequiredValue } = absentRequiredRootCapture;
+    absentRequiredRootCapture.capture_hash = hashLegacyImportValue(absentRequiredValue);
+    assert.throws(() => interpretLegacyPlanningCapture(absentRequiredRootCapture), /root outside metadata is inconsistent/u);
+  });
+
   test("legacy preview planning scopes multiple milestone directories and plans", (t) => {
     const plan = (phase: string, number: string, title: string) => `---\nphase: \"${phase}\"\nplan: \"${number}\"\n---\n\n# ${number}: ${title}\n\n<objective>${title} objective.</objective>\n`;
     const capture = captureFiles(t, {
