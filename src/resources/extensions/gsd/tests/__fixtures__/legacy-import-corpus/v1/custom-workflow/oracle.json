@@ -796,7 +796,8 @@
       "source_id": "workflow-gsd-workflows-bugfix-md",
       "locator": {
         "start_byte": 2,
-        "end_byte": 25
+        "end_byte": 25,
+        "line": 1
       },
       "raw_value": "Project Bugfix Override",
       "message": "The project workflow deterministically shadows the bundled workflow with the same name."
@@ -808,7 +809,8 @@
       "source_id": "workflow-gsd-home-workflows-collision-yaml",
       "locator": {
         "start_byte": 17,
-        "end_byte": 33
+        "end_byte": 33,
+        "line": 2
       },
       "raw_value": "collision-global",
       "message": "The global workflow is excluded because a project workflow with the same filename has higher precedence."
@@ -820,7 +822,8 @@
       "source_id": "workflow-gsd-workflow-defs-collision-yaml",
       "locator": {
         "start_byte": 17,
-        "end_byte": 40
+        "end_byte": 40,
+        "line": 2
       },
       "raw_value": "collision-global-legacy",
       "message": "The legacy project definition is excluded because the current project workflow directory has higher precedence."
@@ -832,7 +835,8 @@
       "source_id": "workflow-gsd-workflows-malformed-yaml",
       "locator": {
         "start_byte": 27,
-        "end_byte": 36
+        "end_byte": 36,
+        "line": 3
       },
       "raw_value": "steps: [\n",
       "message": "The workflow definition is preserved as bytes but cannot be parsed as YAML."
@@ -844,7 +848,8 @@
       "source_id": "workflow-gsd-workflows-schema-invalid-yaml",
       "locator": {
         "start_byte": 0,
-        "end_byte": 10
+        "end_byte": 10,
+        "line": 1
       },
       "raw_value": "version: 2",
       "message": "The YAML parses, but the workflow definition is not valid under the V1 schema."
@@ -856,7 +861,8 @@
       "source_id": "workflow-gsd-workflow-runs-drift-2026-01-02t00-00-00-definition-yaml",
       "locator": {
         "start_byte": 140,
-        "end_byte": 173
+        "end_byte": 173,
+        "line": 7
       },
       "raw_value": "Inspect with the original prompt.",
       "message": "The frozen run definition differs from the current workflow definition; both are retained without choosing a resume path."
@@ -868,7 +874,8 @@
       "source_id": "workflow-gsd-workflow-runs-malformed-2026-01-05t00-00-00-graph-yaml",
       "locator": {
         "start_byte": 0,
-        "end_byte": 9
+        "end_byte": 9,
+        "line": 1
       },
       "raw_value": "steps: [\n",
       "message": "The run graph is malformed and is retained without replay or repair."
@@ -880,7 +887,8 @@
       "source_id": "workflow-gsd-workflow-runs-missing-2026-01-04t00-00-00-definition-yaml",
       "locator": {
         "start_byte": 11,
-        "end_byte": 30
+        "end_byte": 30,
+        "line": 2
       },
       "raw_value": "name: missing-graph",
       "message": "The run has a frozen definition but no GRAPH.yaml; it remains evidence-only."
@@ -893,6 +901,7 @@
       "locator": {
         "start_byte": 49,
         "end_byte": 80,
+        "line": 3,
         "json_pointer": "/api_token"
       },
       "raw_value": {
@@ -908,7 +917,8 @@
       "source_id": "workflow-gsd-workflow-runs-unknown-2026-01-06t00-00-00-graph-yaml",
       "locator": {
         "start_byte": 54,
-        "end_byte": 60
+        "end_byte": 60,
+        "line": 4
       },
       "raw_value": "paused",
       "message": "The graph contains an unsupported step status and is retained without resuming the run."

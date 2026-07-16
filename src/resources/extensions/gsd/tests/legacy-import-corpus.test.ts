@@ -478,19 +478,19 @@ test("legacy corpus manifest seals exact structure and aggregate accounting", ()
     cases: 26,
     sources: 179,
     changes: 205,
-    diagnoses: 94,
-    resolutions: 94,
+    diagnoses: 95,
+    resolutions: 95,
     create: 103,
     update: 3,
     delete: 1,
     preserve: 98,
-    mapped: 68,
+    mapped: 67,
     preserved: 73,
-    unparsed: 30,
+    unparsed: 31,
     ignored_with_reason: 8,
     requires_user: 39,
-    unsupported: 2,
-    unresolved: 41,
+    unsupported: 3,
+    unresolved: 42,
   });
 
   const fileIdentities = cases.flatMap((corpusCase) => corpusCase.files.map(
@@ -2184,7 +2184,7 @@ test("legacy corpus supplemental preserves evidence without replay or filesystem
       [
         "sha256:5c516e6aa1b1e2d023d4e102d8ef2c9d9c46a07eec9d35c793170d4c55eeeb30",
         "sha256:1b9d8acf8df1c380596c2b68bb2a6bd446d12e78be98f4a1d7b2236189edb133",
-        "sha256:c6deda53f479696cf617c300656e040e03fe89da85e35220eac89f7796694572",
+        "sha256:2b42aef32c78d0aa4d9cfe6427acd7217b2c138ddc0b927e8d58a7cc7a0ac911",
         "sha256:5dc7bd17d903e37b156b6f4926d2a07bf735aff550ec2734330f35000ada3ba6",
       ],
       [
@@ -2648,7 +2648,7 @@ test("legacy corpus capstone classifies database targets and changes without app
     [".gsd/KNOWLEDGE.md", "gsd-knowledge-graph", "preserved"],
     [".gsd/REQUIREMENTS.md", "gsd-requirements-sections", "mapped"],
     [".gsd/event-log.jsonl", "gsd-workflow-events", "preserved"],
-    [".gsd/gsd.db", "gsd-sqlite-target", "mapped"],
+    [".gsd/gsd.db", "gsd-sqlite-target", "unparsed"],
     [".gsd/milestones/M007-capstone-alpha/M007-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
     [".gsd/milestones/M702-clean/M702-ROADMAP.md", "gsd-hybrid-hierarchy", "mapped"],
     [".gsd/phases/07-capstone-beta/07-ROADMAP.md", "gsd-hybrid-hierarchy", "unparsed"],
@@ -2666,23 +2666,25 @@ test("legacy corpus capstone classifies database targets and changes without app
     ["change-create-requirement-r701", "create", "requirement", "R701", null, "colon-heading-requirement"],
     ["change-create-slice-m702-s01", "create", "slice", "M702/S01", null, "hybrid-non-overlap"],
     ["change-preserve-history", "preserve", "legacy-workflow-event", ".gsd/event-log.jsonl#L001", null, "history-evidence-only"],
-    ["change-preserve-knowledge", "preserve", "legacy-knowledge-source", ".gsd/KNOWLEDGE.md", null, "knowledge-evidence-only"],
-    ["change-preserve-workflow-definition", "preserve", "legacy-workflow-definition", ".gsd/workflows/capstone.yaml", null, "workflow-definition-evidence-only"],
-    ["change-preserve-workflow-graph", "preserve", "legacy-workflow-run-graph", "capstone/run-001", null, "workflow-graph-evidence-only"],
-    ["change-preserve-worktree", "preserve", "legacy-worktree-topology", ".gsd-worktrees/M008", null, "worktree-evidence-only"],
+    ["change-preserve-knowledge", "preserve", "legacy-knowledge-source", ".gsd/KNOWLEDGE.md", null, "knowledge-markdown-preserved"],
+    ["change-preserve-workflow-definition", "preserve", "legacy-workflow-definition", ".gsd/workflows/capstone.yaml", null, "workflow-definition-is-evidence-only"],
+    ["change-preserve-workflow-graph", "preserve", "legacy-workflow-run-artifact", ".gsd/workflow-runs/capstone/run-001/GRAPH.yaml", null, "workflow-run-is-evidence-only"],
+    ["change-preserve-worktree", "preserve", "legacy-worktree-topology", "canonical/M008", null, "canonical-worktree-preserved"],
   ]);
   assert.deepEqual(diagnosisRows("composite-capstone"), [
     ["diagnosis-hybrid-m007-conflicting-content", "hybrid-conflicting-content", "blocker", "capstone-hybrid-m007-nested"],
     ["diagnosis-hybrid-m007-duplicate-logical-milestone", "duplicate-logical-milestone", "blocker", "capstone-hybrid-m007-flat"],
+    ["diagnosis-unsupported-database-schema", "unsupported-database-schema", "blocker", "capstone-database-v44"],
   ]);
   assert.deepEqual(oracle("composite-capstone").resolutions, [
     { diagnosis_id: "diagnosis-hybrid-m007-conflicting-content", disposition: "requires-user" },
     { diagnosis_id: "diagnosis-hybrid-m007-duplicate-logical-milestone", disposition: "requires-user" },
+    { diagnosis_id: "diagnosis-unsupported-database-schema", disposition: "unsupported" },
   ]);
   assert.deepEqual(oracle("composite-capstone").counts, {
-    create: 7, update: 0, delete: 0, preserve: 5, unparsed: 2, unresolved: 2,
+    create: 7, update: 0, delete: 0, preserve: 5, unparsed: 3, unresolved: 3,
   });
-  assert.equal(semanticHash("composite-capstone"), "sha256:47174a2b4b09f24ac287aa0b9c95571a7048ab2ac40ce815b97978c7dbb86efe");
+  assert.equal(semanticHash("composite-capstone"), "sha256:e53f6d211deb783bc92d82da7f63c1c12d8336692e0d781d6c9595d0360756a2");
   assert.ok(!oracle("composite-capstone").changes.some((change) => change.target.key.includes("M007")));
   assert.ok(oracle("composite-capstone").changes
     .filter((change) => change.target.kind.startsWith("legacy-"))
@@ -2749,10 +2751,10 @@ test("legacy corpus capstone classifies database targets and changes without app
         "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       ],
       [
-        "sha256:2c70aab2c384fac876f719307f88a09b81273bda71e1d4ffbf0d2c3037f2a042",
-        "sha256:30b03a603b0ecdcdb47a6c4038660455fe172f00d3c297e2f7fc7f49d8f95730",
-        "sha256:48e704be969fea42c819b8ca27876897f1228bdcffb462dc041ca9f6d801832a",
-        "sha256:309d793c6e8788d9c245c52c70fc059e0e389794fef78f8cefb79289a017ccd9",
+        "sha256:f46a7c5e2ae452d5d440aa5d1476fe152420de8961d71b1714cd656f04ff6f93",
+        "sha256:51ae819b23ff90aa05d0075b2229e9f7853c0dfeabdefdbce93c3cbbe551c421",
+        "sha256:8ac690a6a27840de4ae7fa6434d7dd7600ba33c148ca87ba9948f5ca8f443852",
+        "sha256:9246e708c1c434600f9db15eb8573504cdfa4b21b42effbfcf48857ea55359ad",
       ],
     ],
   );

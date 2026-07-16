@@ -6,21 +6,21 @@
   "base_project_revision": 27,
   "base_authority_epoch": 3,
   "base_database_schema_version": 44,
-  "source_set_hash": "sha256:2c70aab2c384fac876f719307f88a09b81273bda71e1d4ffbf0d2c3037f2a042",
-  "change_set_hash": "sha256:30b03a603b0ecdcdb47a6c4038660455fe172f00d3c297e2f7fc7f49d8f95730",
+  "source_set_hash": "sha256:f46a7c5e2ae452d5d440aa5d1476fe152420de8961d71b1714cd656f04ff6f93",
+  "change_set_hash": "sha256:51ae819b23ff90aa05d0075b2229e9f7853c0dfeabdefdbce93c3cbbe551c421",
   "counts": {
     "create": 7,
     "update": 0,
     "delete": 0,
     "preserve": 5,
-    "unparsed": 2,
-    "unresolved": 2
+    "unparsed": 3,
+    "unresolved": 3
   },
   "sources": [
     {
       "source_id": "capstone-worktree-m008",
       "path": ".gsd-worktrees/M008/git-marker.txt",
-      "kind": "directory-topology",
+      "kind": "git-marker",
       "byte_size": 37,
       "sha256": "sha256:72ffcbb76a1ae8f3b0bcabfe14d6216900f74f3f7258d57ee0e2a7ff556a9903",
       "parser_id": "gsd-worktree-topology",
@@ -81,7 +81,7 @@
       "parser_id": "gsd-sqlite-target",
       "parser_version": "1",
       "encoding": "binary",
-      "outcome": "mapped"
+      "outcome": "unparsed"
     },
     {
       "source_id": "capstone-hybrid-m007-nested",
@@ -274,11 +274,18 @@
       "target": { "kind": "legacy-workflow-event", "key": ".gsd/event-log.jsonl#L001" },
       "raw": {
         "source_id": "capstone-history",
-        "locator": { "start_byte": 0, "end_byte": 199, "line": 1 },
-        "value": "{\"v\":2,\"cmd\":\"complete-task\",\"params\":{\"milestoneId\":\"M705\",\"sliceId\":\"S01\",\"taskId\":\"T01\"},\"ts\":\"2026-01-01T00:00:00.000Z\",\"hash\":\"d942a28b15847e90\",\"actor\":\"agent\",\"session_id\":\"capstone-session\"}\n",
-        "sha256": "sha256:28a6399ba97202a2e815649012d2a361fc2a2ad4502a4598b3c88b6c850b3050"
+        "locator": { "start_byte": 0, "end_byte": 198, "line": 1 },
+        "value": "{\"v\":2,\"cmd\":\"complete-task\",\"params\":{\"milestoneId\":\"M705\",\"sliceId\":\"S01\",\"taskId\":\"T01\"},\"ts\":\"2026-01-01T00:00:00.000Z\",\"hash\":\"d942a28b15847e90\",\"actor\":\"agent\",\"session_id\":\"capstone-session\"}",
+        "sha256": "sha256:4cdce8a0f83a16b2246e7bccd3db29e2737ffd1c0e2bbb016339a91e834dfaa4"
       },
-      "normalized": { "command": "complete_task", "entity": { "type": "task", "id": "M705/S01/T01" }, "replay_policy": "evidence-only" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 2,
+        "command": "complete_task",
+        "entity": { "type": "task", "id": "T01" },
+        "authority_context": null,
+        "file_order": 1
+      },
       "provenance": { "source_id": "capstone-history", "parser_id": "gsd-workflow-events", "parser_version": "2" },
       "reason_code": "history-evidence-only"
     },
@@ -294,7 +301,7 @@
       },
       "normalized": { "preservation": "verbatim", "role": "projection-input" },
       "provenance": { "source_id": "capstone-knowledge", "parser_id": "gsd-knowledge-graph", "parser_version": "1" },
-      "reason_code": "knowledge-evidence-only"
+      "reason_code": "knowledge-markdown-preserved"
     },
     {
       "change_id": "change-preserve-workflow-definition",
@@ -306,37 +313,43 @@
         "value": "version: 1\nname: capstone\ndescription: Classify the composite corpus without applying it.\nsteps:\n  - id: classify\n    name: Classify evidence\n    prompt: Produce a deterministic preview.\n  - id: review\n    name: Review ambiguity\n    depends_on:\n      - classify\n    prompt: Stop only for the unresolved M007 route.\n",
         "sha256": "sha256:6102988dceb996b5473e8437e7b94839c14cc2b2c1ec413abc3ea6f4e1d881c9"
       },
-      "normalized": { "name": "capstone", "preservation": "verbatim", "replay_policy": "evidence-only" },
+      "normalized": { "path": ".gsd/workflows/capstone.yaml", "preservation": "verbatim" },
       "provenance": { "source_id": "capstone-workflow-definition", "parser_id": "gsd-workflow-definition", "parser_version": "1" },
-      "reason_code": "workflow-definition-evidence-only"
+      "reason_code": "workflow-definition-is-evidence-only"
     },
     {
       "change_id": "change-preserve-workflow-graph",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-run-graph", "key": "capstone/run-001" },
+      "target": { "kind": "legacy-workflow-run-artifact", "key": ".gsd/workflow-runs/capstone/run-001/GRAPH.yaml" },
       "raw": {
         "source_id": "capstone-workflow-graph",
         "locator": { "start_byte": 0, "end_byte": 334, "line": 1 },
         "value": "steps:\n  - id: classify\n    title: Classify evidence\n    status: complete\n    prompt: Produce a deterministic preview.\n  - id: review\n    title: Review ambiguity\n    status: pending\n    prompt: Stop only for the unresolved M007 route.\n    depends_on:\n      - classify\nmetadata:\n  name: capstone\n  created_at: 2026-01-01T00:00:00.000Z\n",
         "sha256": "sha256:99878cdb80af05d8837ca26d352d7406bb29423b8126991c62d0673d91801eac"
       },
-      "normalized": { "run_id": "run-001", "preservation": "verbatim", "replay_policy": "evidence-only", "workflow": "capstone" },
+      "normalized": { "path": ".gsd/workflow-runs/capstone/run-001/GRAPH.yaml", "preservation": "verbatim" },
       "provenance": { "source_id": "capstone-workflow-graph", "parser_id": "gsd-workflow-run-graph", "parser_version": "1" },
-      "reason_code": "workflow-graph-evidence-only"
+      "reason_code": "workflow-run-is-evidence-only"
     },
     {
       "change_id": "change-preserve-worktree",
       "action": "preserve",
-      "target": { "kind": "legacy-worktree-topology", "key": ".gsd-worktrees/M008" },
+      "target": { "kind": "legacy-worktree-topology", "key": "canonical/M008" },
       "raw": {
         "source_id": "capstone-worktree-m008",
         "locator": { "start_byte": 0, "end_byte": 37, "line": 1 },
         "value": "gitdir: ../../../.git/worktrees/M008\n",
         "sha256": "sha256:72ffcbb76a1ae8f3b0bcabfe14d6216900f74f3f7258d57ee0e2a7ff556a9903"
       },
-      "normalized": { "layout": "canonical", "milestone_id": "M008", "relocation_policy": "evidence-only" },
+      "normalized": {
+        "scenario": "canonical",
+        "id": "M008",
+        "layout": "canonical",
+        "active": true,
+        "evidence_kind": "portable-git-marker-descriptor"
+      },
       "provenance": { "source_id": "capstone-worktree-m008", "parser_id": "gsd-worktree-topology", "parser_version": "1" },
-      "reason_code": "worktree-evidence-only"
+      "reason_code": "canonical-worktree-preserved"
     }
   ],
   "diagnoses": [
@@ -357,6 +370,18 @@
       "locator": { "start_byte": 0, "end_byte": 27, "line": 1 },
       "raw_value": "# M007: Beta capstone route",
       "message": "A second hierarchy layout claims M007; both sources remain evidence until the user chooses the route."
+    },
+    {
+      "diagnosis_id": "diagnosis-unsupported-database-schema",
+      "code": "unsupported-database-schema",
+      "severity": "blocker",
+      "source_id": "capstone-database-v44",
+      "locator": { "start_byte": 0, "end_byte": 16 },
+      "raw_value": {
+        "redacted": true,
+        "sha256": "sha256:3f8434aff012ffcb594ad7527d6042841ce94f499887f86ab828f84a9a275f91"
+      },
+      "message": "The SQLite target does not match a supported GSD schema boundary."
     }
   ],
   "resolutions": [
@@ -367,6 +392,10 @@
     {
       "diagnosis_id": "diagnosis-hybrid-m007-duplicate-logical-milestone",
       "disposition": "requires-user"
+    },
+    {
+      "diagnosis_id": "diagnosis-unsupported-database-schema",
+      "disposition": "unsupported"
     }
   ]
 }

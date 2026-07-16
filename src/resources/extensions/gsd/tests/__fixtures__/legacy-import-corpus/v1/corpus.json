@@ -44,18 +44,18 @@
       "role": "capstone",
       "source_count": 13,
       "file_set_hash": "sha256:3544f005ee2c856692b2de592a3bd33f2368d2d23f155b4933df0936a1d04121",
-      "oracle_hash": "sha256:86772eae6a921650803e7d8edeb6af1f1d2eb441cbf779817a2170d282ad8603",
-      "source_set_hash": "sha256:2c70aab2c384fac876f719307f88a09b81273bda71e1d4ffbf0d2c3037f2a042",
-      "change_set_hash": "sha256:30b03a603b0ecdcdb47a6c4038660455fe172f00d3c297e2f7fc7f49d8f95730",
-      "diagnosis_count": 2,
-      "resolution_count": 2,
+      "oracle_hash": "sha256:c469b96a0bf9d7b0ce560780eee221a8a670d242683420d6d25da04ba6b914aa",
+      "source_set_hash": "sha256:f46a7c5e2ae452d5d440aa5d1476fe152420de8961d71b1714cd656f04ff6f93",
+      "change_set_hash": "sha256:51ae819b23ff90aa05d0075b2229e9f7853c0dfeabdefdbce93c3cbbe551c421",
+      "diagnosis_count": 3,
+      "resolution_count": 3,
       "counts": {
         "create": 7,
         "update": 0,
         "delete": 0,
         "preserve": 5,
-        "unparsed": 2,
-        "unresolved": 2
+        "unparsed": 3,
+        "unresolved": 3
       }
     },
     {
@@ -63,7 +63,7 @@
       "role": "coverage",
       "source_count": 24,
       "file_set_hash": "sha256:9eb4dc58b152bee2fb22ea068e1f18c58c97cd0a69eb74937116f325c27732d2",
-      "oracle_hash": "sha256:fc554db28c2b7df4c23af2dbdeb1b48556e5f36270f095b91fd849daedcb62d6",
+      "oracle_hash": "sha256:88d69302aa9ac2a24e99811b899fd779c410a70d485d8e2260963ddae15adaf0",
       "source_set_hash": "sha256:5c516e6aa1b1e2d023d4e102d8ef2c9d9c46a07eec9d35c793170d4c55eeeb30",
       "change_set_hash": "sha256:1b9d8acf8df1c380596c2b68bb2a6bd446d12e78be98f4a1d7b2236189edb133",
       "diagnosis_count": 10,
@@ -1957,18 +1957,18 @@
     "cases": 26,
     "sources": 179,
     "changes": 205,
-    "diagnoses": 94,
-    "resolutions": 94,
+    "diagnoses": 95,
+    "resolutions": 95,
     "create": 103,
     "update": 3,
     "delete": 1,
     "preserve": 98,
-    "mapped": 68,
+    "mapped": 67,
     "preserved": 73,
-    "unparsed": 30,
+    "unparsed": 31,
     "ignored_with_reason": 8,
     "requires_user": 39,
-    "unsupported": 2,
-    "unresolved": 41
+    "unsupported": 3,
+    "unresolved": 42
   }
 }
