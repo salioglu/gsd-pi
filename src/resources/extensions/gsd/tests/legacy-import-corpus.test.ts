@@ -7,6 +7,7 @@ import {
   cpSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -19,6 +20,8 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
+
+import * as nativeParser from "@gsd/native";
 
 import { graphQuery } from "../../../../../packages/mcp-server/src/readers/graph.ts";
 import { loadDefinitionFromFile } from "../definition-loader.ts";
@@ -43,12 +46,14 @@ import {
   type LegacyImportPreviewResolution,
   type LegacyImportPreviewSource,
   type LegacyImportSha256,
+  type LegacyImportValue,
 } from "../legacy-import-contract.ts";
 import {
   SUPPORTED_LEGACY_SURFACES,
   type LegacyImportSurface,
 } from "../legacy-import-surfaces.ts";
 import { SCHEMA_VERSION } from "../gsd-db.ts";
+import { parseRoadmap } from "../parsers-legacy.ts";
 import { redactSecrets } from "../redact-secrets.ts";
 import { listRuns } from "../run-manager.ts";
 import {
@@ -78,7 +83,11 @@ import {
 import {
   legacyImportCorpusHash,
   loadLegacyImportCorpusCase,
+  loadLegacyImportCorpusManifest,
   validateLegacyImportCorpusCase,
+  validateLegacyImportCorpusManifest,
+  type LegacyImportCorpusCase,
+  type LegacyImportCorpusManifest,
 } from "./helpers/legacy-import-corpus.ts";
 
 const EXPECTED_SURFACE_IDS = [
@@ -105,6 +114,12 @@ const EXPECTED_SURFACE_IDS = [
 
 type HasExactKeys<T, Keys extends PropertyKey> =
   [Exclude<keyof T, Keys>, Exclude<Keys, keyof T>] extends [never, never] ? true : false;
+
+type Mutable<T> = T extends readonly (infer Entry)[]
+  ? Mutable<Entry>[]
+  : T extends object
+    ? { -readonly [Key in keyof T]: Mutable<T[Key]> }
+    : T;
 
 const PREVIEW_KEYS_MATCH: HasExactKeys<
   LegacyImportPreviewEnvelope,
@@ -190,6 +205,458 @@ test("legacy import surface registry pins every approved source and target famil
       "workflow-graph",
       "worktree",
     ],
+  );
+});
+
+test("legacy corpus native fallback parity is explicit", (t) => {
+  const dualImplementationSurfaces = SUPPORTED_LEGACY_SURFACES
+    .filter((surface) => {
+      const implementations: readonly string[] = surface.interpreter.implementations;
+      return implementations.includes("native") && implementations.includes("typescript");
+    })
+    .map((surface) => surface.id);
+  assert.deepEqual(dualImplementationSurfaces, ["gsd-flat-hierarchy", "gsd-nested-hierarchy"]);
+
+  const nativeExports = nativeParser as unknown as Record<string, unknown>;
+  assert.equal(nativeExports["parsePlanFile"], undefined, "native plan parity is not supported");
+  assert.equal(nativeExports["parseSummaryFile"], undefined, "native summary parity is not supported");
+
+  const platform = `${process.platform}-${process.arch}`;
+  const supportedPlatforms = new Set([
+    "darwin-arm64",
+    "darwin-x64",
+    "linux-arm64",
+    "linux-x64",
+    "win32-x64",
+  ]);
+  const addonLoaded = nativeParser.isNativeAddonLoaded();
+  const roadmapExported = typeof nativeExports["parseRoadmapFile"] === "function";
+  const nativeAvailable = addonLoaded && roadmapExported;
+  let capabilityReason = "native addon and roadmap parser export are available";
+  if (!addonLoaded) {
+    capabilityReason = "native addon is not loaded";
+  } else if (!roadmapExported) {
+    capabilityReason = "native roadmap parser export is missing";
+  }
+  const capability = {
+    implementation: "native",
+    platform,
+    addon_loaded: addonLoaded,
+    parser_exported: roadmapExported,
+    status: nativeAvailable ? "available" : "unavailable",
+    reason: capabilityReason,
+  };
+
+  if (supportedPlatforms.has(platform)) {
+    assert.equal(nativeAvailable, true, `native roadmap parser unavailable: ${JSON.stringify(capability)}`);
+  } else if (!nativeAvailable) {
+    assert.equal(capability.status, "unavailable");
+    assert.ok(capability.reason.length > 0);
+    t.diagnostic(`native parser capability: ${JSON.stringify(capability)}`);
+  }
+
+  function normalizeRoadmap(roadmap: {
+    title: string;
+    vision: string;
+    successCriteria: string[];
+    slices: Array<{
+      id: string;
+      title: string;
+      risk: string;
+      depends: string[];
+      done: boolean;
+      demo: string;
+      isSketch?: boolean;
+    }>;
+    boundaryMap: Array<{
+      fromSlice: string;
+      toSlice: string;
+      produces: string;
+      consumes: string;
+    }>;
+  }) {
+    return {
+      title: roadmap.title,
+      vision: roadmap.vision,
+      successCriteria: roadmap.successCriteria,
+      slices: roadmap.slices.map((slice) => ({
+        id: slice.id,
+        title: slice.title,
+        risk: slice.risk,
+        depends: slice.depends,
+        done: slice.done,
+        demo: slice.demo,
+        isSketch: Boolean(slice.isSketch),
+      })),
+      boundaryMap: roadmap.boundaryMap,
+    };
+  }
+
+  const boundaryMapContent = `# M900: Parser Parity
+
+**Vision:** Native and fallback parsers agree.
+
+## Success Criteria
+
+- Equal normalized output
+
+## Slices
+
+- [x] **S01: Produce API** \`risk:low\` \`depends:[]\`
+  > After this: API exists
+- [ ] **S02: Consume API** \`risk:medium\` \`depends:[S01]\`
+  > After this: client works
+
+## Boundary Map
+
+### S01 → S02
+Produces:
+api
+Consumes from S02: client
+`;
+  const cases = [
+    {
+      name: "nested canonical roadmap",
+      content: readFileSync(fileURLToPath(new URL(
+        "./__fixtures__/round-trip/m001-basic/.gsd/milestones/M001/M001-ROADMAP.md",
+        import.meta.url,
+      )), "utf8"),
+      expected: {
+        title: "M001: First Milestone",
+        vision: "A round-trippable milestone.",
+        successCriteria: ["Criterion one", "Criterion two"],
+        slices: [{
+          id: "S01",
+          title: "First slice",
+          risk: "low",
+          depends: [],
+          done: false,
+          demo: "a demo exists",
+          isSketch: false,
+        }],
+        boundaryMap: [],
+      },
+    },
+    {
+      name: "flat canonical roadmap",
+      content: readFileSync(fileURLToPath(new URL(
+        "./__fixtures__/flat-phase/.gsd/phases/01-foundation/01-ROADMAP.md",
+        import.meta.url,
+      )), "utf8"),
+      expected: {
+        title: "01: Foundation",
+        vision: "A foundational setup.",
+        successCriteria: [],
+        slices: [{
+          id: "S01",
+          title: "Set up tooling",
+          risk: "low",
+          depends: [],
+          done: false,
+          demo: "build runs",
+          isSketch: false,
+        }],
+        boundaryMap: [],
+      },
+    },
+    {
+      name: "canonical boundary map grammar",
+      content: boundaryMapContent,
+      expected: {
+        title: "M900: Parser Parity",
+        vision: "Native and fallback parsers agree.",
+        successCriteria: ["Equal normalized output"],
+        slices: [
+          {
+            id: "S01",
+            title: "Produce API",
+            risk: "low",
+            depends: [],
+            done: true,
+            demo: "API exists",
+            isSketch: false,
+          },
+          {
+            id: "S02",
+            title: "Consume API",
+            risk: "medium",
+            depends: ["S01"],
+            done: false,
+            demo: "client works",
+            isSketch: false,
+          },
+        ],
+        boundaryMap: [{
+          fromSlice: "S01",
+          toSlice: "S02",
+          produces: "api",
+          consumes: "client",
+        }],
+      },
+    },
+  ];
+
+  for (const parserCase of cases) {
+    const fallbackResult = normalizeRoadmap(parseRoadmap(parserCase.content));
+    assert.deepEqual(fallbackResult, parserCase.expected, `${parserCase.name}: fallback contract`);
+    if (nativeAvailable) {
+      const nativeResult = normalizeRoadmap(nativeParser.parseRoadmapFile(parserCase.content));
+      assert.deepEqual(nativeResult, parserCase.expected, `${parserCase.name}: native contract`);
+      assert.deepEqual(nativeResult, fallbackResult, `${parserCase.name}: native/fallback parity`);
+    }
+  }
+
+  const corpusRoot = new URL("./__fixtures__/legacy-import-corpus/v1/", import.meta.url);
+  const manifest = loadLegacyImportCorpusManifest(corpusRoot);
+  const manifestExpectations = new Map([
+    ["flat-roadmap", {
+      title: "M001: Foundation",
+      vision: "",
+      successCriteria: [],
+      slices: [],
+      boundaryMap: [],
+    }],
+    ["nested-roadmap", {
+      title: "M002: Delivery",
+      vision: "",
+      successCriteria: [],
+      slices: [],
+      boundaryMap: [],
+    }],
+  ]);
+  for (const row of manifest.parity) {
+    assert.equal(row.parser, "roadmap", `${row.id}: only the roadmap dual implementation is registered`);
+    const corpusCase = loadLegacyImportCorpusCase(corpusRoot, row.case);
+    const file = corpusCase.files.find((candidate) => candidate.path === row.path);
+    const expected = manifestExpectations.get(row.id);
+    assert.ok(file, `${row.id}: registered parity source must exist`);
+    assert.ok(expected, `${row.id}: registered parity source must have a normalized contract`);
+    const content = file.bytes.toString("utf8");
+    const fallbackResult = normalizeRoadmap(parseRoadmap(content));
+    assert.deepEqual(fallbackResult, expected, `${row.id}: fallback corpus contract`);
+    if (nativeAvailable) {
+      const nativeResult = normalizeRoadmap(nativeParser.parseRoadmapFile(content));
+      assert.deepEqual(nativeResult, expected, `${row.id}: native corpus contract`);
+      assert.deepEqual(nativeResult, fallbackResult, `${row.id}: registered native/fallback parity`);
+    }
+  }
+});
+
+test("legacy corpus manifest seals exact structure and aggregate accounting", () => {
+  const corpusRoot = new URL("./__fixtures__/legacy-import-corpus/v1/", import.meta.url);
+  const corpusPath = fileURLToPath(corpusRoot);
+  const rootEntries = readdirSync(corpusPath, { withFileTypes: true });
+  const caseNames = rootEntries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const rootFiles = rootEntries
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort();
+  assert.ok(
+    rootEntries.every((entry) => entry.isDirectory() || entry.isFile()),
+    "corpus root must not contain symlinks or special entries",
+  );
+  assert.deepEqual(rootFiles, ["corpus.json", "oracle.schema.json"]);
+
+  for (const caseName of caseNames) {
+    assert.deepEqual(
+      readdirSync(join(corpusPath, caseName)).sort(),
+      ["oracle.json", "source"],
+      `${caseName}: case root must contain only source/ and oracle.json`,
+    );
+  }
+
+  const cases = caseNames.map((caseName) => loadLegacyImportCorpusCase(corpusRoot, caseName));
+  const manifest = loadLegacyImportCorpusManifest(corpusRoot);
+  assert.doesNotThrow(() => {
+    validateLegacyImportCorpusManifest(manifest, cases, SUPPORTED_LEGACY_SURFACES);
+  });
+  assert.deepEqual(manifest.cases.map((entry) => entry.name), caseNames);
+  assert.deepEqual(manifest.totals, {
+    cases: 26,
+    sources: 179,
+    changes: 204,
+    diagnoses: 94,
+    resolutions: 94,
+    create: 102,
+    update: 3,
+    delete: 1,
+    preserve: 98,
+    mapped: 68,
+    preserved: 73,
+    unparsed: 30,
+    ignored_with_reason: 8,
+    requires_user: 39,
+    unsupported: 2,
+    unresolved: 41,
+  });
+
+  const fileIdentities = cases.flatMap((corpusCase) => corpusCase.files.map(
+    (file) => `${corpusCase.name}/${file.path}`,
+  ));
+  assert.equal(fileIdentities.length, manifest.totals.sources);
+  assert.equal(new Set(fileIdentities).size, fileIdentities.length, "every source file is uniquely accounted for");
+
+  const databaseSurface = manifest.surfaces.find((surface) => surface.id === "database-targets");
+  const hierarchySurface = manifest.surfaces.find((surface) => surface.id === "gsd-hierarchy-artifacts");
+  assert.ok(databaseSurface);
+  assert.ok(hierarchySurface);
+  assert.deepEqual(
+    databaseSurface.aliases.find((alias) => alias.name === "external state database")?.cases,
+    ["root-external-boundaries"],
+  );
+  assert.deepEqual(
+    hierarchySurface.scenarios.find((scenario) => scenario.id === "root-artifact")?.cases,
+    ["root-external-boundaries"],
+  );
+  assert.deepEqual(manifest.parity.map((row) => row.id), ["flat-roadmap", "nested-roadmap"]);
+
+  const boundaryCase = cases.find((corpusCase) => corpusCase.name === "root-external-boundaries");
+  assert.ok(boundaryCase);
+  assert.deepEqual(boundaryCase.files.map((file) => file.path), [
+    "$GSD_STATE_DIR/projects/project-external/gsd.db",
+    ".gsd/PROJECT.md",
+    ".gsd/QUEUE.md",
+    ".gsd/SECRETS-MANIFEST.md",
+  ]);
+  const databasePath = join(
+    corpusPath,
+    "root-external-boundaries",
+    "source",
+    "$GSD_STATE_DIR",
+    "projects",
+    "project-external",
+    "gsd.db",
+  );
+  const databaseBefore = hashBytes(readFileSync(databasePath));
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    database.exec("PRAGMA query_only=ON");
+    assert.deepEqual({ ...database.prepare(`
+      SELECT
+        (SELECT max(version) FROM schema_version) AS schema_version,
+        (SELECT count(*) FROM workflow_import_applications) AS import_applications
+    `).get() }, { schema_version: 44, import_applications: 0 });
+    assert.equal(database.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
+  } finally {
+    database.close();
+  }
+  assert.equal(hashBytes(readFileSync(databasePath)), databaseBefore, "read-only boundary inspection must not mutate the database");
+  assert.equal(
+    readFileSync(join(corpusPath, "root-external-boundaries", "source", ".gsd", "SECRETS-MANIFEST.md"), "utf8"),
+    "# Secrets Manifest\n\nNo credential material is included in this fixture.\n\n- Required environment keys: none\n",
+  );
+});
+
+test("legacy corpus manifest fails loud under structural sabotage", () => {
+  const corpusRoot = new URL("./__fixtures__/legacy-import-corpus/v1/", import.meta.url);
+  const caseNames = readdirSync(fileURLToPath(corpusRoot), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const cases = caseNames.map((caseName) => loadLegacyImportCorpusCase(corpusRoot, caseName));
+  const manifest = loadLegacyImportCorpusManifest(corpusRoot);
+  const cloneManifest = () => structuredClone(manifest) as Mutable<LegacyImportCorpusManifest>;
+  const cloneCase = (source: LegacyImportCorpusCase): LegacyImportCorpusCase => ({
+    ...source,
+    files: source.files.map((file) => ({ ...file, bytes: Buffer.from(file.bytes) })),
+    oracle: structuredClone(source.oracle) as LegacyImportPreviewEnvelope,
+    schema: structuredClone(source.schema) as object,
+  });
+  const synthetic = cases.find((corpusCase) => corpusCase.name === "synthetic-smoke");
+  assert.ok(synthetic);
+  const withSynthetic = (replacement: LegacyImportCorpusCase) => cases.map(
+    (corpusCase) => corpusCase.name === replacement.name ? replacement : corpusCase,
+  );
+
+  assert.throws(
+    () => validateLegacyImportCorpusManifest(manifest, cases, SUPPORTED_LEGACY_SURFACES.slice(0, -1)),
+    /surface IDs must exactly match the production registry/,
+  );
+
+  const sourceSabotage = cloneCase(synthetic);
+  const sourceFile = sourceSabotage.files.find((file) => file.path === ".gsd/STATE.md");
+  const sourceEntry = sourceSabotage.oracle.sources.find((source) => source.path === ".gsd/STATE.md");
+  assert.ok(sourceFile);
+  assert.ok(sourceEntry);
+  sourceFile.bytes = Buffer.concat([sourceFile.bytes, Buffer.from("\n")]);
+  sourceFile.byteSize = sourceFile.bytes.byteLength;
+  sourceFile.sha256 = hashBytes(sourceFile.bytes);
+  sourceEntry.byte_size = sourceFile.byteSize;
+  sourceEntry.sha256 = sourceFile.sha256;
+  sourceSabotage.oracle.source_set_hash = legacyImportCorpusHash(sourceSabotage.oracle.sources);
+  assert.throws(
+    () => validateLegacyImportCorpusManifest(manifest, withSynthetic(sourceSabotage), SUPPORTED_LEGACY_SURFACES),
+    /file_set_hash: does not match case synthetic-smoke/,
+  );
+
+  const oracleSabotage = cloneCase(synthetic);
+  oracleSabotage.oracle.changes[0].normalized = {
+    ...oracleSabotage.oracle.changes[0].normalized as Record<string, LegacyImportValue>,
+    sabotage: "oracle-drift",
+  };
+  oracleSabotage.oracle.change_set_hash = legacyImportCorpusHash(oracleSabotage.oracle.changes);
+  assert.throws(
+    () => validateLegacyImportCorpusManifest(manifest, withSynthetic(oracleSabotage), SUPPORTED_LEGACY_SURFACES),
+    /oracle_hash: does not match case synthetic-smoke/,
+  );
+
+  const spanSabotage = cloneCase(synthetic);
+  spanSabotage.oracle.changes[0].raw.locator.end_byte = 999;
+  spanSabotage.oracle.change_set_hash = legacyImportCorpusHash(spanSabotage.oracle.changes);
+  assert.throws(
+    () => validateLegacyImportCorpusManifest(manifest, withSynthetic(spanSabotage), SUPPORTED_LEGACY_SURFACES),
+    /byte span is outside/,
+  );
+
+  const hashSabotage = cloneManifest();
+  const hashEntry = hashSabotage.cases.find((entry) => entry.name === "synthetic-smoke");
+  assert.ok(hashEntry);
+  hashEntry.source_set_hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+  assert.throws(
+    () => validateLegacyImportCorpusManifest(hashSabotage, cases, SUPPORTED_LEGACY_SURFACES),
+    /source_set_hash: does not match case synthetic-smoke/,
+  );
+
+  const countSabotage = cloneManifest();
+  const countEntry = countSabotage.cases.find((entry) => entry.name === "synthetic-smoke");
+  assert.ok(countEntry);
+  countEntry.counts.create = 0;
+  assert.throws(
+    () => validateLegacyImportCorpusManifest(countSabotage, cases, SUPPORTED_LEGACY_SURFACES),
+    /counts: does not match case synthetic-smoke/,
+  );
+
+  const dispositionSabotage = cloneManifest();
+  dispositionSabotage.surfaces[0].expected_dispositions.splice(0, 1);
+  assert.throws(
+    () => validateLegacyImportCorpusManifest(dispositionSabotage, cases, SUPPORTED_LEGACY_SURFACES),
+    /expected dispositions must exactly match the production registry/,
+  );
+
+  const aliasSabotage = cloneManifest();
+  const decisionSurface = aliasSabotage.surfaces.find((surface) => surface.id === "gsd-decisions-registry");
+  assert.ok(decisionSurface);
+  decisionSurface.aliases.splice(0, 1);
+  assert.throws(
+    () => validateLegacyImportCorpusManifest(aliasSabotage, cases, SUPPORTED_LEGACY_SURFACES),
+    /aliases must exactly match the production registry/,
+  );
+
+  const parityParserSabotage = cloneManifest();
+  parityParserSabotage.parity[0].parser = "summary";
+  assert.throws(
+    () => validateLegacyImportCorpusManifest(parityParserSabotage, cases, SUPPORTED_LEGACY_SURFACES),
+    /parser: must equal roadmap/,
+  );
+
+  const parityRowSabotage = cloneManifest();
+  parityRowSabotage.parity.splice(0, 1);
+  assert.throws(
+    () => validateLegacyImportCorpusManifest(parityRowSabotage, cases, SUPPORTED_LEGACY_SURFACES),
+    /parity rows must exactly match the production registry/,
   );
 });
 

@@ -9,14 +9,22 @@ import { fileURLToPath } from "node:url";
 import AjvModule from "ajv/dist/2020.js";
 
 import {
+  LEGACY_IMPORT_CHANGE_ACTIONS,
   LEGACY_IMPORT_PREVIEW_COUNT_KEYS,
   LEGACY_IMPORT_PREVIEW_TOP_LEVEL_KEYS,
+  LEGACY_IMPORT_RESOLUTION_DISPOSITIONS,
+  LEGACY_IMPORT_SOURCE_OUTCOMES,
+  type LegacyImportChangeAction,
   type LegacyImportLocator,
+  type LegacyImportPreviewCounts,
   type LegacyImportPreviewEnvelope,
   type LegacyImportPreviewSource,
+  type LegacyImportResolutionDisposition,
   type LegacyImportSha256,
+  type LegacyImportSourceOutcome,
   type LegacyImportValue,
 } from "../../legacy-import-contract.ts";
+import type { LegacyImportSurface } from "../../legacy-import-surfaces.ts";
 
 const Ajv = AjvModule.default ?? AjvModule;
 
@@ -33,6 +41,74 @@ export interface LegacyImportCorpusCase {
   files: readonly LegacyImportCorpusFile[];
   oracle: LegacyImportPreviewEnvelope;
   schema: object;
+}
+
+export type LegacyImportCorpusCaseRole = "coverage" | "capstone" | "validator-smoke";
+
+export interface LegacyImportCorpusManifestCase {
+  name: string;
+  role: LegacyImportCorpusCaseRole;
+  source_count: number;
+  file_set_hash: LegacyImportSha256;
+  oracle_hash: LegacyImportSha256;
+  source_set_hash: LegacyImportSha256;
+  change_set_hash: LegacyImportSha256;
+  diagnosis_count: number;
+  resolution_count: number;
+  counts: LegacyImportPreviewCounts;
+}
+
+export interface LegacyImportCorpusManifestCoverage {
+  name: string;
+  cases: readonly string[];
+}
+
+export interface LegacyImportCorpusManifestScenarioCoverage {
+  id: string;
+  cases: readonly string[];
+}
+
+export interface LegacyImportCorpusManifestSurface {
+  id: string;
+  expected_dispositions: readonly LegacyImportSourceOutcome[];
+  aliases: readonly LegacyImportCorpusManifestCoverage[];
+  scenarios: readonly LegacyImportCorpusManifestScenarioCoverage[];
+}
+
+export interface LegacyImportCorpusManifestParityRow {
+  id: string;
+  case: string;
+  path: string;
+  parser: string;
+  implementations: readonly string[];
+  native_unavailable: "explicit-diagnostic";
+}
+
+export interface LegacyImportCorpusManifestTotals {
+  cases: number;
+  sources: number;
+  changes: number;
+  diagnoses: number;
+  resolutions: number;
+  create: number;
+  update: number;
+  delete: number;
+  preserve: number;
+  mapped: number;
+  preserved: number;
+  unparsed: number;
+  ignored_with_reason: number;
+  requires_user: number;
+  unsupported: number;
+  unresolved: number;
+}
+
+export interface LegacyImportCorpusManifest {
+  version: 1;
+  cases: readonly LegacyImportCorpusManifestCase[];
+  surfaces: readonly LegacyImportCorpusManifestSurface[];
+  parity: readonly LegacyImportCorpusManifestParityRow[];
+  totals: LegacyImportCorpusManifestTotals;
 }
 
 function sha256(value: string | Buffer): LegacyImportSha256 {
@@ -450,4 +526,393 @@ export function validateLegacyImportCorpusCase(corpusCase: LegacyImportCorpusCas
   if (canonicalJson(oracle.counts) !== canonicalJson(counts)) {
     fail(corpusCase, "$.counts", "counts do not match their entries");
   }
+}
+
+const MANIFEST_ROOT_KEYS = ["version", "cases", "surfaces", "parity", "totals"] as const;
+const MANIFEST_CASE_KEYS = [
+  "name",
+  "role",
+  "source_count",
+  "file_set_hash",
+  "oracle_hash",
+  "source_set_hash",
+  "change_set_hash",
+  "diagnosis_count",
+  "resolution_count",
+  "counts",
+] as const;
+const MANIFEST_SURFACE_KEYS = ["id", "expected_dispositions", "aliases", "scenarios"] as const;
+const MANIFEST_PARITY_KEYS = [
+  "id",
+  "case",
+  "path",
+  "parser",
+  "implementations",
+  "native_unavailable",
+] as const;
+const MANIFEST_TOTAL_KEYS = [
+  "cases",
+  "sources",
+  "changes",
+  "diagnoses",
+  "resolutions",
+  "create",
+  "update",
+  "delete",
+  "preserve",
+  "mapped",
+  "preserved",
+  "unparsed",
+  "ignored_with_reason",
+  "requires_user",
+  "unsupported",
+  "unresolved",
+] as const;
+
+function manifestFail(path: string, message: string): never {
+  throw new Error(`[corpus v1] at ${path}: ${message}`);
+}
+
+function assertManifestKeys(value: unknown, expected: readonly string[], path: string): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    manifestFail(path, "must be an object");
+  }
+  const actual = Object.keys(value);
+  if (canonicalJson(actual) !== canonicalJson(expected)) {
+    manifestFail(path, `keys must be exactly ${expected.join(", ")} in canonical order`);
+  }
+}
+
+function assertManifestArray(value: unknown, path: string): asserts value is readonly unknown[] {
+  if (!Array.isArray(value)) manifestFail(path, "must be an array");
+}
+
+function assertManifestString(value: unknown, path: string): asserts value is string {
+  if (typeof value !== "string" || value.trim().length === 0 || value !== value.trim()) {
+    manifestFail(path, "must be a stable non-empty string");
+  }
+}
+
+function assertManifestCount(value: unknown, path: string): asserts value is number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    manifestFail(path, "must be a non-negative safe integer");
+  }
+}
+
+function assertManifestHash(value: unknown, path: string): asserts value is LegacyImportSha256 {
+  if (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/.test(value)) {
+    manifestFail(path, "must be a lowercase SHA-256 fingerprint");
+  }
+}
+
+function assertManifestOrder(values: readonly string[], path: string): void {
+  if (new Set(values).size !== values.length) manifestFail(path, "entries must be unique");
+  if (canonicalJson(values) !== canonicalJson([...values].sort())) {
+    manifestFail(path, "entries must use canonical lexical order");
+  }
+}
+
+function assertManifestStringList(value: unknown, path: string): readonly string[] {
+  assertManifestArray(value, path);
+  const values = value.map((entry, index) => {
+    assertManifestString(entry, `${path}[${index}]`);
+    return entry;
+  });
+  if (values.length === 0) manifestFail(path, "must not be empty");
+  assertManifestOrder(values, path);
+  return values;
+}
+
+function assertExactManifestValues(
+  actual: readonly string[],
+  expected: readonly string[],
+  path: string,
+  label: string,
+): void {
+  if (canonicalJson(actual) !== canonicalJson(expected)) {
+    manifestFail(path, `${label} must exactly match the production registry`);
+  }
+}
+
+function fileSetHash(corpusCase: LegacyImportCorpusCase): LegacyImportSha256 {
+  const rows = corpusCase.files.map((file) => ({
+    path: file.path,
+    entry_kind: file.entryKind,
+    byte_size: file.byteSize,
+    sha256: file.sha256,
+  })).sort((left, right) => {
+    if (left.path < right.path) return -1;
+    if (left.path > right.path) return 1;
+    return 0;
+  });
+  return legacyImportCorpusHash(rows);
+}
+
+function validateManifestCoverageRows(
+  rows: unknown,
+  path: string,
+  key: "name" | "id",
+  expectedNames: readonly string[],
+  casesByName: ReadonlyMap<string, LegacyImportCorpusCase>,
+  rolesByCase: ReadonlyMap<string, LegacyImportCorpusCaseRole>,
+): void {
+  assertManifestArray(rows, path);
+  const names: string[] = [];
+  rows.forEach((row, index) => {
+    const rowPath = `${path}[${index}]`;
+    assertManifestKeys(row, [key, "cases"], rowPath);
+    const record = row as Record<string, unknown>;
+    assertManifestString(record[key], `${rowPath}.${key}`);
+    names.push(record[key]);
+    const caseNames = assertManifestStringList(record.cases, `${rowPath}.cases`);
+    for (const caseName of caseNames) {
+      if (!casesByName.has(caseName)) {
+        manifestFail(`${rowPath}.cases`, `references unknown case ${caseName}`);
+      }
+    }
+    if (!caseNames.some((caseName) => rolesByCase.get(caseName) === "coverage")) {
+      manifestFail(`${rowPath}.cases`, "must include at least one coverage case");
+    }
+  });
+  assertManifestOrder(names, path);
+  assertExactManifestValues(names, [...expectedNames].sort(), path, key === "name" ? "aliases" : "scenarios");
+}
+
+function validateManifestCaseEntry(
+  entry: LegacyImportCorpusManifestCase,
+  index: number,
+  corpusCase: LegacyImportCorpusCase,
+): void {
+  const path = `$.cases[${index}]`;
+  assertManifestKeys(entry, MANIFEST_CASE_KEYS, path);
+  assertManifestString(entry.name, `${path}.name`);
+  if (!["coverage", "capstone", "validator-smoke"].includes(entry.role)) {
+    manifestFail(`${path}.role`, "must be coverage, capstone, or validator-smoke");
+  }
+  for (const key of ["source_count", "diagnosis_count", "resolution_count"] as const) {
+    assertManifestCount(entry[key], `${path}.${key}`);
+  }
+  for (const key of ["file_set_hash", "oracle_hash", "source_set_hash", "change_set_hash"] as const) {
+    assertManifestHash(entry[key], `${path}.${key}`);
+  }
+  assertManifestKeys(entry.counts, LEGACY_IMPORT_PREVIEW_COUNT_KEYS, `${path}.counts`);
+  for (const key of LEGACY_IMPORT_PREVIEW_COUNT_KEYS) assertManifestCount(entry.counts[key], `${path}.counts.${key}`);
+
+  try {
+    validateLegacyImportCorpusCase(corpusCase);
+  } catch (error) {
+    manifestFail(path, error instanceof Error ? error.message : String(error));
+  }
+
+  const oracle = corpusCase.oracle;
+  const expected = {
+    source_count: corpusCase.files.length,
+    file_set_hash: fileSetHash(corpusCase),
+    oracle_hash: legacyImportCorpusHash(oracle),
+    source_set_hash: oracle.source_set_hash,
+    change_set_hash: oracle.change_set_hash,
+    diagnosis_count: oracle.diagnoses.length,
+    resolution_count: oracle.resolutions.length,
+    counts: oracle.counts,
+  };
+  for (const key of [
+    "source_count",
+    "file_set_hash",
+    "oracle_hash",
+    "source_set_hash",
+    "change_set_hash",
+    "diagnosis_count",
+    "resolution_count",
+    "counts",
+  ] as const) {
+    if (canonicalJson(entry[key]) !== canonicalJson(expected[key])) {
+      manifestFail(`${path}.${key}`, `does not match case ${entry.name}`);
+    }
+  }
+}
+
+function aggregateManifestTotals(cases: readonly LegacyImportCorpusCase[]): LegacyImportCorpusManifestTotals {
+  const totals: LegacyImportCorpusManifestTotals = {
+    cases: cases.length,
+    sources: 0,
+    changes: 0,
+    diagnoses: 0,
+    resolutions: 0,
+    create: 0,
+    update: 0,
+    delete: 0,
+    preserve: 0,
+    mapped: 0,
+    preserved: 0,
+    unparsed: 0,
+    ignored_with_reason: 0,
+    requires_user: 0,
+    unsupported: 0,
+    unresolved: 0,
+  };
+  for (const corpusCase of cases) {
+    const oracle = corpusCase.oracle;
+    totals.sources += oracle.sources.length;
+    totals.changes += oracle.changes.length;
+    totals.diagnoses += oracle.diagnoses.length;
+    totals.resolutions += oracle.resolutions.length;
+    for (const change of oracle.changes) totals[change.action] += 1;
+    for (const source of oracle.sources) {
+      const key = source.outcome === "ignored-with-reason" ? "ignored_with_reason" : source.outcome;
+      totals[key] += 1;
+    }
+    for (const resolution of oracle.resolutions) {
+      if (resolution.disposition === "requires-user") totals.requires_user += 1;
+      if (resolution.disposition === "unsupported") totals.unsupported += 1;
+    }
+  }
+  totals.unresolved = totals.requires_user + totals.unsupported;
+  return totals;
+}
+
+function assertAggregateCoverage(cases: readonly LegacyImportCorpusCase[]): void {
+  const actions = new Set<LegacyImportChangeAction>();
+  const outcomes = new Set<LegacyImportSourceOutcome>();
+  const dispositions = new Set<LegacyImportResolutionDisposition>();
+  for (const corpusCase of cases) {
+    corpusCase.oracle.changes.forEach((change) => actions.add(change.action));
+    corpusCase.oracle.sources.forEach((source) => outcomes.add(source.outcome));
+    corpusCase.oracle.resolutions.forEach((resolution) => dispositions.add(resolution.disposition));
+  }
+  assertExactManifestValues([...actions].sort(), [...LEGACY_IMPORT_CHANGE_ACTIONS].sort(), "$.totals", "change actions");
+  assertExactManifestValues([...outcomes].sort(), [...LEGACY_IMPORT_SOURCE_OUTCOMES].sort(), "$.totals", "source outcomes");
+  assertExactManifestValues(
+    [...dispositions].sort(),
+    [...LEGACY_IMPORT_RESOLUTION_DISPOSITIONS].sort(),
+    "$.totals",
+    "resolution dispositions",
+  );
+}
+
+export function loadLegacyImportCorpusManifest(corpusRoot: URL): LegacyImportCorpusManifest {
+  try {
+    return JSON.parse(
+      readFileSync(fileURLToPath(new URL("./corpus.json", corpusRoot)), "utf8"),
+    ) as LegacyImportCorpusManifest;
+  } catch (error) {
+    manifestFail("$", `cannot load corpus.json: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export function validateLegacyImportCorpusManifest(
+  manifest: LegacyImportCorpusManifest,
+  cases: readonly LegacyImportCorpusCase[],
+  registry: readonly LegacyImportSurface[],
+): void {
+  assertManifestKeys(manifest, MANIFEST_ROOT_KEYS, "$");
+  if (manifest.version !== 1) manifestFail("$.version", "must equal 1");
+  assertManifestArray(manifest.cases, "$.cases");
+  assertManifestArray(manifest.surfaces, "$.surfaces");
+  assertManifestArray(manifest.parity, "$.parity");
+  if (manifest.parity.length === 0) manifestFail("$.parity", "must not be empty");
+  assertManifestKeys(manifest.totals, MANIFEST_TOTAL_KEYS, "$.totals");
+
+  const caseNames = cases.map((corpusCase) => corpusCase.name);
+  if (new Set(caseNames).size !== caseNames.length) manifestFail("$.cases", "discovered case names must be unique");
+  const casesByName = new Map(cases.map((corpusCase) => [corpusCase.name, corpusCase]));
+  const manifestCaseNames = manifest.cases.map((entry, index) => {
+    assertManifestString(entry?.name, `$.cases[${index}].name`);
+    return entry.name;
+  });
+  assertManifestOrder(manifestCaseNames, "$.cases");
+  assertExactManifestValues(manifestCaseNames, [...caseNames].sort(), "$.cases", "case names");
+  const rolesByCase = new Map<string, LegacyImportCorpusCaseRole>();
+  manifest.cases.forEach((entry, index) => {
+    const corpusCase = casesByName.get(entry.name);
+    if (!corpusCase) manifestFail(`$.cases[${index}].name`, `references unknown case ${entry.name}`);
+    validateManifestCaseEntry(entry, index, corpusCase);
+    rolesByCase.set(entry.name, entry.role);
+  });
+
+  const registryIds = registry.map((surface) => surface.id);
+  if (new Set(registryIds).size !== registryIds.length) manifestFail("$.surfaces", "production registry IDs must be unique");
+  const registryById = new Map(registry.map((surface) => [surface.id, surface]));
+  const surfaceIds = manifest.surfaces.map((surface, index) => {
+    assertManifestKeys(surface, MANIFEST_SURFACE_KEYS, `$.surfaces[${index}]`);
+    assertManifestString(surface.id, `$.surfaces[${index}].id`);
+    return surface.id;
+  });
+  assertManifestOrder(surfaceIds, "$.surfaces");
+  assertExactManifestValues(surfaceIds, [...registryIds].sort(), "$.surfaces", "surface IDs");
+  manifest.surfaces.forEach((entry, index) => {
+    const path = `$.surfaces[${index}]`;
+    const surface = registryById.get(entry.id);
+    if (!surface) manifestFail(`${path}.id`, `references unknown surface ${entry.id}`);
+    assertManifestArray(entry.expected_dispositions, `${path}.expected_dispositions`);
+    entry.expected_dispositions.forEach((value, dispositionIndex) => {
+      assertManifestString(value, `${path}.expected_dispositions[${dispositionIndex}]`);
+    });
+    assertExactManifestValues(
+      entry.expected_dispositions,
+      surface.expectedDispositions,
+      `${path}.expected_dispositions`,
+      "expected dispositions",
+    );
+    validateManifestCoverageRows(
+      entry.aliases,
+      `${path}.aliases`,
+      "name",
+      surface.aliases,
+      casesByName,
+      rolesByCase,
+    );
+    validateManifestCoverageRows(
+      entry.scenarios,
+      `${path}.scenarios`,
+      "id",
+      surface.requiredScenarios,
+      casesByName,
+      rolesByCase,
+    );
+  });
+
+  const parityIds = manifest.parity.map((row, index) => {
+    const path = `$.parity[${index}]`;
+    assertManifestKeys(row, MANIFEST_PARITY_KEYS, path);
+    assertManifestString(row.id, `${path}.id`);
+    assertManifestString(row.case, `${path}.case`);
+    assertManifestString(row.path, `${path}.path`);
+    assertManifestString(row.parser, `${path}.parser`);
+    if (row.parser !== "roadmap") manifestFail(`${path}.parser`, "must equal roadmap");
+    const implementations = assertManifestStringList(row.implementations, `${path}.implementations`);
+    assertExactManifestValues(implementations, ["native", "typescript"], `${path}.implementations`, "parity implementations");
+    if (row.native_unavailable !== "explicit-diagnostic") {
+      manifestFail(`${path}.native_unavailable`, "must equal explicit-diagnostic");
+    }
+    const corpusCase = casesByName.get(row.case);
+    if (!corpusCase) manifestFail(`${path}.case`, `references unknown case ${row.case}`);
+    if (!corpusCase.files.some((file) => file.path === row.path)) {
+      manifestFail(`${path}.path`, `does not exist in case ${row.case}`);
+    }
+    return row.id;
+  });
+  assertManifestOrder(parityIds, "$.parity");
+  const expectedParityIds = registry
+    .filter((surface) => surface.interpreter.implementations.includes("native")
+      && surface.interpreter.implementations.includes("typescript"))
+    .map((surface) => {
+      if (surface.id === "gsd-flat-hierarchy") return "flat-roadmap";
+      if (surface.id === "gsd-nested-hierarchy") return "nested-roadmap";
+      manifestFail("$.parity", `dual implementation surface lacks a sealed parity row: ${surface.id}`);
+    })
+    .sort();
+  assertExactManifestValues(parityIds, expectedParityIds, "$.parity", "parity rows");
+
+  for (const key of MANIFEST_TOTAL_KEYS) assertManifestCount(manifest.totals[key], `$.totals.${key}`);
+  const expectedTotals = aggregateManifestTotals(cases);
+  if (canonicalJson(manifest.totals) !== canonicalJson(expectedTotals)) {
+    manifestFail("$.totals", "does not match aggregate corpus accounting");
+  }
+  if (manifest.totals.diagnoses !== manifest.totals.resolutions) {
+    manifestFail("$.totals.resolutions", "must equal diagnoses");
+  }
+  if (manifest.totals.unresolved !== manifest.totals.requires_user + manifest.totals.unsupported) {
+    manifestFail("$.totals.unresolved", "must equal requires_user plus unsupported");
+  }
+  assertAggregateCoverage(cases);
 }
