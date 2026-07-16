@@ -2,11 +2,16 @@
 // File Purpose: Verified legacy-import backup v1 contract and fail-closed validation tests.
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
+  existsSync,
   linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  readSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -14,8 +19,10 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, test, type TestContext } from "node:test";
 
 import type { LegacyImportPreviewSource, LegacyImportSha256 } from "../legacy-import-contract.ts";
@@ -23,7 +30,8 @@ import {
   LegacyImportBaseSnapshotError,
   type LegacyImportBaseSnapshot,
 } from "../legacy-import-preview-base.ts";
-import type { DbAdapter, DbStatement } from "../db-adapter.ts";
+import { createDbAdapter, type DbAdapter, type DbStatement } from "../db-adapter.ts";
+import { createSqliteProviderLoader } from "../db-provider.ts";
 import {
   hashLegacyImportValue,
   sealLegacyImportPreview,
@@ -31,6 +39,7 @@ import {
 } from "../legacy-import-preview.ts";
 import {
   _prepareLegacyImportBackupPreflightForTest,
+  createLegacyImportBackupSnapshot,
   LegacyImportBackupError,
   prepareLegacyImportBackupPreflight,
   sealLegacyImportVerifiedBackup,
@@ -38,7 +47,10 @@ import {
   type LegacyImportVerifiedBackup,
   type LegacyImportVerifiedBackupExpected,
   type LegacyImportVerifiedBackupSealInput,
+  type LegacyImportBackupSnapshot,
+  type LegacyImportBackupSnapshotDependencies,
 } from "../legacy-import-backup.ts";
+import * as legacyImportBackup from "../legacy-import-backup.ts";
 import {
   validateLegacyImportSourceRoots,
   type LegacyImportSourceRoot,
@@ -1213,5 +1225,685 @@ describe("legacy import backup checkpoint", () => {
     assert.equal(rowDrift.authority.revision, baseSnapshot().authority.revision);
     assert.equal(rowDrift.authority.authority_epoch, baseSnapshot().authority.authority_epoch);
     assert.notEqual(rowDrift.relevant_rows_hash, baseSnapshot().relevant_rows_hash);
+  });
+});
+
+type LegacyImportBackupPreflightForTest = ReturnType<
+  typeof _prepareLegacyImportBackupPreflightForTest
+>;
+
+function createBackupSnapshotForTest(
+  preflight: LegacyImportBackupPreflightForTest,
+  dependencies: LegacyImportBackupSnapshotDependencies,
+): LegacyImportBackupSnapshot {
+  const boundary = (
+    legacyImportBackup as unknown as {
+      _createLegacyImportBackupSnapshotForTest?: (
+        input: LegacyImportBackupPreflightForTest,
+        dependencies: LegacyImportBackupSnapshotDependencies,
+      ) => LegacyImportBackupSnapshot;
+    }
+  )._createLegacyImportBackupSnapshotForTest;
+  assert.ok(boundary, "legacy backup snapshot test boundary must be implemented");
+  return boundary(preflight, dependencies);
+}
+
+function sha256Bytes(bytes: Uint8Array): LegacyImportSha256 {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+interface FakeSnapshotDbOptions {
+  databasePath: string;
+  dataVersions?: readonly number[];
+  snapshot?(path: string): void;
+}
+
+function fakeSnapshotDb(options: FakeSnapshotDbOptions): {
+  db: DbAdapter;
+  calls: {
+    exec: number;
+    databaseList: number;
+    dataVersion: number;
+    vacuum: number;
+    vacuumSql: string[];
+    vacuumParams: unknown[][];
+  };
+} {
+  const dataVersions = [...(options.dataVersions ?? [9])];
+  const calls = {
+    exec: 0,
+    databaseList: 0,
+    dataVersion: 0,
+    vacuum: 0,
+    vacuumSql: [] as string[],
+    vacuumParams: [] as unknown[][],
+  };
+  const db: DbAdapter = {
+    exec() {
+      calls.exec += 1;
+      throw new Error("backup snapshot must not use exec");
+    },
+    prepare(sql): DbStatement {
+      const normalized = sql.trim().toLowerCase();
+      if (normalized === "vacuum into ?") {
+        calls.vacuumSql.push(sql);
+        return {
+          run(...params: unknown[]): unknown {
+            calls.vacuum += 1;
+            calls.vacuumParams.push(params);
+            assert.equal(params.length, 1);
+            assert.equal(typeof params[0], "string");
+            (options.snapshot ?? ((path: string) => writeFileSync(path, "sqlite-snapshot")))(
+              params[0] as string,
+            );
+            return undefined;
+          },
+          get: () => undefined,
+          all: () => [],
+        };
+      }
+      if (normalized.includes("database_list")) {
+        return {
+          run: () => undefined,
+          get: () => {
+            calls.databaseList += 1;
+            return { seq: 0, name: "main", file: options.databasePath };
+          },
+          all: () => [],
+        };
+      }
+      if (normalized.includes("data_version")) {
+        return {
+          run: () => undefined,
+          get: () => {
+            calls.dataVersion += 1;
+            return { data_version: dataVersions.shift() ?? 9 };
+          },
+          all: () => [],
+        };
+      }
+      throw new Error(`unexpected snapshot SQL: ${sql}`);
+    },
+    close() {},
+  };
+  return { db, calls };
+}
+
+function snapshotFixture(
+  t: TestContext,
+  options: {
+    dataVersions?: readonly number[];
+    snapshot?(path: string): void;
+  } = {},
+) {
+  const preflightSource = preflightFixture(t);
+  const preflight = _prepareLegacyImportBackupPreflightForTest(
+    preflightSource.input,
+    preflightSource.dependencies,
+  );
+  const fake = fakeSnapshotDb({
+    databasePath: preflightSource.databasePath,
+    dataVersions: options.dataVersions,
+    snapshot: options.snapshot,
+  });
+  const dependencies: LegacyImportBackupSnapshotDependencies = {
+    db: fake.db,
+    database_path: preflightSource.databasePath,
+    captureBase: () => structuredClone(preflight.current_base),
+    isInTransaction: () => false,
+  };
+  return { ...preflightSource, preflight, snapshotDb: fake, snapshotDependencies: dependencies };
+}
+
+function expectSnapshotError(
+  fn: () => unknown,
+  expected: {
+    stage: string;
+    code: string;
+    retryable: boolean;
+    context?: Readonly<Record<string, unknown>>;
+  },
+): LegacyImportBackupError {
+  return expectPreflightError(fn, expected);
+}
+
+function assertNoStagingOrPublish(fixture: ReturnType<typeof snapshotFixture>): void {
+  assert.equal(existsSync(fixture.preflight.destination_path), false);
+  assert.deepEqual(readdirSync(fixture.destinationDirectory), []);
+}
+
+describe("legacy import backup snapshot", () => {
+  test("uses one parameter-bound VACUUM INTO and returns one private fixed-child snapshot", (t) => {
+    const fixture = snapshotFixture(t);
+    const liveBytes = readFileSync(fixture.databasePath);
+    assert.equal(typeof createLegacyImportBackupSnapshot, "function");
+    const result = createBackupSnapshotForTest(fixture.preflight, fixture.snapshotDependencies);
+    const stagingStat = lstatSync(result.staging_path, { bigint: true });
+    const stagingDirectoryStat = statSync(result.staging_directory);
+    const stagingDirectoryBigStat = lstatSync(result.staging_directory, { bigint: true });
+
+    assert.deepEqual(fixture.snapshotDb.calls.vacuumSql, ["VACUUM INTO ?"]);
+    assert.deepEqual(fixture.snapshotDb.calls.vacuumParams, [[result.staging_path]]);
+    assert.equal(fixture.snapshotDb.calls.vacuum, 1);
+    assert.equal(fixture.snapshotDb.calls.exec, 0);
+    assert.equal(basename(result.staging_directory).startsWith("."), true);
+    assert.equal(basename(result.staging_path), "snapshot.sqlite");
+    assert.equal(dirname(result.staging_path), result.staging_directory);
+    assert.notEqual(result.staging_path, fixture.preflight.destination_path);
+    assert.deepEqual(readdirSync(result.staging_directory), ["snapshot.sqlite"]);
+    assert.equal(stagingDirectoryStat.isDirectory(), true);
+    assert.equal(stagingDirectoryStat.mode & 0o077, 0, "private staging directory permissions");
+    assert.deepEqual(result.staging_directory_identity, {
+      dev: stagingDirectoryBigStat.dev.toString(),
+      ino: stagingDirectoryBigStat.ino.toString(),
+    });
+    assert.equal(stagingStat.isFile(), true);
+    assert.equal(stagingStat.isSymbolicLink(), false);
+    assert.equal(stagingStat.size > 0n, true);
+    assert.deepEqual(result.staging_identity, {
+      dev: stagingStat.dev.toString(),
+      ino: stagingStat.ino.toString(),
+    });
+    assert.equal(result.backup_byte_size, Number(stagingStat.size));
+    assert.equal(result.backup_sha256, sha256Bytes(readFileSync(result.staging_path)));
+    assert.deepEqual(Object.keys(result).sort(), [
+      "backup_byte_size",
+      "backup_sha256",
+      "staging_directory",
+      "staging_directory_identity",
+      "staging_identity",
+      "staging_path",
+    ]);
+    assert.equal(Object.isFrozen(result), true);
+    assert.equal(Object.isFrozen(result.staging_directory_identity), true);
+    assert.equal(Object.isFrozen(result.staging_identity), true);
+    assert.equal(existsSync(fixture.preflight.destination_path), false);
+    assert.deepEqual(readFileSync(fixture.databasePath), liveBytes);
+  });
+
+  test("creates unique unpublished staging directories on independent fresh preflights", (t) => {
+    const first = snapshotFixture(t);
+    const second = snapshotFixture(t);
+
+    const firstResult = createBackupSnapshotForTest(first.preflight, first.snapshotDependencies);
+    const secondResult = createBackupSnapshotForTest(second.preflight, second.snapshotDependencies);
+
+    assert.notEqual(firstResult.staging_directory, secondResult.staging_directory);
+    assert.equal(existsSync(first.preflight.destination_path), false);
+    assert.equal(existsSync(second.preflight.destination_path), false);
+  });
+
+  test("rejects stale database, destination, final leaf, or active transaction before VACUUM", (t) => {
+    const cases: ReadonlyArray<{
+      mutate(fixture: ReturnType<typeof snapshotFixture>): void;
+      dependencies?(fixture: ReturnType<typeof snapshotFixture>): Partial<LegacyImportBackupSnapshotDependencies>;
+      expected: { stage: string; code: string; retryable: boolean };
+    }> = [
+      {
+        mutate(fixture) {
+          renameSync(fixture.databasePath, `${fixture.databasePath}.moved`);
+          writeFileSync(fixture.databasePath, "replacement");
+        },
+        expected: {
+          stage: "database",
+          code: "LEGACY_IMPORT_BACKUP_DATABASE_IDENTITY_CHANGED",
+          retryable: true,
+        },
+      },
+      {
+        mutate(fixture) {
+          renameSync(fixture.destinationDirectory, `${fixture.destinationDirectory}.moved`);
+          mkdirSync(fixture.destinationDirectory);
+        },
+        expected: {
+          stage: "destination",
+          code: "LEGACY_IMPORT_BACKUP_DESTINATION_INVALID",
+          retryable: true,
+        },
+      },
+      {
+        mutate(fixture) {
+          writeFileSync(fixture.preflight.destination_path, "already published");
+        },
+        expected: {
+          stage: "destination",
+          code: "LEGACY_IMPORT_BACKUP_DESTINATION_EXISTS",
+          retryable: false,
+        },
+      },
+      {
+        mutate() {},
+        dependencies: () => ({ isInTransaction: () => true }),
+        expected: {
+          stage: "snapshot",
+          code: "LEGACY_IMPORT_BACKUP_SNAPSHOT_TRANSACTION_ACTIVE",
+          retryable: false,
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const fixture = snapshotFixture(t);
+      testCase.mutate(fixture);
+      expectSnapshotError(
+        () => createBackupSnapshotForTest(fixture.preflight, {
+          ...fixture.snapshotDependencies,
+          ...testCase.dependencies?.(fixture),
+        }),
+        testCase.expected,
+      );
+      assert.equal(fixture.snapshotDb.calls.vacuum, 0);
+      assert.equal(
+        readdirSync(fixture.destinationDirectory).filter((name) => name.startsWith(".")).length,
+        0,
+      );
+    }
+  });
+
+  test("rechecks private staging immediately before VACUUM and cleans injected children", (t) => {
+    const fixture = snapshotFixture(t);
+    let stagingDirectoryReads = 0;
+    fixture.snapshotDependencies.lstat = (path) => {
+      const stat = lstatSync(path, { bigint: true });
+      if (
+        stat.isDirectory()
+        && basename(path).includes(".staging-")
+      ) {
+        stagingDirectoryReads += 1;
+        if (stagingDirectoryReads === 2) {
+          writeFileSync(join(path, "snapshot.sqlite"), "injected before VACUUM");
+        }
+      }
+      return stat;
+    };
+
+    expectSnapshotError(
+      () => createBackupSnapshotForTest(fixture.preflight, fixture.snapshotDependencies),
+      {
+        stage: "snapshot",
+        code: "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+        retryable: false,
+      },
+    );
+    assert.equal(fixture.snapshotDb.calls.vacuum, 0);
+    assertNoStagingOrPublish(fixture);
+  });
+
+  test("rejects pre-existing or concurrent data/base drift and removes staging", (t) => {
+    const preDataDrift = snapshotFixture(t, { dataVersions: [10, 10] });
+    expectSnapshotError(
+      () => createBackupSnapshotForTest(preDataDrift.preflight, preDataDrift.snapshotDependencies),
+      {
+        stage: "snapshot",
+        code: "LEGACY_IMPORT_BACKUP_SNAPSHOT_CHANGED",
+        retryable: true,
+        context: { expected_data_version: 9, observed_data_version: 10 },
+      },
+    );
+    assert.equal(preDataDrift.snapshotDb.calls.dataVersion, 2);
+    assert.equal(preDataDrift.snapshotDb.calls.vacuum, 0);
+    assertNoStagingOrPublish(preDataDrift);
+
+    const preBaseDrift = snapshotFixture(t);
+    preBaseDrift.snapshotDependencies.captureBase = () => ({
+      ...structuredClone(preBaseDrift.preflight.current_base),
+      authority: {
+        ...structuredClone(preBaseDrift.preflight.current_base.authority),
+        revision: preBaseDrift.preflight.current_base.authority.revision + 1,
+      },
+    });
+    expectSnapshotError(
+      () => createBackupSnapshotForTest(preBaseDrift.preflight, preBaseDrift.snapshotDependencies),
+      {
+        stage: "base",
+        code: "LEGACY_IMPORT_BACKUP_BASE_CHANGED",
+        retryable: true,
+      },
+    );
+    assert.equal(preBaseDrift.snapshotDb.calls.vacuum, 0);
+    assertNoStagingOrPublish(preBaseDrift);
+
+    for (const dataVersions of [[9, 9, 10, 10], [9, 9, 9, 10]] as const) {
+      const concurrentDataDrift = snapshotFixture(t, { dataVersions });
+      expectSnapshotError(
+        () => createBackupSnapshotForTest(
+          concurrentDataDrift.preflight,
+          concurrentDataDrift.snapshotDependencies,
+        ),
+        {
+          stage: "snapshot",
+          code: "LEGACY_IMPORT_BACKUP_SNAPSHOT_CHANGED",
+          retryable: true,
+          context: { expected_data_version: 9, observed_data_version: 10 },
+        },
+      );
+      assert.equal(concurrentDataDrift.snapshotDb.calls.dataVersion, 4);
+      assert.equal(concurrentDataDrift.snapshotDb.calls.vacuum, 1);
+      assertNoStagingOrPublish(concurrentDataDrift);
+    }
+
+    const postBaseDrift = snapshotFixture(t);
+    let captures = 0;
+    postBaseDrift.snapshotDependencies.captureBase = () => {
+      captures += 1;
+      if (captures === 1) return structuredClone(postBaseDrift.preflight.current_base);
+      return {
+        ...structuredClone(postBaseDrift.preflight.current_base),
+        authority: {
+          ...structuredClone(postBaseDrift.preflight.current_base.authority),
+          revision: postBaseDrift.preflight.current_base.authority.revision + 1,
+        },
+      };
+    };
+    expectSnapshotError(
+      () => createBackupSnapshotForTest(postBaseDrift.preflight, postBaseDrift.snapshotDependencies),
+      {
+        stage: "base",
+        code: "LEGACY_IMPORT_BACKUP_BASE_CHANGED",
+        retryable: true,
+      },
+    );
+    assert.equal(postBaseDrift.snapshotDb.calls.vacuum, 1);
+    assertNoStagingOrPublish(postBaseDrift);
+  });
+
+  test("cleans partial staging after snapshot, sync, read, or hash failure without retry", (t) => {
+    const cases: ReadonlyArray<{
+      configure(fixture: ReturnType<typeof snapshotFixture>): void;
+      stage: string;
+      code: string;
+    }> = [
+      {
+        configure(fixture) {
+          const prepare = fixture.snapshotDb.db.prepare.bind(fixture.snapshotDb.db);
+          fixture.snapshotDb.db.prepare = (sql: string): DbStatement => {
+            if (sql.trim().toLowerCase() !== "vacuum into ?") return prepare(sql);
+            return {
+              run(path: unknown) {
+                fixture.snapshotDb.calls.vacuum += 1;
+                writeFileSync(path as string, "partial");
+                throw new Error("snapshot failed after partial output");
+              },
+              get: () => undefined,
+              all: () => [],
+            };
+          };
+        },
+        stage: "snapshot",
+        code: "LEGACY_IMPORT_BACKUP_SNAPSHOT_FAILED",
+      },
+      {
+        configure(fixture) {
+          fixture.snapshotDependencies.fsync = () => { throw new Error("sync failed"); };
+        },
+        stage: "sync",
+        code: "LEGACY_IMPORT_BACKUP_SYNC_FAILED",
+      },
+      {
+        configure(fixture) {
+          fixture.snapshotDependencies.read = () => { throw new Error("read failed"); };
+        },
+        stage: "read",
+        code: "LEGACY_IMPORT_BACKUP_READ_FAILED",
+      },
+      {
+        configure(fixture) {
+          fixture.snapshotDependencies.createHash = () => { throw new Error("hash failed"); };
+        },
+        stage: "hash",
+        code: "LEGACY_IMPORT_BACKUP_HASH_FAILED",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const fixture = snapshotFixture(t);
+      testCase.configure(fixture);
+      expectSnapshotError(
+        () => createBackupSnapshotForTest(fixture.preflight, fixture.snapshotDependencies),
+        {
+          stage: testCase.stage,
+          code: testCase.code,
+          retryable: false,
+        },
+      );
+      assert.equal(fixture.snapshotDb.calls.vacuum, 1, "snapshot is never retried internally");
+      assertNoStagingOrPublish(fixture);
+    }
+  });
+
+  test("does not retry a busy VACUUM internally and requires a fresh preflight", (t) => {
+    const fixture = snapshotFixture(t, {
+      snapshot() {
+        const error = new Error("database is locked") as Error & { code: string };
+        error.code = "SQLITE_BUSY";
+        throw error;
+      },
+    });
+
+    expectSnapshotError(
+      () => createBackupSnapshotForTest(fixture.preflight, fixture.snapshotDependencies),
+      {
+        stage: "snapshot",
+        code: "LEGACY_IMPORT_BACKUP_SNAPSHOT_FAILED",
+        retryable: true,
+      },
+    );
+    assert.equal(fixture.snapshotDb.calls.vacuum, 1);
+    assertNoStagingOrPublish(fixture);
+  });
+
+  test("rejects zero, symlink, mutation, or replacement staging output and cleans it", (t) => {
+    const target = join(tmpdir(), `gsd-legacy-snapshot-target-${process.pid}`);
+    rmSync(target, { force: true });
+    t.after(() => rmSync(target, { force: true }));
+    const snapshots: ReadonlyArray<(path: string) => void> = [
+      (path) => writeFileSync(path, Buffer.alloc(0)),
+      (path) => {
+        writeFileSync(target, "symlink target");
+        symlinkSync(target, path, "file");
+      },
+      ...["-wal", "-shm", "-journal"].map((suffix) => (path: string) => {
+        writeFileSync(path, "sqlite-snapshot");
+        writeFileSync(`${path}${suffix}`, "unexpected sidecar");
+      }),
+    ];
+
+    for (const snapshot of snapshots) {
+      const fixture = snapshotFixture(t, { snapshot });
+      expectSnapshotError(
+        () => createBackupSnapshotForTest(fixture.preflight, fixture.snapshotDependencies),
+        {
+          stage: "snapshot",
+          code: "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+          retryable: false,
+        },
+      );
+      assertNoStagingOrPublish(fixture);
+    }
+
+    const oversized = snapshotFixture(t);
+    oversized.snapshotDependencies.lstat = (path) => {
+      const stat = lstatSync(path, { bigint: true });
+      if (basename(path) === "snapshot.sqlite") {
+        Object.defineProperty(stat, "size", {
+          configurable: true,
+          value: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+        });
+      }
+      return stat;
+    };
+    expectSnapshotError(
+      () => createBackupSnapshotForTest(oversized.preflight, oversized.snapshotDependencies),
+      {
+        stage: "snapshot",
+        code: "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+        retryable: false,
+      },
+    );
+    assertNoStagingOrPublish(oversized);
+
+    const mutation = snapshotFixture(t);
+    let mutated = false;
+    mutation.snapshotDependencies.read = (fd, buffer, offset, length) => {
+      const bytesRead = readSync(fd, buffer, offset, length, null);
+      if (!mutated && bytesRead > 0) {
+        mutated = true;
+        const [stagingName] = readdirSync(mutation.destinationDirectory);
+        assert.ok(stagingName);
+        const snapshotPath = join(mutation.destinationDirectory, stagingName, "snapshot.sqlite");
+        const original = readFileSync(snapshotPath);
+        writeFileSync(snapshotPath, Buffer.alloc(original.byteLength, 0x78));
+      }
+      return bytesRead;
+    };
+    expectSnapshotError(
+      () => createBackupSnapshotForTest(mutation.preflight, mutation.snapshotDependencies),
+      {
+        stage: "snapshot",
+        code: "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+        retryable: false,
+      },
+    );
+    assertNoStagingOrPublish(mutation);
+
+    const replacement = snapshotFixture(t);
+    let replaced = false;
+    replacement.snapshotDependencies.read = (fd, buffer, offset, length) => {
+      const bytesRead = readSync(fd, buffer, offset, length, null);
+      if (!replaced && bytesRead > 0) {
+        replaced = true;
+        const [stagingName] = readdirSync(replacement.destinationDirectory);
+        assert.ok(stagingName);
+        const path = join(replacement.destinationDirectory, stagingName, "snapshot.sqlite");
+        const bytes = readFileSync(path);
+        renameSync(path, `${path}.replaced`);
+        writeFileSync(path, bytes);
+      }
+      return bytesRead;
+    };
+    expectSnapshotError(
+      () => createBackupSnapshotForTest(replacement.preflight, replacement.snapshotDependencies),
+      {
+        stage: "snapshot",
+        code: "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+        retryable: false,
+      },
+    );
+    assertNoStagingOrPublish(replacement);
+  });
+
+  function realProviderSnapshotTest(
+    provider: string,
+    openRaw: (path: string) => unknown,
+    t: TestContext,
+  ): void {
+    const workspace = mkdtempSync(join(tmpdir(), `gsd snapshot ${provider} '路径'-`));
+    t.after(() => rmSync(workspace, { recursive: true, force: true }));
+    const databasePath = join(workspace, "live db 'α'.sqlite");
+    const destinationDirectory = join(workspace, "backup space 'β'");
+    mkdirSync(destinationDirectory);
+    const adapter = createDbAdapter(openRaw(databasePath));
+    t.after(() => adapter.close());
+    adapter.exec("PRAGMA journal_mode=WAL");
+    adapter.exec("CREATE TABLE wal_sentinel (value TEXT NOT NULL)");
+    adapter.prepare("INSERT INTO wal_sentinel (value) VALUES (?)").run("committed only in WAL");
+    assert.equal(existsSync(`${databasePath}-wal`), true);
+    assert.equal(statSync(`${databasePath}-wal`).size > 0, true);
+
+    const databaseStat = statSync(databasePath, { bigint: true });
+    const destinationStat = statSync(destinationDirectory, { bigint: true });
+    const base = baseSnapshot(workspace);
+    const dataVersion = adapter.prepare("PRAGMA data_version").get()?.["data_version"];
+    assert.equal(typeof dataVersion, "number");
+    const preflight: LegacyImportBackupPreflightForTest = Object.freeze({
+      database_path: realpathSync(databasePath),
+      database_identity: Object.freeze({
+        dev: databaseStat.dev.toString(),
+        ino: databaseStat.ino.toString(),
+      }),
+      destination_directory: realpathSync(destinationDirectory),
+      destination_directory_identity: Object.freeze({
+        dev: destinationStat.dev.toString(),
+        ino: destinationStat.ino.toString(),
+      }),
+      destination_path: join(realpathSync(destinationDirectory), "before-import.sqlite"),
+      label: "before-import",
+      root_set_hash: EMPTY_HASH,
+      checkpoint: Object.freeze({ mode: "wal", busy: 0, log: 0, checkpointed: 0, attempts: 1 }),
+      data_version: dataVersion as number,
+      current_base: Object.freeze(base),
+    });
+    const result = createBackupSnapshotForTest(preflight, {
+      db: adapter,
+      database_path: databasePath,
+      captureBase: () => structuredClone(base),
+      isInTransaction: () => false,
+    });
+    const copied = createDbAdapter(openRaw(result.staging_path));
+    try {
+      assert.equal(
+        copied.prepare("SELECT value FROM wal_sentinel").get()?.["value"],
+        "committed only in WAL",
+      );
+    } finally {
+      copied.close();
+    }
+    assert.equal(existsSync(preflight.destination_path), false);
+  }
+
+  test("includes committed WAL content with node:sqlite across quoted Unicode paths", (t) => {
+    realProviderSnapshotTest("node-sqlite", (path) => new DatabaseSync(path), t);
+  });
+
+  test("includes committed WAL content through the deterministic better-sqlite3 fallback adapter", (t) => {
+    class BetterSqlite3CompatibleDatabase {
+      readonly database: DatabaseSync;
+
+      constructor(path: string) {
+        this.database = new DatabaseSync(path);
+      }
+
+      exec(sql: string): void {
+        this.database.exec(sql);
+      }
+
+      prepare(sql: string) {
+        return this.database.prepare(sql);
+      }
+
+      close(): void {
+        this.database.close();
+      }
+    }
+
+    const loader = createSqliteProviderLoader({
+      tryRequireNodeSqlite() { throw new Error("node:sqlite disabled for fallback proof"); },
+      tryRequireBetterSqlite3() { return BetterSqlite3CompatibleDatabase; },
+      suppressSqliteWarning() {},
+      nodeVersion: process.versions.node,
+      writeStderr(message) { throw new Error(message); },
+    });
+    loader.load();
+    assert.equal(loader.getProviderName(), "better-sqlite3");
+    realProviderSnapshotTest("better-sqlite3-fallback", (path) => loader.openRaw(path), t);
+  });
+
+  const require = createRequire(import.meta.url);
+  let BetterSqlite3: (new (path: string) => unknown) | null = null;
+  try {
+    const loaded = require("better-sqlite3") as (
+      (new (path: string) => unknown) | { default?: new (path: string) => unknown }
+    );
+    BetterSqlite3 = typeof loaded === "function" ? loaded : loaded.default ?? null;
+  } catch {
+    BetterSqlite3 = null;
+  }
+
+  test("includes committed WAL content with better-sqlite3 across quoted Unicode paths", {
+    skip: BetterSqlite3 === null ? "better-sqlite3 is not installed in this workspace" : false,
+  }, (t) => {
+    assert.ok(BetterSqlite3);
+    const Provider = BetterSqlite3;
+    realProviderSnapshotTest("better-sqlite3", (path) => new Provider(path), t);
   });
 });

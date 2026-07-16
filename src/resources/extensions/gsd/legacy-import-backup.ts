@@ -1,7 +1,22 @@
 // Project/App: gsd-pi
 // File Purpose: Immutable v1 contract for a verified legacy-import database backup.
 
-import { lstatSync, realpathSync, statSync, type BigIntStats } from "node:fs";
+import { createHash, randomUUID as createRandomUUID, type Hash } from "node:crypto";
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  type BigIntStats,
+} from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
@@ -11,7 +26,7 @@ import {
   type LegacyImportValue,
 } from "./legacy-import-contract.js";
 import type { DbAdapter } from "./db-adapter.js";
-import { getDbOrNull, getDbPath } from "./db/engine.js";
+import { getDbOrNull, getDbPath, isInTransaction } from "./db/engine.js";
 import {
   captureCurrentLegacyImportBaseSnapshot,
   LegacyImportBaseSnapshotError,
@@ -34,12 +49,26 @@ const VERIFIED_BACKUP_SCHEMA_VERSION = 1 as const;
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const BACKUP_LABEL_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const CHECKPOINT_ATTEMPT_LIMIT = 3;
+const SNAPSHOT_FILE_NAME = "snapshot.sqlite";
+const SNAPSHOT_READ_BUFFER_SIZE = 64 * 1024;
 const BACKUP_PREFLIGHT_INPUT_KEYS = [
   "preview",
   "base",
   "roots",
   "destination_directory",
   "label",
+] as const;
+const BACKUP_PREFLIGHT_KEYS = [
+  "database_path",
+  "database_identity",
+  "destination_directory",
+  "destination_directory_identity",
+  "destination_path",
+  "label",
+  "root_set_hash",
+  "checkpoint",
+  "data_version",
+  "current_base",
 ] as const;
 
 const VERIFIED_BACKUP_KEYS = [
@@ -135,14 +164,27 @@ export type LegacyImportBackupErrorCode =
   | "LEGACY_IMPORT_BACKUP_CHECKPOINT_INVALID"
   | "LEGACY_IMPORT_BACKUP_DATA_VERSION_INVALID"
   | "LEGACY_IMPORT_BACKUP_BASE_CAPTURE_FAILED"
-  | "LEGACY_IMPORT_BACKUP_BASE_CHANGED";
+  | "LEGACY_IMPORT_BACKUP_BASE_CHANGED"
+  | "LEGACY_IMPORT_BACKUP_SNAPSHOT_FAILED"
+  | "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID"
+  | "LEGACY_IMPORT_BACKUP_SNAPSHOT_CHANGED"
+  | "LEGACY_IMPORT_BACKUP_SNAPSHOT_TRANSACTION_ACTIVE"
+  | "LEGACY_IMPORT_BACKUP_SYNC_FAILED"
+  | "LEGACY_IMPORT_BACKUP_READ_FAILED"
+  | "LEGACY_IMPORT_BACKUP_HASH_FAILED"
+  | "LEGACY_IMPORT_BACKUP_STAGING_CLEANUP_FAILED";
 
 export type LegacyImportBackupErrorStage =
   | "contract"
   | "destination"
   | "database"
   | "checkpoint"
-  | "base";
+  | "base"
+  | "snapshot"
+  | "sync"
+  | "read"
+  | "hash"
+  | "cleanup";
 
 export class LegacyImportBackupError extends Error {
   readonly stage: LegacyImportBackupErrorStage;
@@ -1084,5 +1126,701 @@ export function prepareLegacyImportBackupPreflight(
     database_path: getDbPath(),
     captureBase: captureCurrentLegacyImportBaseSnapshot,
     revalidatePreview: revalidateLegacyImportPreview,
+  });
+}
+
+export interface LegacyImportBackupSnapshot {
+  staging_directory: string;
+  staging_directory_identity: LegacyImportBackupFileIdentity;
+  staging_path: string;
+  staging_identity: LegacyImportBackupFileIdentity;
+  backup_sha256: LegacyImportSha256;
+  backup_byte_size: number;
+}
+
+export interface LegacyImportBackupSnapshotDependencies {
+  db: DbAdapter | null;
+  database_path: string | null;
+  captureBase(): LegacyImportBaseSnapshot;
+  isInTransaction(): boolean;
+  lstat?(path: string): BigIntStats;
+  fsync?(fd: number): void;
+  read?(fd: number, buffer: Uint8Array, offset: number, length: number): number;
+  createHash?(): Hash;
+  removeStagingDirectory?(path: string): void;
+}
+
+interface LegacyImportBackupSnapshotOps {
+  lstat(path: string): BigIntStats;
+  fsync(fd: number): void;
+  read(fd: number, buffer: Uint8Array, offset: number, length: number): number;
+  createHash(): Hash;
+  removeStagingDirectory(path: string): void;
+}
+
+interface LegacyImportBackupPrivateStaging {
+  directory: string;
+  directory_identity: LegacyImportBackupFileIdentity;
+  path: string;
+}
+
+interface LegacyImportBackupSnapshotFileState {
+  identity: LegacyImportBackupFileIdentity;
+  byteSize: number;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+}
+
+function requireStagingAbsent(path: string, ops: LegacyImportBackupSnapshotOps): void {
+  try {
+    ops.lstat(path);
+  } catch (error) {
+    if (systemErrorCode(error) === "ENOENT") return;
+    throw error;
+  }
+  throw new Error("legacy import backup staging directory remained after cleanup");
+}
+
+function snapshotOps(
+  dependencies: LegacyImportBackupSnapshotDependencies,
+): LegacyImportBackupSnapshotOps {
+  return {
+    lstat: dependencies.lstat ?? ((path) => lstatSync(path, { bigint: true })),
+    fsync: dependencies.fsync ?? ((fd) => fsyncSync(fd)),
+    read: dependencies.read ?? ((fd, buffer, offset, length) => (
+      readSync(fd, buffer, offset, length, null)
+    )),
+    createHash: dependencies.createHash ?? (() => createHash("sha256")),
+    removeStagingDirectory: dependencies.removeStagingDirectory
+      ?? ((path) => rmSync(path, { recursive: true, force: false })),
+  };
+}
+
+function isFileIdentity(value: unknown): value is LegacyImportBackupFileIdentity {
+  return hasExactDataProperties(value, ["dev", "ino"])
+    && typeof value["dev"] === "string"
+    && /^\d+$/u.test(value["dev"])
+    && typeof value["ino"] === "string"
+    && /^\d+$/u.test(value["ino"]);
+}
+
+function isCompletedCheckpoint(value: unknown): value is LegacyImportBackupCheckpoint {
+  if (
+    !hasExactDataProperties(value, ["mode", "busy", "log", "checkpointed", "attempts"])
+    || value["busy"] !== 0
+    || !isSafeInteger(value["log"])
+    || !isSafeInteger(value["checkpointed"])
+    || !isNonNegativeSafeInteger(value["attempts"])
+    || value["attempts"] < 1
+    || value["attempts"] > CHECKPOINT_ATTEMPT_LIMIT
+  ) return false;
+  return value["mode"] === "wal"
+    ? value["log"] >= 0 && value["checkpointed"] === value["log"]
+    : value["mode"] === "rollback" && value["log"] === -1 && value["checkpointed"] === -1;
+}
+
+function snapshotPreflight(
+  value: LegacyImportBackupPreflight,
+): LegacyImportBackupPreflight {
+  if (!hasExactDataProperties(value, BACKUP_PREFLIGHT_KEYS)) {
+    fail(
+      "LEGACY_IMPORT_BACKUP_CONTRACT_INVALID",
+      "legacy import snapshot requires one exact backup preflight result",
+    );
+  }
+  let snapshot: LegacyImportBackupPreflight;
+  try {
+    snapshot = structuredClone(value);
+  } catch {
+    fail(
+      "LEGACY_IMPORT_BACKUP_CONTRACT_INVALID",
+      "legacy import snapshot preflight must be detached strict data",
+    );
+  }
+  if (
+    !hasExactDataProperties(snapshot, BACKUP_PREFLIGHT_KEYS)
+    || !isAbsolute(snapshot.database_path)
+    || !isFileIdentity(snapshot.database_identity)
+    || !isAbsolute(snapshot.destination_directory)
+    || !isFileIdentity(snapshot.destination_directory_identity)
+    || snapshot.destination_path !== join(snapshot.destination_directory, `${snapshot.label}.sqlite`)
+    || !validBackupLabel(snapshot.label)
+    || !isCanonicalHash(snapshot.root_set_hash)
+    || !isCompletedCheckpoint(snapshot.checkpoint)
+    || !isNonNegativeSafeInteger(snapshot.data_version)
+    || !isPlainRecord(snapshot.current_base)
+    || snapshot.current_base.database_schema_version !== LEGACY_IMPORT_BASE_DATABASE_SCHEMA_VERSION
+    || !isCanonicalHash(snapshot.current_base.relevant_rows_hash)
+  ) {
+    fail(
+      "LEGACY_IMPORT_BACKUP_CONTRACT_INVALID",
+      "legacy import snapshot preflight does not satisfy the exact contract",
+    );
+  }
+  return deepFreeze(snapshot);
+}
+
+function requireSnapshotPins(
+  preflight: LegacyImportBackupPreflight,
+  dependencies: LegacyImportBackupSnapshotDependencies,
+): void {
+  if (dependencies.db === null || dependencies.database_path === null) {
+    preflightFail(
+      "database",
+      "LEGACY_IMPORT_BACKUP_DATABASE_UNAVAILABLE",
+      "legacy import snapshot requires the active file-backed database",
+    );
+  }
+  requireSameDatabasePin(dependencies.database_path, {
+    path: preflight.database_path,
+    identity: preflight.database_identity,
+  });
+  requireDatabaseListMatch(dependencies.db, preflight.database_path);
+
+  let directory: string;
+  let identity: LegacyImportBackupFileIdentity;
+  try {
+    directory = realpathSync(preflight.destination_directory);
+    const stat = statSync(directory, { bigint: true });
+    if (!stat.isDirectory()) throw new Error("destination is not a directory");
+    identity = fileIdentity(stat);
+  } catch {
+    preflightFail(
+      "destination",
+      "LEGACY_IMPORT_BACKUP_DESTINATION_INVALID",
+      "legacy import backup destination changed before snapshot creation",
+      true,
+    );
+  }
+  if (
+    directory !== preflight.destination_directory
+    || !sameIdentity(identity, preflight.destination_directory_identity)
+  ) {
+    preflightFail(
+      "destination",
+      "LEGACY_IMPORT_BACKUP_DESTINATION_INVALID",
+      "legacy import backup destination identity changed before snapshot creation",
+      true,
+    );
+  }
+  requireAbsentDestination(preflight.destination_path, preflight.database_identity);
+}
+
+function createPrivateStaging(
+  preflight: LegacyImportBackupPreflight,
+  ops: LegacyImportBackupSnapshotOps,
+): LegacyImportBackupPrivateStaging {
+  const directory = join(
+    preflight.destination_directory,
+    `.${preflight.label}.staging-${createRandomUUID()}`,
+  );
+  try {
+    mkdirSync(directory, { mode: 0o700 });
+  } catch {
+    preflightFail(
+      "snapshot",
+      "LEGACY_IMPORT_BACKUP_SNAPSHOT_FAILED",
+      "legacy import backup staging directory could not be created",
+    );
+  }
+  let canonicalDirectory: string;
+  let stat: BigIntStats;
+  try {
+    stat = ops.lstat(directory);
+    canonicalDirectory = realpathSync(directory);
+  } catch {
+    try {
+      ops.removeStagingDirectory(directory);
+      requireStagingAbsent(directory, ops);
+    } catch {
+      throw new LegacyImportBackupError(
+        "LEGACY_IMPORT_BACKUP_STAGING_CLEANUP_FAILED",
+        "legacy import backup staging cleanup failed",
+        { staging_directory: directory },
+        "cleanup",
+        false,
+      );
+    }
+    preflightFail(
+      "snapshot",
+      "LEGACY_IMPORT_BACKUP_SNAPSHOT_FAILED",
+      "legacy import backup staging directory could not be pinned",
+    );
+  }
+  const staging = {
+    directory,
+    directory_identity: fileIdentity(stat),
+    path: join(directory, SNAPSHOT_FILE_NAME),
+  };
+  try {
+    if (
+      canonicalDirectory !== directory
+      || dirname(canonicalDirectory) !== preflight.destination_directory
+      || !stat.isDirectory()
+      || stat.isSymbolicLink()
+    ) {
+      preflightFail(
+        "snapshot",
+        "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+        "legacy import backup staging directory escaped its pinned destination",
+      );
+    }
+    if (readdirSync(directory).length !== 0) {
+      preflightFail(
+        "snapshot",
+        "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+        "legacy import backup staging directory was not empty",
+      );
+    }
+    return staging;
+  } catch (error) {
+    try {
+      cleanupPrivateStaging(staging, ops);
+    } catch {
+      throw new LegacyImportBackupError(
+        "LEGACY_IMPORT_BACKUP_STAGING_CLEANUP_FAILED",
+        "legacy import backup staging cleanup failed",
+        { staging_directory: staging.directory },
+        "cleanup",
+        false,
+      );
+    }
+    throw error;
+  }
+}
+
+function cleanupPrivateStaging(
+  staging: LegacyImportBackupPrivateStaging,
+  ops: LegacyImportBackupSnapshotOps,
+): void {
+  let observed: BigIntStats;
+  try {
+    observed = ops.lstat(staging.directory);
+  } catch (error) {
+    if (systemErrorCode(error) === "ENOENT") return;
+    throw error;
+  }
+  if (!observed.isDirectory() || !sameIdentity(fileIdentity(observed), staging.directory_identity)) {
+    throw new Error("legacy import backup staging ownership changed before cleanup");
+  }
+  ops.removeStagingDirectory(staging.directory);
+  requireStagingAbsent(staging.directory, ops);
+}
+
+function requirePrivateStagingPin(
+  staging: LegacyImportBackupPrivateStaging,
+  ops: LegacyImportBackupSnapshotOps,
+): void {
+  try {
+    const stat = ops.lstat(staging.directory);
+    if (
+      realpathSync(staging.directory) !== staging.directory
+      || !stat.isDirectory()
+      || stat.isSymbolicLink()
+      || !sameIdentity(fileIdentity(stat), staging.directory_identity)
+      || readdirSync(staging.directory).length !== 0
+    ) throw new Error("staging directory changed");
+    try {
+      ops.lstat(staging.path);
+    } catch (error) {
+      if (systemErrorCode(error) === "ENOENT") return;
+      throw error;
+    }
+  } catch {
+    preflightFail(
+      "snapshot",
+      "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+      "legacy import backup staging identity changed before snapshot creation",
+    );
+  }
+  preflightFail(
+    "snapshot",
+    "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+    "legacy import backup staging file existed before snapshot creation",
+  );
+}
+
+function isSqliteBusy(error: unknown): boolean {
+  const code = systemErrorCode(error) ?? "";
+  const message = error instanceof Error ? error.message : "";
+  return code.includes("SQLITE_BUSY") || /SQLITE_BUSY|database is locked/iu.test(message);
+}
+
+function capturePostSnapshotBase(
+  captureBase: () => LegacyImportBaseSnapshot,
+): LegacyImportBaseSnapshot {
+  try {
+    return structuredClone(captureBase());
+  } catch (error) {
+    preflightFail(
+      "base",
+      "LEGACY_IMPORT_BACKUP_BASE_CAPTURE_FAILED",
+      "canonical database base could not be captured after snapshot creation",
+      false,
+      error instanceof LegacyImportBaseSnapshotError
+        ? { capture_error_code: error.code }
+        : {},
+    );
+  }
+}
+
+function requireCurrentSnapshotState(
+  preflight: LegacyImportBackupPreflight,
+  db: DbAdapter,
+  captureBase: () => LegacyImportBaseSnapshot,
+): void {
+  const dataVersionBefore = readDataVersion(db);
+  const currentBase = capturePostSnapshotBase(captureBase);
+  const dataVersionAfter = readDataVersion(db);
+  if (hashLegacyImportValue(currentBase) !== hashLegacyImportValue(preflight.current_base)) {
+    preflightFail(
+      "base",
+      "LEGACY_IMPORT_BACKUP_BASE_CHANGED",
+      "canonical database base changed around snapshot creation",
+      true,
+    );
+  }
+  if (
+    dataVersionBefore !== preflight.data_version
+    || dataVersionAfter !== preflight.data_version
+  ) {
+    preflightFail(
+      "snapshot",
+      "LEGACY_IMPORT_BACKUP_SNAPSHOT_CHANGED",
+      "another SQLite connection committed around snapshot creation",
+      true,
+      {
+        expected_data_version: preflight.data_version,
+        observed_data_version: dataVersionBefore !== preflight.data_version
+          ? dataVersionBefore
+          : dataVersionAfter,
+      },
+    );
+  }
+}
+
+function snapshotFileState(stat: BigIntStats): LegacyImportBackupSnapshotFileState {
+  return {
+    identity: fileIdentity(stat),
+    byteSize: Number(stat.size),
+    mtimeNs: stat.mtimeNs,
+    ctimeNs: stat.ctimeNs,
+  };
+}
+
+function sameSnapshotFileState(
+  left: LegacyImportBackupSnapshotFileState,
+  right: LegacyImportBackupSnapshotFileState,
+): boolean {
+  return sameIdentity(left.identity, right.identity)
+    && left.byteSize === right.byteSize
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
+
+function inspectSnapshotFile(
+  staging: LegacyImportBackupPrivateStaging,
+  ops: LegacyImportBackupSnapshotOps,
+): LegacyImportBackupSnapshotFileState {
+  let entries: string[];
+  let stat: BigIntStats;
+  try {
+    entries = readdirSync(staging.directory);
+    stat = ops.lstat(staging.path);
+  } catch {
+    preflightFail(
+      "read",
+      "LEGACY_IMPORT_BACKUP_READ_FAILED",
+      "legacy import backup snapshot could not be inspected",
+    );
+  }
+  if (
+    entries.length !== 1
+    || entries[0] !== SNAPSHOT_FILE_NAME
+    || !stat.isFile()
+    || stat.isSymbolicLink()
+    || stat.size <= 0n
+    || stat.size > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
+    preflightFail(
+      "snapshot",
+      "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+      "legacy import backup snapshot must be one nonempty regular file",
+    );
+  }
+  return snapshotFileState(stat);
+}
+
+function confirmSnapshotFile(
+  staging: LegacyImportBackupPrivateStaging,
+  expected: LegacyImportBackupSnapshotFileState,
+  ops: LegacyImportBackupSnapshotOps,
+): LegacyImportBackupSnapshotFileState {
+  let confirmed: LegacyImportBackupSnapshotFileState;
+  try {
+    confirmed = inspectSnapshotFile(staging, ops);
+  } catch {
+    preflightFail(
+      "snapshot",
+      "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+      "legacy import backup snapshot changed after creation",
+    );
+  }
+  if (!sameSnapshotFileState(confirmed, expected)) {
+    preflightFail(
+      "snapshot",
+      "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+      "legacy import backup snapshot changed after creation",
+    );
+  }
+  return confirmed;
+}
+
+function flushAndHashSnapshot(
+  staging: LegacyImportBackupPrivateStaging,
+  expected: LegacyImportBackupSnapshotFileState,
+  ops: LegacyImportBackupSnapshotOps,
+): { sha256: LegacyImportSha256; state: LegacyImportBackupSnapshotFileState } {
+  let fd: number;
+  try {
+    fd = openSync(
+      staging.path,
+      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+    );
+  } catch {
+    preflightFail(
+      "read",
+      "LEGACY_IMPORT_BACKUP_READ_FAILED",
+      "legacy import backup snapshot could not be opened safely",
+    );
+  }
+
+  let thrown: unknown;
+  let result: { sha256: LegacyImportSha256; state: LegacyImportBackupSnapshotFileState } | undefined;
+  try {
+    let before: BigIntStats;
+    try {
+      before = fstatSync(fd, { bigint: true });
+    } catch {
+      preflightFail(
+        "read",
+        "LEGACY_IMPORT_BACKUP_READ_FAILED",
+        "legacy import backup snapshot identity could not be read",
+      );
+    }
+    if (
+      !before.isFile()
+      || !sameSnapshotFileState(snapshotFileState(before), expected)
+    ) {
+      preflightFail(
+        "snapshot",
+        "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+        "legacy import backup snapshot changed before flush",
+      );
+    }
+    try {
+      ops.fsync(fd);
+    } catch {
+      preflightFail(
+        "sync",
+        "LEGACY_IMPORT_BACKUP_SYNC_FAILED",
+        "legacy import backup snapshot could not be flushed",
+      );
+    }
+
+    let hash: Hash;
+    try {
+      hash = ops.createHash();
+    } catch {
+      preflightFail(
+        "hash",
+        "LEGACY_IMPORT_BACKUP_HASH_FAILED",
+        "legacy import backup snapshot hash could not be initialized",
+      );
+    }
+    const buffer = new Uint8Array(SNAPSHOT_READ_BUFFER_SIZE);
+    let bytesReadTotal = 0;
+    for (;;) {
+      let bytesRead: number;
+      try {
+        bytesRead = ops.read(fd, buffer, 0, buffer.length);
+      } catch {
+        preflightFail(
+          "read",
+          "LEGACY_IMPORT_BACKUP_READ_FAILED",
+          "legacy import backup snapshot could not be read exactly",
+        );
+      }
+      if (!Number.isSafeInteger(bytesRead) || bytesRead < 0 || bytesRead > buffer.length) {
+        preflightFail(
+          "read",
+          "LEGACY_IMPORT_BACKUP_READ_FAILED",
+          "legacy import backup snapshot returned an invalid read length",
+        );
+      }
+      if (bytesRead === 0) break;
+      bytesReadTotal += bytesRead;
+      if (!Number.isSafeInteger(bytesReadTotal) || bytesReadTotal > expected.byteSize) {
+        preflightFail(
+          "snapshot",
+          "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+          "legacy import backup snapshot changed while being hashed",
+        );
+      }
+      try {
+        hash.update(buffer.subarray(0, bytesRead));
+      } catch {
+        preflightFail(
+          "hash",
+          "LEGACY_IMPORT_BACKUP_HASH_FAILED",
+          "legacy import backup snapshot hash could not be updated",
+        );
+      }
+    }
+    let after: BigIntStats;
+    try {
+      after = fstatSync(fd, { bigint: true });
+    } catch {
+      preflightFail(
+        "read",
+        "LEGACY_IMPORT_BACKUP_READ_FAILED",
+        "legacy import backup snapshot could not be confirmed after hashing",
+      );
+    }
+    if (
+      bytesReadTotal !== expected.byteSize
+      || !after.isFile()
+      || !sameSnapshotFileState(snapshotFileState(after), expected)
+    ) {
+      preflightFail(
+        "snapshot",
+        "LEGACY_IMPORT_BACKUP_SNAPSHOT_INVALID",
+        "legacy import backup snapshot changed while being hashed",
+      );
+    }
+    let digest: string;
+    try {
+      digest = hash.digest("hex");
+    } catch {
+      preflightFail(
+        "hash",
+        "LEGACY_IMPORT_BACKUP_HASH_FAILED",
+        "legacy import backup snapshot hash could not be finalized",
+      );
+    }
+    if (!/^[0-9a-f]{64}$/u.test(digest)) {
+      preflightFail(
+        "hash",
+        "LEGACY_IMPORT_BACKUP_HASH_FAILED",
+        "legacy import backup snapshot returned an invalid SHA-256 digest",
+      );
+    }
+    result = {
+      sha256: `sha256:${digest}`,
+      state: snapshotFileState(after),
+    };
+  } catch (error) {
+    thrown = error;
+  } finally {
+    try {
+      closeSync(fd);
+    } catch (error) {
+      if (thrown === undefined) {
+        thrown = new LegacyImportBackupError(
+          "LEGACY_IMPORT_BACKUP_READ_FAILED",
+          "legacy import backup snapshot file could not be closed",
+          {},
+          "read",
+          false,
+        );
+      }
+    }
+  }
+  if (thrown !== undefined) throw thrown;
+  return result!;
+}
+
+function normalizeSnapshotFailure(error: unknown): LegacyImportBackupError {
+  if (error instanceof LegacyImportBackupError) return error;
+  return new LegacyImportBackupError(
+    "LEGACY_IMPORT_BACKUP_SNAPSHOT_FAILED",
+    "legacy import backup snapshot creation failed",
+    {},
+    "snapshot",
+    isSqliteBusy(error),
+  );
+}
+
+export function _createLegacyImportBackupSnapshotForTest(
+  preflight: LegacyImportBackupPreflight,
+  dependencies: LegacyImportBackupSnapshotDependencies,
+): LegacyImportBackupSnapshot {
+  const expected = snapshotPreflight(preflight);
+  const db = dependencies.db;
+  if (db === null || typeof dependencies.captureBase !== "function") {
+    preflightFail(
+      "database",
+      "LEGACY_IMPORT_BACKUP_DATABASE_UNAVAILABLE",
+      "legacy import snapshot requires the active database and base capture boundary",
+    );
+  }
+  if (dependencies.isInTransaction()) {
+    preflightFail(
+      "snapshot",
+      "LEGACY_IMPORT_BACKUP_SNAPSHOT_TRANSACTION_ACTIVE",
+      "legacy import backup snapshot cannot run inside an active transaction",
+    );
+  }
+  requireSnapshotPins(expected, dependencies);
+  requireCurrentSnapshotState(expected, db, dependencies.captureBase);
+
+  const ops = snapshotOps(dependencies);
+  let staging: LegacyImportBackupPrivateStaging | null = null;
+  try {
+    staging = createPrivateStaging(expected, ops);
+    requireSnapshotPins(expected, dependencies);
+    requirePrivateStagingPin(staging, ops);
+    db.prepare("VACUUM INTO ?").run(staging.path);
+    requireCurrentSnapshotState(expected, db, dependencies.captureBase);
+    requireSnapshotPins(expected, dependencies);
+
+    const inspected = inspectSnapshotFile(staging, ops);
+    const evidence = flushAndHashSnapshot(staging, inspected, ops);
+    confirmSnapshotFile(staging, evidence.state, ops);
+    return deepFreeze({
+      staging_directory: staging.directory,
+      staging_directory_identity: staging.directory_identity,
+      staging_path: staging.path,
+      staging_identity: evidence.state.identity,
+      backup_sha256: evidence.sha256,
+      backup_byte_size: evidence.state.byteSize,
+    });
+  } catch (error) {
+    const failure = normalizeSnapshotFailure(error);
+    if (staging !== null) {
+      try {
+        cleanupPrivateStaging(staging, ops);
+      } catch {
+        throw new LegacyImportBackupError(
+          "LEGACY_IMPORT_BACKUP_STAGING_CLEANUP_FAILED",
+          "legacy import backup staging cleanup failed",
+          { staging_directory: staging.directory },
+          "cleanup",
+          false,
+        );
+      }
+    }
+    throw failure;
+  }
+}
+
+export function createLegacyImportBackupSnapshot(
+  preflight: LegacyImportBackupPreflight,
+): LegacyImportBackupSnapshot {
+  return _createLegacyImportBackupSnapshotForTest(preflight, {
+    db: getDbOrNull(),
+    database_path: getDbPath(),
+    captureBase: captureCurrentLegacyImportBaseSnapshot,
+    isInTransaction,
   });
 }
