@@ -176,7 +176,7 @@ function main(): void {
 
     const receipt = applyLegacyImport(applicationInput);
     if (config.killAfterApply) {
-      if (config.committedPath) writeFileSync(config.committedPath, receipt.operationId, "utf8");
+      if (config.committedPath) writeFileSync(config.committedPath, JSON.stringify(receipt), "utf8");
       terminate();
     }
     outcome = { receipt };
