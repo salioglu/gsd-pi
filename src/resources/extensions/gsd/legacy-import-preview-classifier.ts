@@ -21,9 +21,11 @@ import type {
   LegacyImportInterpretationCandidate,
 } from "./legacy-import-preview-interpretation.js";
 import {
+  LEGACY_IMPORT_BOOLEAN_COLUMNS,
   LEGACY_IMPORT_COMPLETE_TARGET_KINDS,
   LEGACY_IMPORT_JSON_COLUMNS,
   LEGACY_IMPORT_TARGET_ADAPTERS,
+  legacyImportTargetIdentity,
   type LegacyImportTargetAdapter,
 } from "./legacy-import-preview-classifier-targets.js";
 import {
@@ -79,11 +81,6 @@ export class LegacyImportClassificationError extends Error {
 
 type JsonRecord = Record<string, LegacyImportValue>;
 type HierarchyKind = "milestone" | "slice" | "task";
-
-const LEGACY_IMPORT_BOOLEAN_COLUMNS = new Set([
-  "slices.is_sketch",
-  "tasks.blocker_discovered",
-]);
 
 interface TargetAddress {
   rowSet: LegacyImportBaseRowSet;
@@ -426,54 +423,6 @@ function buildBaseRows(base: LegacyImportBaseSnapshot): Map<string, JsonRecord> 
   return rows;
 }
 
-function splitHierarchyKey(key: string, parts: number, kind: string): string[] {
-  const values = key.split("/");
-  if (values.length !== parts || values.some((value) => value.trim().length === 0)) {
-    fail(
-      "LEGACY_IMPORT_CLASSIFICATION_NORMALIZED_VALUE_INVALID",
-      `legacy import ${kind} target key is malformed`,
-      { target_key: key },
-    );
-  }
-  return values;
-}
-
-function nonblankTargetKey(kind: string, key: string): string {
-  if (key.trim().length === 0) {
-    fail(
-      "LEGACY_IMPORT_CLASSIFICATION_NORMALIZED_VALUE_INVALID",
-      `legacy import ${kind} target key is blank`,
-      { target_kind: kind },
-    );
-  }
-  return key;
-}
-
-function assessmentIdentity(key: string, normalized: JsonRecord): JsonRecord {
-  const parts = key.split("/");
-  if (parts.length < 2 || parts.length > 4 || parts.some((part) => part.trim().length === 0)) {
-    fail(
-      "LEGACY_IMPORT_CLASSIFICATION_NORMALIZED_VALUE_INVALID",
-      "legacy import assessment target key is malformed",
-      { target_key: key },
-    );
-  }
-  const scope = parts.at(-1)!;
-  if (normalized.scope !== undefined && normalized.scope !== scope) {
-    fail(
-      "LEGACY_IMPORT_CLASSIFICATION_NORMALIZED_VALUE_INVALID",
-      "legacy import assessment scope disagrees with its target",
-      { target_key: key },
-    );
-  }
-  return {
-    milestone_id: parts[0],
-    slice_id: parts.length >= 3 ? parts[1] : null,
-    task_id: parts.length === 4 ? parts[2] : null,
-    scope,
-  };
-}
-
 function validateNormalizedIdentity(
   kind: string,
   expected: Readonly<JsonRecord>,
@@ -514,22 +463,6 @@ function asHierarchyKind(value: string): HierarchyKind | undefined {
   return undefined;
 }
 
-function hierarchyDepth(kind: HierarchyKind): number {
-  switch (kind) {
-    case "milestone": return 1;
-    case "slice": return 2;
-    case "task": return 3;
-  }
-}
-
-function hierarchyIdentity(kind: HierarchyKind, parts: readonly string[]): JsonRecord {
-  switch (kind) {
-    case "milestone": return { id: parts[0] };
-    case "slice": return { milestone_id: parts[0], id: parts[1] };
-    case "task": return { milestone_id: parts[0], slice_id: parts[1], id: parts[2] };
-  }
-}
-
 function targetAddress(
   base: LegacyImportBaseSnapshot,
   candidate: LegacyImportInterpretationCandidate,
@@ -543,14 +476,30 @@ function targetAddress(
       : target.kind.slice(0, -"-status".length);
     const itemKind = asHierarchyKind(itemKindValue);
     if (itemKind === undefined) failUnsupportedTarget(target);
-    const parts = splitHierarchyKey(target.key, hierarchyDepth(itemKind), itemKind);
-    const hierarchyIdentityValue = hierarchyIdentity(itemKind, parts);
+    const hierarchyAdapter = LEGACY_IMPORT_TARGET_ADAPTERS[itemKind];
+    let hierarchyIdentityValue: JsonRecord;
+    try {
+      hierarchyIdentityValue = { ...legacyImportTargetIdentity(hierarchyAdapter, target.key).identity };
+    } catch {
+      fail(
+        "LEGACY_IMPORT_CLASSIFICATION_NORMALIZED_VALUE_INVALID",
+        `legacy import ${itemKind} target key is malformed`,
+        { target_kind: itemKind },
+      );
+    }
+    const milestoneId = itemKind === "milestone"
+      ? hierarchyIdentityValue.id
+      : hierarchyIdentityValue.milestone_id;
+    const sliceId = itemKind === "milestone"
+      ? null
+      : hierarchyIdentityValue.slice_id ?? hierarchyIdentityValue.id;
+    const taskId = itemKind === "task" ? hierarchyIdentityValue.id : null;
     const lifecycleIdentity = {
       project_id: base.authority.project_id,
       item_kind: itemKind,
-      milestone_id: parts[0],
-      slice_id: parts[1] ?? null,
-      task_id: parts[2] ?? null,
+      milestone_id: milestoneId,
+      slice_id: sliceId,
+      task_id: taskId,
     };
     if (candidate.normalized !== null && !Array.isArray(candidate.normalized) && typeof candidate.normalized === "object") {
       validateNormalizedIdentity(itemKind, hierarchyIdentityValue, candidate.normalized as JsonRecord, false);
@@ -562,7 +511,7 @@ function targetAddress(
         memberKey: target.key,
         field: "lifecycle_status",
         hierarchyAddress: rowAddress(
-          LEGACY_IMPORT_TARGET_ADAPTERS[itemKind].rowSet,
+          hierarchyAdapter.rowSet,
           canonicalLegacyImportJson(hierarchyIdentityValue),
         ),
       },
@@ -575,34 +524,14 @@ function targetAddress(
     ? asRecord(candidate.normalized, `legacy import ${target.kind} candidate`)
     : {};
   let identityValue: JsonRecord;
-  switch (target.kind) {
-    case "milestone":
-      identityValue = { id: nonblankTargetKey(target.kind, target.key) };
-      break;
-    case "slice": {
-      const [milestoneId, sliceId] = splitHierarchyKey(target.key, 2, target.kind);
-      identityValue = { milestone_id: milestoneId, id: sliceId };
-      break;
-    }
-    case "task": {
-      const [milestoneId, sliceId, taskId] = splitHierarchyKey(target.key, 3, target.kind);
-      identityValue = { milestone_id: milestoneId, slice_id: sliceId, id: taskId };
-      break;
-    }
-    case "requirement":
-      identityValue = { id: nonblankTargetKey(target.kind, target.key) };
-      break;
-    case "artifact":
-      identityValue = { path: nonblankTargetKey(target.kind, target.key) };
-      break;
-    case "assessment":
-      identityValue = assessmentIdentity(target.key, normalized);
-      break;
-    case "decision":
-      identityValue = { id: nonblankTargetKey(target.kind, target.key) };
-      break;
-    default:
-      failUnsupportedTarget(target);
+  try {
+    identityValue = { ...legacyImportTargetIdentity(adapter, target.key).identity };
+  } catch {
+    fail(
+      "LEGACY_IMPORT_CLASSIFICATION_NORMALIZED_VALUE_INVALID",
+      `legacy import ${target.kind} target key is malformed`,
+      { target_kind: target.kind },
+    );
   }
   validateNormalizedIdentity(target.kind, identityValue, normalized, false);
   return {
