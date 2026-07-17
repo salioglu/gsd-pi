@@ -725,12 +725,10 @@ export async function rebuildMarkdownProjectionsFromDb(
 }
 
 /**
- * `/gsd sync` — pull in external (gsd-core) markdown edits and re-project.
+ * `/gsd sync` — inspect external projection edits and re-project when safe.
  *
- * Non-destructive cousin of `/gsd recover`: does NOT clear the DB. Runs the
- * ADR-017 reconcile pipeline (which picks up the external-markdown-edit handler
- * automatically), then re-projects via renderAllFromDb, then refreshes the
- * compat marker. Use this when switching from gsd-core mid-session.
+ * Runs the ADR-017 reconcile pipeline, stops for modeled authority conflicts,
+ * then re-projects from the DB and refreshes the compat marker when unblocked.
  *
  * Accepts `--dry-run` to report what would change without writing.
  */
@@ -751,32 +749,31 @@ export async function handleSync(
     return;
   }
 
-  const lines: string[] = ["gsd sync: reconciling .gsd/ for cross-tool edits…"];
+  const lines: string[] = ["gsd sync: checking projections against the database…"];
 
   try {
     const result = await reconcileBeforeDispatch(basePath, { dryRun });
-    const repairedExternal = result.repaired.filter((r) => r.kind === "external-markdown-edit");
-    lines.push(
-      `  External .gsd/ edits ${dryRun ? "to import" : "imported"}: ${repairedExternal.length}`,
+    const refreshedPlanningPassthrough = result.repaired.flatMap(
+      (record) => record.kind === "external-planning-edit" && record.passthrough
+        ? [record.projectionPath]
+        : [],
     );
-    for (const r of repairedExternal) {
-      const e = r as { kind: "external-markdown-edit"; projectionPath: string };
-      lines.push(`    • ${e.projectionPath}`);
-    }
-    const repairedPlanningExternal = result.repaired.filter((r) => r.kind === "external-planning-edit");
-    if (repairedPlanningExternal.length > 0) {
+    if (refreshedPlanningPassthrough.length > 0) {
       lines.push(
-        `  External .planning/ edits ${dryRun ? "to import" : "imported"}: ${repairedPlanningExternal.length}`,
+        `  Planning passthrough checksums ${dryRun ? "to refresh" : "refreshed"}: ${refreshedPlanningPassthrough.length}`,
       );
-      for (const r of repairedPlanningExternal) {
-        const e = r as { kind: "external-planning-edit"; projectionPath: string; passthrough: boolean };
-        const tag = e.passthrough ? " (passthrough)" : "";
-        lines.push(`    • ${e.projectionPath}${tag}`);
+      for (const projectionPath of refreshedPlanningPassthrough) {
+        lines.push(`    • ${projectionPath}`);
       }
     }
     if (result.blockers.length > 0) {
       lines.push("", "  ⚠ Blockers:");
       for (const b of result.blockers) lines.push(`    • ${b}`);
+      if (dryRun) {
+        lines.push("", "  (dry-run: no repairs, projection, or marker writes performed)");
+      }
+      ctx.ui.notify(lines.join("\n"), "warning");
+      return;
     }
 
     if (dryRun) {
