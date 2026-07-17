@@ -980,10 +980,7 @@ export async function renderAllFromDb(basePath: string): Promise<RenderAllResult
   // planning.active so the double-write cost only hits projects that use
   // .planning/. writePlanningDirectory records per-file SHAs via
   // applyPlanningProjectionWrites so the reconcile detector has a baseline.
-  // capturePlanningCompatIfNeeded seeds the layout and SHAs on first encounter.
   try {
-    const { capturePlanningCompatIfNeeded } = await import("./compat/planning-compat.js");
-    await capturePlanningCompatIfNeeded(basePath);
     const marker = readCompatMarker(basePath);
     if (marker.planning?.active && marker.planning.layout) {
       if (marker.planning.layout === "flat-phases") {
