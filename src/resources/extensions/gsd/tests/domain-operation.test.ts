@@ -29,6 +29,7 @@ import {
   GSD_IDEMPOTENCY_CONFLICT,
   GSD_REVISION_CONFLICT,
 } from "../errors.ts";
+import { hashLegacyImportValue } from "../legacy-import-preview.ts";
 
 const tempDirs = new Set<string>();
 const POST_V30_TABLES = [
@@ -266,6 +267,119 @@ test("one operation atomically commits provenance, ordered events, outbox, proje
       delivery_state: "pending",
     },
   );
+});
+
+test("import.apply characterization: generic execution commits an orphan without an Application receipt", (t) => {
+  openFixture(t);
+
+  const result = execute(request({
+    operationType: "import.apply",
+    idempotencyKey: "characterize/orphan-import-apply",
+    payload: { preview_id: "preview-orphan" },
+  }));
+
+  assert.equal(result.status, "committed");
+  assert.deepEqual(
+    row(`SELECT operation_type, resulting_revision, resulting_authority_epoch
+      FROM workflow_operations WHERE operation_id = '${result.operationId}'`),
+    { operation_type: "import.apply", resulting_revision: 1, resulting_authority_epoch: 0 },
+  );
+  assert.deepEqual(row("SELECT revision, authority_epoch FROM project_authority WHERE singleton = 1"), {
+    revision: 1,
+    authority_epoch: 0,
+  });
+  assert.deepEqual(rows("SELECT operation_id FROM workflow_import_applications"), []);
+});
+
+test("import.apply characterization: generic request hashing cannot satisfy the real causality trigger", (t) => {
+  openFixture(t);
+  const before = durableSnapshot();
+  const sourceSetHash = hashLegacyImportValue([]);
+  const changeSetHash = hashLegacyImportValue([]);
+  const preview = {
+    preview_schema_version: 1,
+    preview_id: hashLegacyImportValue("preview-request-hash-gap"),
+    import_kind: "legacy-markdown",
+    importer_version: "1",
+    base_project_revision: 0,
+    base_authority_epoch: 0,
+    base_database_schema_version: 44,
+    source_set_hash: sourceSetHash,
+    change_set_hash: changeSetHash,
+    counts: { create: 0, update: 0, delete: 0, preserve: 0, unparsed: 0, unresolved: 0 },
+    sources: [],
+    changes: [],
+    diagnoses: [],
+    resolutions: [],
+  };
+  const previewHash = hashLegacyImportValue(preview);
+  const db = _getAdapter();
+  assert.ok(db);
+
+  assert.throws(
+    () => execute(request({
+      operationType: "import.apply",
+      idempotencyKey: "characterize/request-hash-gap",
+      payload: preview,
+    }), (context) => {
+      assert.notEqual(
+        row(`SELECT request_hash FROM workflow_operations
+          WHERE operation_id = '${context.operationId}'`).request_hash,
+        previewHash,
+      );
+      db.prepare(`
+        INSERT INTO workflow_import_applications (
+          operation_id, project_id, import_kind, importer_version,
+          preview_schema_version, preview_id, preview_hash,
+          base_project_revision, base_authority_epoch, base_database_schema_version,
+          source_set_hash, change_set_hash,
+          create_count, update_count, delete_count, preserve_count, unparsed_count, unresolved_count,
+          preview_json,
+          backup_ref, backup_sha256, backup_byte_size, backup_schema_version,
+          backup_project_revision, backup_authority_epoch, backup_quick_check, backup_verified_at,
+          applied_at, resulting_project_revision, resulting_authority_epoch
+        ) VALUES (
+          :operation_id, :project_id, :import_kind, :importer_version,
+          :preview_schema_version, :preview_id, :preview_hash,
+          :base_project_revision, :base_authority_epoch, :base_database_schema_version,
+          :source_set_hash, :change_set_hash,
+          0, 0, 0, 0, 0, 0,
+          :preview_json,
+          :backup_ref, :backup_sha256, :backup_byte_size, :backup_schema_version,
+          :backup_project_revision, :backup_authority_epoch, 'ok', :backup_verified_at,
+          :applied_at, :resulting_project_revision, :resulting_authority_epoch
+        )
+      `).run({
+        ":operation_id": context.operationId,
+        ":project_id": context.projectId,
+        ":import_kind": preview.import_kind,
+        ":importer_version": preview.importer_version,
+        ":preview_schema_version": preview.preview_schema_version,
+        ":preview_id": preview.preview_id,
+        ":preview_hash": previewHash,
+        ":base_project_revision": preview.base_project_revision,
+        ":base_authority_epoch": preview.base_authority_epoch,
+        ":base_database_schema_version": preview.base_database_schema_version,
+        ":source_set_hash": sourceSetHash,
+        ":change_set_hash": changeSetHash,
+        ":preview_json": JSON.stringify(preview),
+        ":backup_ref": "/tmp/verified-backup.sqlite",
+        ":backup_sha256": `sha256:${"2".repeat(64)}`,
+        ":backup_byte_size": 1,
+        ":backup_schema_version": 44,
+        ":backup_project_revision": 0,
+        ":backup_authority_epoch": 0,
+        ":backup_verified_at": "2026-07-17T00:00:00.000Z",
+        ":applied_at": "2026-07-17T00:00:01.000Z",
+        ":resulting_project_revision": context.resultingRevision,
+        ":resulting_authority_epoch": context.resultingAuthorityEpoch,
+      });
+      return mutation();
+    }),
+    /import application must match its operation and verified base backup/,
+  );
+  assert.deepEqual(durableSnapshot(), before);
+  assert.deepEqual(rows("SELECT operation_id FROM workflow_import_applications"), []);
 });
 
 test("exact idempotency replay returns the original receipt without rerunning mutation", (t) => {

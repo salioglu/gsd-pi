@@ -264,14 +264,6 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-function hasExactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
-  if (!isPlainRecord(value)) return false;
-  const observed = Object.keys(value);
-  return Object.getOwnPropertySymbols(value).length === 0
-    && observed.length === keys.length
-    && keys.every((key) => Object.hasOwn(value, key));
-}
-
 function hasExactDataProperties(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
   try {
     if (!isPlainRecord(value) || Object.getOwnPropertySymbols(value).length > 0) return false;
@@ -285,6 +277,15 @@ function hasExactDataProperties(value: unknown, keys: readonly string[]): value 
   } catch {
     return false;
   }
+}
+
+function hasExactEnumerableDataProperties(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, unknown> {
+  if (!hasExactDataProperties(value, keys)) return false;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  return keys.every((key) => descriptors[key]?.enumerable === true);
 }
 
 function isCanonicalHash(value: unknown): value is LegacyImportSha256 {
@@ -313,13 +314,21 @@ function isCanonicalTimestamp(value: unknown): value is string {
 }
 
 function isDenseArray(value: unknown): value is unknown[] {
-  return Array.isArray(value)
-    && Object.keys(value).length === value.length
-    && Object.getOwnPropertySymbols(value).length === 0;
+  if (!Array.isArray(value) || Object.getOwnPropertySymbols(value).length > 0) return false;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Object.keys(descriptors).length !== value.length + 1) return false;
+  if (!Object.hasOwn(Object.getOwnPropertyDescriptor(value, "length") ?? {}, "value")) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!Object.hasOwn(descriptor ?? {}, "value") || descriptor?.enumerable !== true) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function validSourceFingerprint(value: unknown): value is LegacyImportBackupSourceFingerprint {
-  return hasExactKeys(value, SOURCE_FINGERPRINT_KEYS)
+  return hasExactEnumerableDataProperties(value, SOURCE_FINGERPRINT_KEYS)
     && isCanonicalHash(value["source_id"])
     && isNonBlank(value["path"])
     && isNonBlank(value["kind"])
@@ -328,7 +337,7 @@ function validSourceFingerprint(value: unknown): value is LegacyImportBackupSour
 }
 
 function isStructurallyValidBackup(value: unknown): value is LegacyImportVerifiedBackup {
-  if (!hasExactKeys(value, VERIFIED_BACKUP_KEYS)) return false;
+  if (!hasExactEnumerableDataProperties(value, VERIFIED_BACKUP_KEYS)) return false;
   const sources = value["source_fingerprints"];
   return value["verified_backup_schema_version"] === VERIFIED_BACKUP_SCHEMA_VERSION
     && isCanonicalHash(value["backup_id"])
@@ -429,6 +438,14 @@ function backupIdentity(value: Omit<LegacyImportVerifiedBackup, "backup_id">): L
     ...identity
   } = value;
   return hashLegacyImportValue(identity);
+}
+
+export function isValidLegacyImportVerifiedBackup(
+  value: unknown,
+): value is LegacyImportVerifiedBackup {
+  if (!hasValidBackupStructure(value)) return false;
+  const { backup_id: backupId, ...unsealed } = value;
+  return backupIdentity(unsealed) === backupId;
 }
 
 function attachBackupIdentity(

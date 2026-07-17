@@ -47,6 +47,7 @@ import {
   _prepareLegacyImportBackupForTest,
   _prepareLegacyImportBackupPreflightForTest,
   createLegacyImportBackupSnapshot,
+  isValidLegacyImportVerifiedBackup,
   LegacyImportBackupError,
   prepareLegacyImportBackupPreflight,
   sealLegacyImportVerifiedBackup,
@@ -203,6 +204,40 @@ function expectInvalid(
 }
 
 describe("legacy import backup contract", () => {
+  test("recognizes only complete self-identical verified backup artifacts", () => {
+    const { backup } = sealedFixture();
+    const missing = structuredClone(backup) as unknown as Record<string, unknown>;
+    delete missing["backup_sha256"];
+    const forgedId = structuredClone(backup);
+    forgedId.backup_id = `sha256:${"0".repeat(64)}`;
+    const nonEnumerableRequiredField = structuredClone(backup);
+    Object.defineProperty(nonEnumerableRequiredField, "project_id", {
+      value: backup.project_id,
+      enumerable: false,
+    });
+    nonEnumerableRequiredField.backup_id = recomputeBackupId(nonEnumerableRequiredField);
+    const relocated = structuredClone(backup);
+    relocated.backup_ref = "/relocated/verified.sqlite";
+    relocated.verified_at = "2026-07-17T00:00:00.000Z";
+    const accessor = structuredClone(backup);
+    let accessorReads = 0;
+    Object.defineProperty(accessor, "backup_ref", {
+      enumerable: true,
+      get: () => {
+        accessorReads += 1;
+        return backup.backup_ref;
+      },
+    });
+
+    assert.equal(isValidLegacyImportVerifiedBackup(backup), true);
+    assert.equal(isValidLegacyImportVerifiedBackup(missing), false);
+    assert.equal(isValidLegacyImportVerifiedBackup(forgedId), false);
+    assert.equal(isValidLegacyImportVerifiedBackup(nonEnumerableRequiredField), false);
+    assert.equal(isValidLegacyImportVerifiedBackup(relocated), true);
+    assert.equal(isValidLegacyImportVerifiedBackup(accessor), false);
+    assert.equal(accessorReads, 0);
+  });
+
   test("seals the exact v1 fields and every required Preview/base/integrity binding", () => {
     const { backup, base, preview } = sealedFixture();
 
