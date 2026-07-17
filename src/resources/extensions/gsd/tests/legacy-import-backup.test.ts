@@ -2,6 +2,7 @@
 // File Purpose: Verified legacy-import backup v1 contract and fail-closed validation tests.
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -27,23 +28,31 @@ import { describe, test, type TestContext } from "node:test";
 
 import type { LegacyImportPreviewSource, LegacyImportSha256 } from "../legacy-import-contract.ts";
 import {
+  captureCurrentLegacyImportBaseSnapshot,
   LegacyImportBaseSnapshotError,
   type LegacyImportBaseSnapshot,
 } from "../legacy-import-preview-base.ts";
 import { createDbAdapter, type DbAdapter, type DbStatement } from "../db-adapter.ts";
 import { createSqliteProviderLoader } from "../db-provider.ts";
 import {
+  createLegacyImportPreview,
+  hashLegacyImportBytes,
   hashLegacyImportValue,
+  revalidateLegacyImportPreview,
   sealLegacyImportPreview,
   type LegacyImportPreviewArtifact,
 } from "../legacy-import-preview.ts";
+import { _getAdapter, closeDatabase, openDatabase } from "../gsd-db.ts";
 import {
+  _prepareLegacyImportBackupForTest,
   _prepareLegacyImportBackupPreflightForTest,
   createLegacyImportBackupSnapshot,
   LegacyImportBackupError,
   prepareLegacyImportBackupPreflight,
   sealLegacyImportVerifiedBackup,
   validateLegacyImportVerifiedBackup,
+  verifyLegacyImportBackupSnapshot,
+  type LegacyImportBackupPreparationDependencies,
   type LegacyImportVerifiedBackup,
   type LegacyImportVerifiedBackupExpected,
   type LegacyImportVerifiedBackupSealInput,
@@ -55,6 +64,7 @@ import {
   validateLegacyImportSourceRoots,
   type LegacyImportSourceRoot,
 } from "../legacy-import-preview-source.ts";
+import { openSqliteReadOnly } from "../sqlite-readonly.ts";
 
 const EMPTY_HASH = hashLegacyImportValue([]);
 const BACKUP_HASH = `sha256:${"b".repeat(64)}` as LegacyImportSha256;
@@ -1905,5 +1915,620 @@ describe("legacy import backup snapshot", () => {
     assert.ok(BetterSqlite3);
     const Provider = BetterSqlite3;
     realProviderSnapshotTest("better-sqlite3", (path) => new Provider(path), t);
+  });
+});
+
+interface LegacyImportBackupPreparationInputForTest {
+  preview: LegacyImportPreviewArtifact;
+  base: LegacyImportBaseSnapshot;
+  roots: readonly LegacyImportSourceRoot[];
+  destination_directory: string;
+  label: string;
+}
+
+function prepareBackupApi(): (
+  input: LegacyImportBackupPreparationInputForTest,
+) => LegacyImportVerifiedBackup {
+  const boundary = (
+    legacyImportBackup as unknown as {
+      prepareLegacyImportBackup?: (input: LegacyImportBackupPreparationInputForTest) => LegacyImportVerifiedBackup;
+    }
+  ).prepareLegacyImportBackup;
+  assert.ok(boundary, "legacy backup preparation boundary must be implemented");
+  return boundary;
+}
+
+function preparationLineage(database: DbAdapter): Record<string, unknown> | undefined {
+  return database.prepare(`
+    SELECT
+      (SELECT count(*) FROM workflow_operations) AS operations,
+      (SELECT count(*) FROM workflow_domain_events) AS events,
+      (SELECT count(*) FROM workflow_outbox) AS outbox,
+      (SELECT count(*) FROM workflow_projection_work) AS projections,
+      (SELECT count(*) FROM workflow_import_applications) AS import_applications,
+      (SELECT count(*) FROM workflow_settlement_receipts) AS settlement_receipts,
+      total_changes() AS total_changes
+  `).get();
+}
+
+function preparationFixture(t: TestContext): {
+  workspace: string;
+  sourcePath: string;
+  destinationDirectory: string;
+  databasePath: string;
+  database: DbAdapter;
+  input: LegacyImportBackupPreparationInputForTest;
+} {
+  const workspace = realpathSync(mkdtempSync(join(tmpdir(), "gsd-legacy-backup-prepare-")));
+  t.after(() => {
+    closeDatabase();
+    rmSync(workspace, { recursive: true, force: true });
+  });
+  const sourceRoot = join(workspace, "legacy", ".gsd");
+  const sourcePath = join(sourceRoot, "STATE.md");
+  const destinationDirectory = join(workspace, "backups");
+  const databasePath = join(workspace, "canonical.sqlite");
+  mkdirSync(sourceRoot, { recursive: true });
+  mkdirSync(destinationDirectory);
+  writeFileSync(sourcePath, "# State\n\nApproved legacy narrative.\n");
+  assert.equal(openDatabase(databasePath), true);
+  const database = _getAdapter();
+  assert.ok(database);
+  const roots: readonly LegacyImportSourceRoot[] = [{
+    id: "legacy-project-gsd",
+    kind: "project",
+    physical_path: sourceRoot,
+    logical_path: ".gsd",
+    presence: "required",
+  }];
+  const base = captureCurrentLegacyImportBaseSnapshot();
+  const preview = createLegacyImportPreview({ roots });
+  return {
+    workspace,
+    sourcePath,
+    destinationDirectory,
+    databasePath,
+    database,
+    input: {
+      preview,
+      base,
+      roots,
+      destination_directory: destinationDirectory,
+      label: "before-import",
+    },
+  };
+}
+
+function expectedPreparedPath(
+  fixture: ReturnType<typeof preparationFixture>,
+  result: LegacyImportVerifiedBackup,
+): string {
+  return join(
+    realpathSync(fixture.destinationDirectory),
+    `before-import-${result.backup_id.slice("sha256:".length)}.sqlite`,
+  );
+}
+
+function preparationDependencies(
+  overrides: Partial<LegacyImportBackupPreparationDependencies> = {},
+): LegacyImportBackupPreparationDependencies {
+  return {
+    preparePreflight: prepareLegacyImportBackupPreflight,
+    createSnapshot: createLegacyImportBackupSnapshot,
+    verifySnapshot: verifyLegacyImportBackupSnapshot,
+    revalidatePreview: revalidateLegacyImportPreview,
+    openReadOnly: openSqliteReadOnly,
+    now: () => "2026-07-16T12:34:56.789Z",
+    ...overrides,
+  };
+}
+
+function errno(code: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(code), { code });
+}
+
+function visibleBackupPaths(destinationDirectory: string): string[] {
+  return readdirSync(destinationDirectory)
+    .filter((name) => !name.startsWith("."))
+    .map((name) => join(destinationDirectory, name));
+}
+
+function assertIndependentlyValidFinal(path: string): void {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    database.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF");
+    assert.deepEqual({ ...database.prepare("PRAGMA quick_check").get() }, { quick_check: "ok" });
+    assert.deepEqual({ ...database.prepare("PRAGMA integrity_check").get() }, { integrity_check: "ok" });
+    assert.equal(database.prepare("PRAGMA foreign_key_check").all().length, 0);
+  } finally {
+    database.close();
+  }
+}
+
+describe("legacy import backup preparation", () => {
+  test("publishes one deeply frozen backup at its full backup-id-addressed name without authority writes", (t) => {
+    const prepare = prepareBackupApi();
+    const fixture = preparationFixture(t);
+    const authorityBefore = fixture.database.prepare(`
+      SELECT * FROM project_authority WHERE singleton = 1
+    `).get();
+    const lineageBefore = preparationLineage(fixture.database);
+
+    const result = prepare(fixture.input);
+
+    const expectedPath = expectedPreparedPath(fixture, result);
+    const expectedName = basename(expectedPath);
+    assert.equal(result.backup_ref, expectedPath);
+    assert.deepEqual(readdirSync(fixture.destinationDirectory), [expectedName]);
+    assert.equal(result.backup_sha256, hashLegacyImportBytes(readFileSync(expectedPath)));
+    assert.equal(result.backup_byte_size, statSync(expectedPath).size);
+    assert.deepEqual(validateLegacyImportVerifiedBackup(result, {
+      preview: fixture.input.preview,
+      base: fixture.input.base,
+    }), result);
+    assert.equal(Object.isFrozen(result), true);
+    assert.equal(Object.isFrozen(result.source_fingerprints), true);
+    assert.equal(Object.isFrozen(result.source_fingerprints[0]), true);
+
+    assertIndependentlyValidFinal(expectedPath);
+    assert.deepEqual(
+      fixture.database.prepare("SELECT * FROM project_authority WHERE singleton = 1").get(),
+      authorityBefore,
+    );
+    assert.deepEqual(preparationLineage(fixture.database), lineageBefore);
+  });
+
+  test("reuses one exact final backup without replacing its inode or changing its mtime", (t) => {
+    const prepare = prepareBackupApi();
+    const fixture = preparationFixture(t);
+    const first = prepare(fixture.input);
+    const path = expectedPreparedPath(fixture, first);
+    const before = statSync(path, { bigint: true });
+    const bytesBefore = readFileSync(path);
+
+    const replay = prepare(fixture.input);
+    const after = statSync(path, { bigint: true });
+
+    assert.equal(replay.backup_id, first.backup_id);
+    assert.equal(replay.backup_ref, first.backup_ref);
+    assert.equal(replay.backup_sha256, first.backup_sha256);
+    assert.equal(replay.backup_byte_size, first.backup_byte_size);
+    assert.equal(after.dev, before.dev);
+    assert.equal(after.ino, before.ino);
+    assert.equal(after.mtimeNs, before.mtimeNs);
+    assert.deepEqual(readFileSync(path), bytesBefore);
+    assert.deepEqual(readdirSync(fixture.destinationDirectory), [basename(path)]);
+    assert.equal(Object.isFrozen(replay), true);
+  });
+
+  test("rejects a corrupt exact-name collision without overwriting or deleting it", (t) => {
+    const prepare = prepareBackupApi();
+    const fixture = preparationFixture(t);
+    const first = prepare(fixture.input);
+    const path = expectedPreparedPath(fixture, first);
+    const corrupt = Buffer.from("not a complete SQLite backup");
+    writeFileSync(path, corrupt);
+    const before = statSync(path, { bigint: true });
+
+    assert.throws(
+      () => prepare(fixture.input),
+      (error: unknown) => error instanceof LegacyImportBackupError && !error.retryable,
+    );
+
+    const after = statSync(path, { bigint: true });
+    assert.equal(after.dev, before.dev);
+    assert.equal(after.ino, before.ino);
+    assert.deepEqual(readFileSync(path), corrupt);
+    assert.deepEqual(readdirSync(fixture.destinationDirectory), [basename(path)]);
+  });
+
+  test("rejects source or base drift before publication and creates no backup leaf", (t) => {
+    const prepare = prepareBackupApi();
+
+    const sourceDrift = preparationFixture(t);
+    writeFileSync(sourceDrift.sourcePath, "# State\n\nChanged after approval.\n");
+    assert.throws(() => prepare(sourceDrift.input));
+    assert.deepEqual(readdirSync(sourceDrift.destinationDirectory), []);
+
+    closeDatabase();
+    const baseDrift = preparationFixture(t);
+    baseDrift.database.prepare(`
+      INSERT INTO decisions (id, decision) VALUES ('D-PREPARE-DRIFT', 'Changed after approval')
+    `).run();
+    const changesAfterFixtureMutation = preparationLineage(baseDrift.database)?.["total_changes"];
+    assert.throws(() => prepare(baseDrift.input));
+    assert.deepEqual(readdirSync(baseDrift.destinationDirectory), []);
+    assert.equal(preparationLineage(baseDrift.database)?.["total_changes"], changesAfterFixtureMutation);
+  });
+
+  test("retries a fresh preflight or snapshot exactly three times but never retries a nonretryable failure", (t) => {
+    const fixture = preparationFixture(t);
+    let preflightAttempts = 0;
+    const retried = _prepareLegacyImportBackupForTest(fixture.input, preparationDependencies({
+      preparePreflight(input) {
+        preflightAttempts += 1;
+        if (preflightAttempts < 3) {
+          throw new LegacyImportBackupError(
+            "LEGACY_IMPORT_BACKUP_CHECKPOINT_BUSY",
+            "injected transient checkpoint",
+            {},
+            "checkpoint",
+            true,
+          );
+        }
+        return prepareLegacyImportBackupPreflight(input);
+      },
+    }));
+    assert.equal(preflightAttempts, 3);
+    assert.equal(visibleBackupPaths(fixture.destinationDirectory).length, 1);
+    assert.equal(retried.backup_ref, visibleBackupPaths(fixture.destinationDirectory)[0]);
+
+    closeDatabase();
+    const snapshotFixture = preparationFixture(t);
+    let snapshotAttempts = 0;
+    const snapshotRetried = _prepareLegacyImportBackupForTest(
+      snapshotFixture.input,
+      preparationDependencies({
+        createSnapshot(preflight) {
+          snapshotAttempts += 1;
+          if (snapshotAttempts < 3) {
+            throw new LegacyImportBackupError(
+              "LEGACY_IMPORT_BACKUP_SNAPSHOT_FAILED",
+              "injected transient snapshot",
+              {},
+              "snapshot",
+              true,
+            );
+          }
+          return createLegacyImportBackupSnapshot(preflight);
+        },
+      }),
+    );
+    assert.equal(snapshotAttempts, 3);
+    assert.equal(snapshotRetried.backup_ref, visibleBackupPaths(snapshotFixture.destinationDirectory)[0]);
+
+    closeDatabase();
+    const permanentFixture = preparationFixture(t);
+    let permanentAttempts = 0;
+    assert.throws(
+      () => _prepareLegacyImportBackupForTest(
+        permanentFixture.input,
+        preparationDependencies({
+          preparePreflight() {
+            permanentAttempts += 1;
+            throw new LegacyImportBackupError(
+              "LEGACY_IMPORT_BACKUP_CHECKPOINT_INVALID",
+              "injected permanent checkpoint",
+              {},
+              "checkpoint",
+              false,
+            );
+          },
+        }),
+      ),
+      (error: unknown) => error instanceof LegacyImportBackupError
+        && error.code === "LEGACY_IMPORT_BACKUP_CHECKPOINT_INVALID"
+        && !error.retryable,
+    );
+    assert.equal(permanentAttempts, 1);
+    assert.deepEqual(readdirSync(permanentFixture.destinationDirectory), []);
+  });
+
+  test("fails a non-collision link once and cleanup failure has final precedence", (t) => {
+    const fixture = preparationFixture(t);
+    let linkAttempts = 0;
+    assert.throws(
+      () => _prepareLegacyImportBackupForTest(fixture.input, preparationDependencies({
+        link() {
+          linkAttempts += 1;
+          throw errno("EPERM");
+        },
+      })),
+      (error: unknown) => error instanceof LegacyImportBackupError
+        && error.code === "LEGACY_IMPORT_BACKUP_PUBLICATION_FAILED"
+        && error.stage === "publication"
+        && !error.retryable,
+    );
+    assert.equal(linkAttempts, 1);
+    assert.deepEqual(readdirSync(fixture.destinationDirectory), []);
+
+    closeDatabase();
+    const cleanupFixture = preparationFixture(t);
+    let cleanupAttempts = 0;
+    assert.throws(
+      () => _prepareLegacyImportBackupForTest(cleanupFixture.input, preparationDependencies({
+        link() { throw errno("EPERM"); },
+        removeStagingDirectory() {
+          cleanupAttempts += 1;
+          throw errno("EACCES");
+        },
+      })),
+      (error: unknown) => error instanceof LegacyImportBackupError
+        && error.code === "LEGACY_IMPORT_BACKUP_STAGING_CLEANUP_FAILED"
+        && error.stage === "cleanup"
+        && !error.retryable,
+    );
+    assert.equal(cleanupAttempts, 1);
+    assert.deepEqual(visibleBackupPaths(cleanupFixture.destinationDirectory), []);
+  });
+
+  test("file or directory sync failure never retries and leaves only a complete final backup", (t) => {
+    const cases = ["file", "directory"] as const;
+    for (const kind of cases) {
+      const fixture = preparationFixture(t);
+      let syncAttempts = 0;
+      const dependencies = kind === "file"
+        ? preparationDependencies({
+          fsync() {
+            syncAttempts += 1;
+            throw errno("EIO");
+          },
+        })
+        : preparationDependencies({
+          syncDirectory() {
+            syncAttempts += 1;
+            throw errno("EIO");
+          },
+        });
+      assert.throws(
+        () => _prepareLegacyImportBackupForTest(fixture.input, dependencies),
+        (error: unknown) => error instanceof LegacyImportBackupError
+          && error.code === "LEGACY_IMPORT_BACKUP_SYNC_FAILED"
+          && error.stage === "sync"
+          && !error.retryable,
+      );
+      assert.equal(syncAttempts, 1, `${kind} sync failure is not retried`);
+      const finals = visibleBackupPaths(fixture.destinationDirectory);
+      assert.equal(finals.length, 1);
+      assertIndependentlyValidFinal(finals[0]!);
+      const recovered = prepareBackupApi()(fixture.input);
+      assert.equal(recovered.backup_ref, finals[0]);
+      closeDatabase();
+    }
+  });
+
+  test("metadata or post-snapshot source failure creates no published final", (t) => {
+    const metadataFixture = preparationFixture(t);
+    let clockReads = 0;
+    assert.throws(
+      () => _prepareLegacyImportBackupForTest(metadataFixture.input, preparationDependencies({
+        now() {
+          clockReads += 1;
+          throw new Error("clock unavailable");
+        },
+      })),
+      (error: unknown) => error instanceof LegacyImportBackupError
+        && error.code === "LEGACY_IMPORT_BACKUP_METADATA_INVALID"
+        && error.stage === "metadata",
+    );
+    assert.equal(clockReads, 1);
+    assert.deepEqual(readdirSync(metadataFixture.destinationDirectory), []);
+
+    closeDatabase();
+    const sourceFixture = preparationFixture(t);
+    let revalidations = 0;
+    assert.throws(
+      () => _prepareLegacyImportBackupForTest(sourceFixture.input, preparationDependencies({
+        revalidatePreview(input, expected) {
+          revalidations += 1;
+          writeFileSync(sourceFixture.sourcePath, "# State\n\nChanged after snapshot.\n");
+          return revalidateLegacyImportPreview(input, expected);
+        },
+      })),
+      (error: unknown) => error instanceof LegacyImportBackupError
+        && error.code === "LEGACY_IMPORT_BACKUP_SOURCE_CHANGED"
+        && error.stage === "source"
+        && !error.retryable,
+    );
+    assert.equal(revalidations, 1);
+    assert.deepEqual(readdirSync(sourceFixture.destinationDirectory), []);
+  });
+
+  test("an EEXIST race preserves a valid wrong final and rejects it as a nonretryable collision", (t) => {
+    const fixture = preparationFixture(t);
+    let racedPath = "";
+    assert.throws(
+      () => _prepareLegacyImportBackupForTest(fixture.input, preparationDependencies({
+        link(_stagingPath, finalPath) {
+          racedPath = finalPath;
+          const wrong = new DatabaseSync(finalPath);
+          try {
+            wrong.exec("CREATE TABLE wrong_backup (value TEXT NOT NULL)");
+          } finally {
+            wrong.close();
+          }
+          throw errno("EEXIST");
+        },
+      })),
+      (error: unknown) => error instanceof LegacyImportBackupError
+        && error.code === "LEGACY_IMPORT_BACKUP_PUBLICATION_COLLISION"
+        && error.stage === "publication"
+        && !error.retryable,
+    );
+    assert.ok(racedPath);
+    const wrong = new DatabaseSync(racedPath, { readOnly: true });
+    try {
+      assert.equal(
+        wrong.prepare("SELECT count(*) AS count FROM wrong_backup").get()?.count,
+        0,
+      );
+    } finally {
+      wrong.close();
+    }
+    assert.deepEqual(visibleBackupPaths(fixture.destinationDirectory), [racedPath]);
+  });
+
+  test("exact EEXIST reuse independently opens and revalidates the final with both directory syncs", (t) => {
+    const fixture = preparationFixture(t);
+    const first = prepareBackupApi()(fixture.input);
+    let opens = 0;
+    let revalidations = 0;
+    let fileSyncs = 0;
+    let directorySyncs = 0;
+    const replay = _prepareLegacyImportBackupForTest(fixture.input, preparationDependencies({
+      openReadOnly(path) {
+        opens += 1;
+        return openSqliteReadOnly(path);
+      },
+      revalidatePreview(input, expected) {
+        revalidations += 1;
+        return revalidateLegacyImportPreview(input, expected);
+      },
+      fsync() {
+        fileSyncs += 1;
+      },
+      syncDirectory() {
+        directorySyncs += 1;
+        return "synced";
+      },
+    }));
+
+    assert.equal(replay.backup_id, first.backup_id);
+    assert.equal(opens, 1, "collision reuse independently opens the existing final once");
+    assert.equal(revalidations, 2, "reuse revalidates before and after collision verification");
+    assert.equal(fileSyncs, 3, "reuse fences existing bytes before, after, and after staging cleanup");
+    assert.equal(directorySyncs, 2, "publication and cleanup each synchronize the directory");
+  });
+
+  test("a vanishing EEXIST candidate retries exactly three fresh attempts and can then converge", (t) => {
+    const exhaustedFixture = preparationFixture(t);
+    let exhaustedLinks = 0;
+    let exhaustedPreflights = 0;
+    assert.throws(
+      () => _prepareLegacyImportBackupForTest(
+        exhaustedFixture.input,
+        preparationDependencies({
+          preparePreflight(input) {
+            exhaustedPreflights += 1;
+            return prepareLegacyImportBackupPreflight(input);
+          },
+          link() {
+            exhaustedLinks += 1;
+            throw errno("EEXIST");
+          },
+        }),
+      ),
+      (error: unknown) => error instanceof LegacyImportBackupError
+        && error.code === "LEGACY_IMPORT_BACKUP_PUBLICATION_RACE"
+        && error.stage === "publication"
+        && error.retryable,
+    );
+    assert.equal(exhaustedLinks, 3);
+    assert.equal(exhaustedPreflights, 3);
+    assert.deepEqual(readdirSync(exhaustedFixture.destinationDirectory), []);
+
+    closeDatabase();
+    const convergedFixture = preparationFixture(t);
+    let convergedLinks = 0;
+    let convergedPreflights = 0;
+    const converged = _prepareLegacyImportBackupForTest(
+      convergedFixture.input,
+      preparationDependencies({
+        preparePreflight(input) {
+          convergedPreflights += 1;
+          return prepareLegacyImportBackupPreflight(input);
+        },
+        link(stagingPath, finalPath) {
+          convergedLinks += 1;
+          if (convergedLinks < 3) throw errno("EEXIST");
+          linkSync(stagingPath, finalPath);
+        },
+      }),
+    );
+    assert.equal(convergedLinks, 3);
+    assert.equal(convergedPreflights, 3);
+    assert.equal(converged.backup_ref, visibleBackupPaths(convergedFixture.destinationDirectory)[0]);
+    assertIndependentlyValidFinal(converged.backup_ref);
+  });
+
+  test("destination replacement after snapshot is rejected before link publication", (t) => {
+    const fixture = preparationFixture(t);
+    const originalDestination = `${fixture.destinationDirectory}.original`;
+    let destinationReads = 0;
+    let links = 0;
+    assert.throws(
+      () => _prepareLegacyImportBackupForTest(fixture.input, preparationDependencies({
+        lstat(path) {
+          if (path === fixture.destinationDirectory) {
+            destinationReads += 1;
+            if (destinationReads === 1) {
+              renameSync(fixture.destinationDirectory, originalDestination);
+              mkdirSync(fixture.destinationDirectory);
+            }
+          }
+          return lstatSync(path, { bigint: true });
+        },
+        link() { links += 1; },
+      })),
+      (error: unknown) => error instanceof LegacyImportBackupError
+        && error.code === "LEGACY_IMPORT_BACKUP_FINAL_CHANGED"
+        && error.stage === "publication"
+        && !error.retryable,
+    );
+    assert.equal(links, 0);
+    assert.deepEqual(readdirSync(fixture.destinationDirectory), []);
+  });
+
+  test("legacy import backup restart converges after true termination before or after publication", {
+    concurrency: false,
+  }, (t) => {
+    const workerPath = join(
+      process.cwd(),
+      "src/resources/extensions/gsd/tests/fixtures/legacy-import-backup-prepare-worker.ts",
+    );
+    const resolverPath = join(
+      process.cwd(),
+      "src/resources/extensions/gsd/tests/resolve-ts.mjs",
+    );
+    const boundaries = ["after-verification", "after-publish"] as const;
+
+    for (const boundary of boundaries) {
+      const fixture = preparationFixture(t);
+      const lineageBefore = preparationLineage(fixture.database);
+      assert.ok(lineageBefore);
+      const { total_changes: _priorConnectionChanges, ...canonicalBefore } = lineageBefore;
+      closeDatabase();
+      const env = { ...process.env };
+      delete env.NODE_TEST_CONTEXT;
+      const child = spawnSync(process.execPath, [
+        "--import",
+        resolverPath,
+        "--experimental-strip-types",
+        workerPath,
+        JSON.stringify({
+          databasePath: fixture.databasePath,
+          preparationInput: fixture.input,
+          boundary,
+        }),
+      ], {
+        cwd: process.cwd(),
+        env,
+        encoding: "utf8",
+        timeout: 30_000,
+      });
+
+      assert.equal(child.status, null, child.stderr || child.stdout);
+      assert.equal(child.signal, "SIGKILL", child.stderr || child.stdout);
+      const afterTermination = visibleBackupPaths(fixture.destinationDirectory);
+      assert.equal(afterTermination.length, boundary === "after-publish" ? 1 : 0);
+      if (afterTermination[0] !== undefined) assertIndependentlyValidFinal(afterTermination[0]);
+
+      assert.equal(openDatabase(fixture.databasePath), true);
+      const restartedDatabase = _getAdapter();
+      assert.ok(restartedDatabase);
+      const restartedBefore = preparationLineage(restartedDatabase);
+      assert.ok(restartedBefore);
+      const { total_changes: restartedTotalChanges, ...restartedCanonical } = restartedBefore;
+      assert.deepEqual(restartedCanonical, canonicalBefore);
+      const restarted = prepareBackupApi()(fixture.input);
+      const converged = visibleBackupPaths(fixture.destinationDirectory);
+      assert.deepEqual(converged, [restarted.backup_ref]);
+      assertIndependentlyValidFinal(restarted.backup_ref);
+      if (afterTermination[0] !== undefined) {
+        assert.equal(restarted.backup_ref, afterTermination[0]);
+      }
+      assert.equal(preparationLineage(restartedDatabase)?.["total_changes"], restartedTotalChanges);
+      closeDatabase();
+    }
   });
 });

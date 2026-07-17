@@ -7,6 +7,7 @@ import {
   constants as fsConstants,
   fstatSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -197,6 +198,12 @@ export type LegacyImportBackupErrorCode =
   | "LEGACY_IMPORT_BACKUP_VERIFIED_BASE_MISMATCH"
   | "LEGACY_IMPORT_BACKUP_TRANSACTION_FAILED"
   | "LEGACY_IMPORT_BACKUP_CLOSE_FAILED"
+  | "LEGACY_IMPORT_BACKUP_SOURCE_CHANGED"
+  | "LEGACY_IMPORT_BACKUP_METADATA_INVALID"
+  | "LEGACY_IMPORT_BACKUP_PUBLICATION_FAILED"
+  | "LEGACY_IMPORT_BACKUP_PUBLICATION_RACE"
+  | "LEGACY_IMPORT_BACKUP_PUBLICATION_COLLISION"
+  | "LEGACY_IMPORT_BACKUP_FINAL_CHANGED"
   | "LEGACY_IMPORT_BACKUP_STAGING_CLEANUP_FAILED";
 
 export type LegacyImportBackupErrorStage =
@@ -210,6 +217,9 @@ export type LegacyImportBackupErrorStage =
   | "read"
   | "hash"
   | "verification"
+  | "source"
+  | "metadata"
+  | "publication"
   | "cleanup";
 
 export class LegacyImportBackupError extends Error {
@@ -1603,9 +1613,10 @@ function confirmSnapshotFile(
 }
 
 function flushAndHashSnapshot(
-  staging: LegacyImportBackupPrivateStaging,
+  staging: Pick<LegacyImportBackupPrivateStaging, "path">,
   expected: LegacyImportBackupSnapshotFileState,
   ops: LegacyImportBackupSnapshotOps,
+  synchronize = true,
 ): { sha256: LegacyImportSha256; state: LegacyImportBackupSnapshotFileState } {
   let fd: number;
   try {
@@ -1644,14 +1655,16 @@ function flushAndHashSnapshot(
         "legacy import backup snapshot changed before flush",
       );
     }
-    try {
-      ops.fsync(fd);
-    } catch {
-      preflightFail(
-        "sync",
-        "LEGACY_IMPORT_BACKUP_SYNC_FAILED",
-        "legacy import backup snapshot could not be flushed",
-      );
+    if (synchronize) {
+      try {
+        ops.fsync(fd);
+      } catch {
+        preflightFail(
+          "sync",
+          "LEGACY_IMPORT_BACKUP_SYNC_FAILED",
+          "legacy import backup snapshot could not be flushed",
+        );
+      }
     }
 
     let hash: Hash;
@@ -1933,6 +1946,7 @@ function privateStagingFrom(snapshot: LegacyImportBackupSnapshot): LegacyImportB
 function requireOwnedSnapshot(
   snapshot: LegacyImportBackupSnapshot,
   ops: LegacyImportBackupSnapshotOps,
+  synchronize = true,
 ): LegacyImportBackupSnapshotFileState {
   const staging = privateStagingFrom(snapshot);
   let directory: BigIntStats;
@@ -1962,7 +1976,7 @@ function requireOwnedSnapshot(
       "legacy import backup snapshot identity changed before verification",
     );
   }
-  const hashed = flushAndHashSnapshot(staging, state, ops);
+  const hashed = flushAndHashSnapshot(staging, state, ops, synchronize);
   if (
     hashed.sha256 !== snapshot.backup_sha256
     || hashed.state.byteSize !== snapshot.backup_byte_size
@@ -2248,5 +2262,612 @@ export function verifyLegacyImportBackupSnapshot(
 ): LegacyImportBackupVerification {
   return _verifyLegacyImportBackupSnapshotForTest(input, {
     openReadOnly: openSqliteReadOnly,
+  });
+}
+
+const BACKUP_PREPARATION_ATTEMPT_LIMIT = 3;
+const BACKUP_SIDECAR_SUFFIXES = ["-journal", "-shm", "-wal"] as const;
+
+export interface LegacyImportBackupPreparationDependencies {
+  preparePreflight(input: LegacyImportBackupPreflightInput): LegacyImportBackupPreflight;
+  createSnapshot(preflight: LegacyImportBackupPreflight): LegacyImportBackupSnapshot;
+  verifySnapshot(input: LegacyImportBackupVerificationInput): LegacyImportBackupVerification;
+  revalidatePreview(
+    input: LegacyImportPreviewCreateInput,
+    expected: LegacyImportPreviewArtifact,
+  ): LegacyImportPreviewArtifact;
+  openReadOnly(path: string): SqliteReadOnlyConnection;
+  now(): string;
+  link?(existingPath: string, newPath: string): void;
+  lstat?(path: string): BigIntStats;
+  fsync?(fd: number): void;
+  read?(fd: number, buffer: Uint8Array, offset: number, length: number): number;
+  createHash?(): Hash;
+  removeStagingDirectory?(path: string): void;
+  syncDirectory?(path: string): "synced" | "unsupported";
+}
+
+type LegacyImportBackupPublicationDisposition = "published" | "reused";
+
+interface LegacyImportBackupPreparationOps extends LegacyImportBackupSnapshotOps {
+  link(existingPath: string, newPath: string): void;
+  syncDirectory(path: string): "synced" | "unsupported";
+}
+
+function preparationFail(
+  stage: "source" | "metadata" | "publication" | "sync",
+  code: LegacyImportBackupErrorCode,
+  message: string,
+  context: Readonly<Record<string, LegacyImportValue>> = {},
+  retryable = false,
+): never {
+  throw new LegacyImportBackupError(code, message, context, stage, retryable);
+}
+
+function isUnsupportedDirectorySync(error: unknown): boolean {
+  const code = systemErrorCode(error);
+  return code === "EINVAL"
+    || code === "ENOTSUP"
+    || (process.platform === "win32" && (code === "EISDIR" || code === "EPERM"));
+}
+
+function syncDirectory(path: string): "synced" | "unsupported" {
+  let fd: number;
+  try {
+    fd = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_DIRECTORY ?? 0));
+  } catch (error) {
+    if (isUnsupportedDirectorySync(error)) return "unsupported";
+    throw error;
+  }
+  let failure: unknown;
+  let result: "synced" | "unsupported" = "synced";
+  try {
+    fsyncSync(fd);
+  } catch (error) {
+    if (isUnsupportedDirectorySync(error)) result = "unsupported";
+    else failure = error;
+  } finally {
+    try {
+      closeSync(fd);
+    } catch (error) {
+      failure = error;
+    }
+  }
+  if (failure !== undefined) throw failure;
+  return result;
+}
+
+function preparationOps(
+  dependencies: LegacyImportBackupPreparationDependencies,
+): LegacyImportBackupPreparationOps {
+  const fileOps = verificationOps(dependencies);
+  return {
+    ...fileOps,
+    link: dependencies.link ?? ((existingPath, newPath) => linkSync(existingPath, newPath)),
+    syncDirectory: dependencies.syncDirectory ?? syncDirectory,
+  };
+}
+
+function preparationInput(
+  value: LegacyImportBackupPreflightInput,
+): LegacyImportBackupPreflightInput {
+  if (!hasExactDataProperties(value, BACKUP_PREFLIGHT_INPUT_KEYS)) {
+    fail(
+      "LEGACY_IMPORT_BACKUP_CONTRACT_INVALID",
+      "legacy import backup preparation requires one exact plain input object",
+    );
+  }
+  let input: LegacyImportBackupPreflightInput;
+  try {
+    input = structuredClone(value);
+  } catch {
+    fail(
+      "LEGACY_IMPORT_BACKUP_CONTRACT_INVALID",
+      "legacy import backup preparation input must be detached strict data",
+    );
+  }
+  if (!hasExactDataProperties(input, BACKUP_PREFLIGHT_INPUT_KEYS)) {
+    fail(
+      "LEGACY_IMPORT_BACKUP_CONTRACT_INVALID",
+      "legacy import backup preparation input changed while being detached",
+    );
+  }
+  validatePreviewAndBase(input.preview, input.base);
+  return deepFreeze(input);
+}
+
+function requireMatchingVerification(
+  verification: LegacyImportBackupVerification,
+  snapshot: LegacyImportBackupSnapshot,
+  base: LegacyImportBaseSnapshot,
+): void {
+  try {
+    if (
+      !hasExactDataProperties(verification, [
+        "snapshot",
+        "independent_base",
+        "quick_check",
+        "integrity_check",
+        "foreign_key_violations",
+      ])
+      || verification.quick_check !== "ok"
+      || verification.integrity_check !== "ok"
+      || verification.foreign_key_violations !== 0
+      || hashLegacyImportValue(verification.snapshot) !== hashLegacyImportValue(snapshot)
+      || hashLegacyImportValue(verification.independent_base) !== hashLegacyImportValue(base)
+    ) throw new Error("verification mismatch");
+  } catch {
+    preparationFail(
+      "metadata",
+      "LEGACY_IMPORT_BACKUP_METADATA_INVALID",
+      "legacy import backup verification evidence does not match its approved snapshot and base",
+    );
+  }
+}
+
+function revalidatePreparationPreview(
+  input: LegacyImportBackupPreflightInput,
+  revalidate: LegacyImportBackupPreparationDependencies["revalidatePreview"],
+): void {
+  try {
+    const observed = revalidate({ roots: input.roots }, input.preview);
+    if (hashLegacyImportValue(observed) !== hashLegacyImportValue(input.preview)) {
+      throw new Error("Preview revalidation returned a different artifact");
+    }
+  } catch {
+    preparationFail(
+      "source",
+      "LEGACY_IMPORT_BACKUP_SOURCE_CHANGED",
+      "legacy import Preview or canonical base changed after backup snapshot creation",
+    );
+  }
+}
+
+function sealPreparedBackup(
+  input: LegacyImportBackupPreflightInput,
+  preflight: LegacyImportBackupPreflight,
+  verification: LegacyImportBackupVerification,
+  now: () => string,
+): LegacyImportVerifiedBackup {
+  try {
+    const sealInput = {
+      preview: input.preview,
+      base: input.base,
+      backup_sha256: verification.snapshot.backup_sha256,
+      backup_byte_size: verification.snapshot.backup_byte_size,
+      quick_check: verification.quick_check,
+      integrity_check: verification.integrity_check,
+      foreign_key_violations: verification.foreign_key_violations,
+      verified_at: now(),
+    } as const;
+    const identityCandidate = attachBackupIdentity(unsealedBackup({
+      ...sealInput,
+      backup_ref: preflight.destination_path,
+    }));
+    const finalPath = join(
+      preflight.destination_directory,
+      `${preflight.label}-${identityCandidate.backup_id.slice("sha256:".length)}.sqlite`,
+    );
+    const sealed = sealLegacyImportVerifiedBackup({ ...sealInput, backup_ref: finalPath });
+    if (sealed.backup_id !== identityCandidate.backup_id) {
+      throw new Error("backup identity changed with its storage reference");
+    }
+    return validateLegacyImportVerifiedBackup(sealed, {
+      preview: input.preview,
+      base: input.base,
+    });
+  } catch {
+    preparationFail(
+      "metadata",
+      "LEGACY_IMPORT_BACKUP_METADATA_INVALID",
+      "legacy import verified backup metadata could not be sealed exactly",
+    );
+  }
+}
+
+function requirePublicationDestinationPin(
+  preflight: LegacyImportBackupPreflight,
+  finalPath: string,
+  ops: LegacyImportBackupPreparationOps,
+): void {
+  let directory: BigIntStats;
+  try {
+    directory = ops.lstat(preflight.destination_directory);
+    if (
+      realpathSync(preflight.destination_directory) !== preflight.destination_directory
+      || !directory.isDirectory()
+      || directory.isSymbolicLink()
+      || !sameIdentity(fileIdentity(directory), preflight.destination_directory_identity)
+      || dirname(finalPath) !== preflight.destination_directory
+    ) throw new Error("destination changed");
+  } catch {
+    preparationFail(
+      "publication",
+      "LEGACY_IMPORT_BACKUP_FINAL_CHANGED",
+      "legacy import backup destination identity changed before publication",
+      { final_path: finalPath },
+    );
+  }
+}
+
+function requireNoPublishedSidecars(
+  finalPath: string,
+  ops: LegacyImportBackupPreparationOps,
+): void {
+  for (const suffix of BACKUP_SIDECAR_SUFFIXES) {
+    const sidecarPath = `${finalPath}${suffix}`;
+    try {
+      ops.lstat(sidecarPath);
+    } catch (error) {
+      if (systemErrorCode(error) === "ENOENT") continue;
+      preparationFail(
+        "publication",
+        "LEGACY_IMPORT_BACKUP_PUBLICATION_COLLISION",
+        "legacy import backup sidecar path could not be inspected safely",
+        { final_path: finalPath },
+      );
+    }
+    preparationFail(
+      "publication",
+      "LEGACY_IMPORT_BACKUP_PUBLICATION_COLLISION",
+      "legacy import backup final path has a conflicting SQLite sidecar",
+      { final_path: finalPath, sidecar_path: sidecarPath },
+    );
+  }
+}
+
+function inspectPublishedFile(
+  finalPath: string,
+  preflight: LegacyImportBackupPreflight,
+  snapshot: LegacyImportBackupSnapshot,
+  ops: LegacyImportBackupPreparationOps,
+  collision: boolean,
+): LegacyImportBackupSnapshotFileState {
+  let stat: BigIntStats;
+  try {
+    stat = ops.lstat(finalPath);
+  } catch (error) {
+    if (collision && systemErrorCode(error) === "ENOENT") {
+      preparationFail(
+        "publication",
+        "LEGACY_IMPORT_BACKUP_PUBLICATION_RACE",
+        "existing legacy import backup vanished during publication",
+        { final_path: finalPath },
+        true,
+      );
+    }
+    preparationFail(
+      "publication",
+      collision
+        ? "LEGACY_IMPORT_BACKUP_PUBLICATION_COLLISION"
+        : "LEGACY_IMPORT_BACKUP_FINAL_CHANGED",
+      "legacy import backup final file could not be inspected exactly",
+      { final_path: finalPath },
+    );
+  }
+  if (
+    !stat.isFile()
+    || stat.isSymbolicLink()
+    || stat.size !== BigInt(snapshot.backup_byte_size)
+    || sameIdentity(fileIdentity(stat), preflight.database_identity)
+  ) {
+    preparationFail(
+      "publication",
+      collision
+        ? "LEGACY_IMPORT_BACKUP_PUBLICATION_COLLISION"
+        : "LEGACY_IMPORT_BACKUP_FINAL_CHANGED",
+      "legacy import backup final file does not match the verified publication candidate",
+      { final_path: finalPath },
+    );
+  }
+  return snapshotFileState(stat);
+}
+
+function requirePublishedExact(
+  finalPath: string,
+  preflight: LegacyImportBackupPreflight,
+  snapshot: LegacyImportBackupSnapshot,
+  ops: LegacyImportBackupPreparationOps,
+  collision: boolean,
+): LegacyImportBackupSnapshotFileState {
+  requirePublicationDestinationPin(preflight, finalPath, ops);
+  const state = inspectPublishedFile(finalPath, preflight, snapshot, ops, collision);
+  const published = { path: finalPath };
+  try {
+    const evidence = flushAndHashSnapshot(published, state, ops);
+    if (
+      evidence.sha256 !== snapshot.backup_sha256
+      || evidence.state.byteSize !== snapshot.backup_byte_size
+      || !sameIdentity(evidence.state.identity, state.identity)
+    ) throw new Error("published bytes changed");
+    requireRollbackJournalHeader({ ...snapshot, staging_path: finalPath }, evidence.state);
+    requireNoPublishedSidecars(finalPath, ops);
+    return evidence.state;
+  } catch (error) {
+    if (
+      error instanceof LegacyImportBackupError
+      && (error.code === "LEGACY_IMPORT_BACKUP_SYNC_FAILED"
+        || error.code === "LEGACY_IMPORT_BACKUP_STAGING_CLEANUP_FAILED")
+    ) throw error;
+    if (collision) {
+      try {
+        const current = ops.lstat(finalPath);
+        if (!sameIdentity(fileIdentity(current), state.identity)) {
+          preparationFail(
+            "publication",
+            "LEGACY_IMPORT_BACKUP_PUBLICATION_RACE",
+            "existing legacy import backup identity changed during publication",
+            { final_path: finalPath },
+            true,
+          );
+        }
+      } catch (inspectionError) {
+        if (
+          inspectionError instanceof LegacyImportBackupError
+          && inspectionError.code === "LEGACY_IMPORT_BACKUP_PUBLICATION_RACE"
+        ) throw inspectionError;
+        if (systemErrorCode(inspectionError) === "ENOENT") {
+          preparationFail(
+            "publication",
+            "LEGACY_IMPORT_BACKUP_PUBLICATION_RACE",
+            "existing legacy import backup vanished during publication",
+            { final_path: finalPath },
+            true,
+          );
+        }
+      }
+    }
+    preparationFail(
+      "publication",
+      collision
+        ? "LEGACY_IMPORT_BACKUP_PUBLICATION_COLLISION"
+        : "LEGACY_IMPORT_BACKUP_FINAL_CHANGED",
+      "legacy import backup final bytes or SQLite header do not match the verified candidate",
+      { final_path: finalPath },
+    );
+  }
+}
+
+function verifyExistingPublishedBackup(
+  finalPath: string,
+  input: LegacyImportBackupPreflightInput,
+  preflight: LegacyImportBackupPreflight,
+  verification: LegacyImportBackupVerification,
+  dependencies: LegacyImportBackupPreparationDependencies,
+  ops: LegacyImportBackupPreparationOps,
+): void {
+  const before = requirePublishedExact(finalPath, preflight, verification.snapshot, ops, true);
+  let connection: SqliteReadOnlyConnection;
+  try {
+    connection = dependencies.openReadOnly(finalPath);
+  } catch (error) {
+    if (error instanceof SqliteReadOnlyConfigurationCloseError) {
+      verificationFail(
+        "LEGACY_IMPORT_BACKUP_CLOSE_FAILED",
+        "existing verified backup failed read-only configuration and close",
+      );
+    }
+    preparationFail(
+      "publication",
+      "LEGACY_IMPORT_BACKUP_PUBLICATION_COLLISION",
+      "existing legacy import backup could not be opened independently",
+      { final_path: finalPath },
+    );
+  }
+  let failure: unknown;
+  try {
+    const existingBase = runIndependentVerification(connection, finalPath, input.base);
+    if (hashLegacyImportValue(existingBase) !== hashLegacyImportValue(verification.independent_base)) {
+      preparationFail(
+        "publication",
+        "LEGACY_IMPORT_BACKUP_PUBLICATION_COLLISION",
+        "existing legacy import backup does not match the verified base lineage",
+        { final_path: finalPath },
+      );
+    }
+  } catch (error) {
+    failure = error;
+  } finally {
+    try {
+      connection.db.close();
+    } catch {
+      failure = new LegacyImportBackupError(
+        "LEGACY_IMPORT_BACKUP_CLOSE_FAILED",
+        "existing legacy import backup connection could not be closed safely",
+        { final_path: finalPath },
+        "verification",
+        false,
+      );
+    }
+  }
+  if (failure !== undefined) {
+    if (
+      failure instanceof LegacyImportBackupError
+      && (failure.code === "LEGACY_IMPORT_BACKUP_CLOSE_FAILED"
+        || failure.code === "LEGACY_IMPORT_BACKUP_SYNC_FAILED"
+        || failure.code === "LEGACY_IMPORT_BACKUP_STAGING_CLEANUP_FAILED")
+    ) throw failure;
+    preparationFail(
+      "publication",
+      "LEGACY_IMPORT_BACKUP_PUBLICATION_COLLISION",
+      "existing legacy import backup failed independent integrity or base verification",
+      { final_path: finalPath },
+    );
+  }
+  const after = requirePublishedExact(finalPath, preflight, verification.snapshot, ops, true);
+  if (!sameIdentity(before.identity, after.identity)) {
+    preparationFail(
+      "publication",
+      "LEGACY_IMPORT_BACKUP_PUBLICATION_RACE",
+      "existing legacy import backup identity changed during verification",
+      { final_path: finalPath },
+      true,
+    );
+  }
+}
+
+function syncPublishedDirectory(
+  preflight: LegacyImportBackupPreflight,
+  finalPath: string,
+  ops: LegacyImportBackupPreparationOps,
+): void {
+  requirePublicationDestinationPin(preflight, finalPath, ops);
+  try {
+    ops.syncDirectory(preflight.destination_directory);
+  } catch {
+    preparationFail(
+      "sync",
+      "LEGACY_IMPORT_BACKUP_SYNC_FAILED",
+      "legacy import backup destination directory could not be synchronized",
+      { destination_directory: preflight.destination_directory },
+    );
+  }
+}
+
+function cleanupPreparedSnapshot(
+  snapshot: LegacyImportBackupSnapshot,
+  ops: LegacyImportBackupPreparationOps,
+): void {
+  const staging = privateStagingFrom(snapshot);
+  try {
+    cleanupPrivateStaging(staging, ops);
+  } catch {
+    throw new LegacyImportBackupError(
+      "LEGACY_IMPORT_BACKUP_STAGING_CLEANUP_FAILED",
+      "legacy import backup staging cleanup failed after publication",
+      { staging_directory: staging.directory },
+      "cleanup",
+      false,
+    );
+  }
+}
+
+function publishPreparedBackup(
+  input: LegacyImportBackupPreflightInput,
+  preflight: LegacyImportBackupPreflight,
+  verification: LegacyImportBackupVerification,
+  backup: LegacyImportVerifiedBackup,
+  dependencies: LegacyImportBackupPreparationDependencies,
+  ops: LegacyImportBackupPreparationOps,
+): LegacyImportBackupPublicationDisposition {
+  const finalPath = backup.backup_ref;
+  requirePublicationDestinationPin(preflight, finalPath, ops);
+  const staged = requireOwnedSnapshot(verification.snapshot, ops, false);
+  requireNoPublishedSidecars(finalPath, ops);
+
+  let disposition: LegacyImportBackupPublicationDisposition = "published";
+  try {
+    ops.link(verification.snapshot.staging_path, finalPath);
+  } catch (error) {
+    if (systemErrorCode(error) !== "EEXIST") {
+      preparationFail(
+        "publication",
+        "LEGACY_IMPORT_BACKUP_PUBLICATION_FAILED",
+        "legacy import backup could not be published atomically without replacement",
+        { final_path: finalPath },
+      );
+    }
+    disposition = "reused";
+  }
+
+  if (disposition === "reused") {
+    verifyExistingPublishedBackup(
+      finalPath,
+      input,
+      preflight,
+      verification,
+      dependencies,
+      ops,
+    );
+  } else {
+    const published = requirePublishedExact(finalPath, preflight, verification.snapshot, ops, false);
+    if (
+      !sameIdentity(published.identity, verification.snapshot.staging_identity)
+      || !sameIdentity(published.identity, staged.identity)
+    ) {
+      preparationFail(
+        "publication",
+        "LEGACY_IMPORT_BACKUP_FINAL_CHANGED",
+        "new legacy import backup final name does not reference the verified staging inode",
+        { final_path: finalPath },
+      );
+    }
+  }
+
+  syncPublishedDirectory(preflight, finalPath, ops);
+  cleanupPreparedSnapshot(verification.snapshot, ops);
+  requirePublishedExact(finalPath, preflight, verification.snapshot, ops, disposition === "reused");
+  syncPublishedDirectory(preflight, finalPath, ops);
+  return disposition;
+}
+
+function normalizePreparationFailure(error: unknown): LegacyImportBackupError {
+  if (error instanceof LegacyImportBackupError) return error;
+  return new LegacyImportBackupError(
+    "LEGACY_IMPORT_BACKUP_PUBLICATION_FAILED",
+    "legacy import backup preparation failed",
+    {},
+    "publication",
+    false,
+  );
+}
+
+export function _prepareLegacyImportBackupForTest(
+  value: LegacyImportBackupPreflightInput,
+  dependencies: LegacyImportBackupPreparationDependencies,
+): LegacyImportVerifiedBackup {
+  const input = preparationInput(value);
+  const ops = preparationOps(dependencies);
+  for (let attempt = 1; attempt <= BACKUP_PREPARATION_ATTEMPT_LIMIT; attempt += 1) {
+    let snapshot: LegacyImportBackupSnapshot | null = null;
+    try {
+      const preflight = dependencies.preparePreflight(input);
+      snapshot = dependencies.createSnapshot(preflight);
+      const verification = dependencies.verifySnapshot({
+        preview: input.preview,
+        base: input.base,
+        snapshot,
+      });
+      requireMatchingVerification(verification, snapshot, input.base);
+      revalidatePreparationPreview(input, dependencies.revalidatePreview);
+      const backup = sealPreparedBackup(input, preflight, verification, dependencies.now);
+      const disposition = publishPreparedBackup(
+        input,
+        preflight,
+        verification,
+        backup,
+        dependencies,
+        ops,
+      );
+      snapshot = null;
+      if (disposition === "reused") {
+        revalidatePreparationPreview(input, dependencies.revalidatePreview);
+      }
+      return backup;
+    } catch (error) {
+      let failure = normalizePreparationFailure(error);
+      if (snapshot !== null) {
+        try {
+          cleanupPreparedSnapshot(snapshot, ops);
+        } catch (cleanupError) {
+          failure = normalizePreparationFailure(cleanupError);
+        }
+      }
+      if (!failure.retryable || attempt === BACKUP_PREPARATION_ATTEMPT_LIMIT) throw failure;
+    }
+  }
+  throw new Error("unreachable legacy import backup preparation state");
+}
+
+export function prepareLegacyImportBackup(
+  input: LegacyImportBackupPreflightInput,
+): LegacyImportVerifiedBackup {
+  return _prepareLegacyImportBackupForTest(input, {
+    preparePreflight: prepareLegacyImportBackupPreflight,
+    createSnapshot: createLegacyImportBackupSnapshot,
+    verifySnapshot: verifyLegacyImportBackupSnapshot,
+    revalidatePreview: revalidateLegacyImportPreview,
+    openReadOnly: openSqliteReadOnly,
+    now: () => new Date().toISOString(),
   });
 }
