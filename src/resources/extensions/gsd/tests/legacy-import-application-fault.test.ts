@@ -19,6 +19,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { Readable } from "node:stream";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,10 @@ import {
   type LegacyImportApplicationReceipt,
 } from "../legacy-import-application.ts";
 import {
+  compileLegacyImportApplicationPlan,
+  type LegacyImportApplicationPlan,
+} from "../legacy-import-application-plan.ts";
+import {
   createLegacyImportPreview,
 } from "../legacy-import-preview.ts";
 import {
@@ -50,6 +55,9 @@ import type { DbAdapter, DbStatement } from "../db-adapter.ts";
 import {
   _getAdapter,
   closeDatabase,
+  insertDecision,
+  insertMilestone,
+  insertSlice,
   openDatabase,
 } from "../gsd-db.ts";
 import { createLegacyImportCorpusSourceRoots } from "./helpers/legacy-import-corpus.ts";
@@ -113,7 +121,12 @@ interface ChildConfig {
   committedPath?: string;
 }
 
-type MutationFixture = "gsd-nested" | "planning-flat-complete" | "decision-create";
+type MutationFixture =
+  | "gsd-nested"
+  | "planning-flat-complete"
+  | "decision-create"
+  | "row-actions"
+  | "decision-actions";
 
 interface MutationFaultCase {
   family: string;
@@ -149,6 +162,16 @@ const MUTATION_FAULT_CASES: readonly MutationFaultCase[] = [
   { family: "outbox", fixture: "gsd-nested", sqlPattern: "insert into workflow_outbox", occurrence: 1 },
   { family: "projection work", fixture: "gsd-nested", sqlPattern: "insert into workflow_projection_work", occurrence: 1 },
   { family: "authority CAS", fixture: "gsd-nested", sqlPattern: "update project_authority", occurrence: 1 },
+  { family: "row update", fixture: "row-actions", sqlPattern: "update slices set", occurrence: 1 },
+  { family: "row delete", fixture: "row-actions", sqlPattern: "delete from slices where", occurrence: 1 },
+  {
+    family: "dependency deletion",
+    fixture: "row-actions",
+    sqlPattern: "delete from slice_dependencies where milestone_id = :milestone_id and (slice_id = :slice_id or depends_on_slice_id = :slice_id)",
+    occurrence: 1,
+  },
+  { family: "decision update", fixture: "decision-actions", sqlPattern: "insert into memories", occurrence: 2 },
+  { family: "decision delete", fixture: "decision-actions", sqlPattern: "insert into memories", occurrence: 3 },
 ];
 
 function db(): DbAdapter {
@@ -193,6 +216,127 @@ function durableSnapshot(): Record<string, unknown> {
   };
 }
 
+const ROW_ACTIONS_MANIFEST = {
+  version: 1,
+  exported_at: "2026-07-17T12:00:00.000Z",
+  milestones: [{
+    id: "M001",
+    title: "Action family fixture",
+    status: "pending",
+    depends_on: [],
+    created_at: "2026-07-17T12:00:00.000Z",
+    completed_at: null,
+    vision: "Exercise exact row actions.",
+    success_criteria: ["Every discriminant is covered"],
+    key_risks: [],
+    proof_strategy: [],
+    verification_contract: "Run focused fault tests.",
+    verification_integration: "Use the public Application.",
+    verification_operational: "Reopen the database.",
+    verification_uat: "No manual step.",
+    definition_of_done: ["Rollback is exact"],
+    requirement_coverage: "",
+    boundary_map_markdown: "manifest -> database",
+    sequence: 1,
+  }],
+  slices: [{
+    milestone_id: "M001",
+    id: "S01",
+    title: "Canonical slice title",
+    status: "pending",
+    risk: "medium",
+    depends: [],
+    demo: "Show exact actions.",
+    created_at: "2026-07-17T12:00:00.000Z",
+    completed_at: null,
+    full_summary_md: "",
+    full_uat_md: "",
+    goal: "Close action coverage.",
+    success_criteria: "All row actions execute.",
+    proof_level: "integration",
+    integration_closure: "Fault tests use physical input.",
+    observability_impact: "None.",
+    target_repositories: ["open-gsd/gsd-pi"],
+    sequence: 1,
+    replan_triggered_at: null,
+    is_sketch: 0,
+    sketch_scope: "",
+  }],
+  tasks: [],
+  decisions: [],
+  verification_evidence: [],
+};
+
+function instructionDescriptors(plan: LegacyImportApplicationPlan): Array<[string, string]> {
+  return plan.instructions.map((instruction) => {
+    const value = instruction as unknown as Record<string, unknown>;
+    return [instruction.action, String(value["targetKey"] ?? value["decisionId"])] as [string, string];
+  });
+}
+
+function seedRowActionsBase(): void {
+  insertMilestone({
+    id: "M001",
+    title: "Action family fixture",
+    status: "pending",
+    planning: {
+      vision: "Exercise exact row actions.",
+      successCriteria: ["Every discriminant is covered"],
+      keyRisks: [],
+      proofStrategy: [],
+      verificationContract: "Run focused fault tests.",
+      verificationIntegration: "Use the public Application.",
+      verificationOperational: "Reopen the database.",
+      verificationUat: "No manual step.",
+      definitionOfDone: ["Rollback is exact"],
+      requirementCoverage: "",
+      boundaryMapMarkdown: "manifest -> database",
+    },
+  });
+  db().prepare("UPDATE milestones SET sequence = 1 WHERE id = 'M001'").run();
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Stale slice title",
+    status: "pending",
+    risk: "medium",
+    depends: [],
+    demo: "Show exact actions.",
+    sequence: 1,
+    isSketch: false,
+    sketchScope: "",
+    planning: {
+      goal: "Close action coverage.",
+      successCriteria: "All row actions execute.",
+      proofLevel: "integration",
+      integrationClosure: "Fault tests use physical input.",
+      observabilityImpact: "None.",
+      targetRepositories: ["open-gsd/gsd-pi"],
+    },
+  });
+  insertSlice({
+    id: "S02",
+    milestoneId: "M001",
+    title: "Delete me",
+    depends: ["S01"],
+  });
+  db().prepare(`INSERT INTO slice_dependencies
+    (milestone_id, slice_id, depends_on_slice_id) VALUES ('M001', 'S02', 'S01')`).run();
+}
+
+function seedDecisionActionsBase(sourceDatabasePath: string): void {
+  const sourceDatabase = new DatabaseSync(sourceDatabasePath, { readOnly: true });
+  try {
+    const decisions = sourceDatabase.prepare(`SELECT id, when_context, scope, decision, choice,
+      rationale, revisable, made_by, source, superseded_by FROM decisions ORDER BY id`).all();
+    for (const decision of decisions) {
+      insertDecision(decision as unknown as Parameters<typeof insertDecision>[0]);
+    }
+  } finally {
+    sourceDatabase.close();
+  }
+}
+
 function prepareCase(fixture: MutationFixture = "gsd-nested"): PreparedApplicationCase {
   applicationSequence += 1;
   const workspace = mkdtempSync(join(tmpdir(), "gsd-legacy-application-fault-"));
@@ -200,12 +344,23 @@ function prepareCase(fixture: MutationFixture = "gsd-nested"): PreparedApplicati
   const source = join(workspace, "source");
   const backupDirectory = join(workspace, "backups");
   const databasePath = join(workspace, "canonical.sqlite");
-  const corpusFixture = fixture === "decision-create" ? "registries" : fixture;
-  cpSync(join(CORPUS_ROOT, corpusFixture, "source"), source, {
-    recursive: true,
-    dereference: false,
-    verbatimSymlinks: true,
-  });
+  if (fixture === "row-actions") {
+    mkdirSync(join(source, ".gsd"), { recursive: true });
+    writeFileSync(
+      join(source, ".gsd", "state-manifest.json"),
+      JSON.stringify(ROW_ACTIONS_MANIFEST, null, 2),
+      "utf8",
+    );
+  } else {
+    let corpusFixture: string = fixture;
+    if (fixture === "decision-create") corpusFixture = "registries";
+    if (fixture === "decision-actions") corpusFixture = "action-matrix";
+    cpSync(join(CORPUS_ROOT, corpusFixture, "source"), source, {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true,
+    });
+  }
   if (fixture === "decision-create") {
     rmSync(join(source, ".gsd", "REQUIREMENTS.md"));
     writeFileSync(join(source, ".gsd", "DECISIONS.md"), `# Decisions Register
@@ -217,9 +372,38 @@ function prepareCase(fixture: MutationFixture = "gsd-nested"): PreparedApplicati
   }
   mkdirSync(backupDirectory);
   assert.equal(openDatabase(databasePath), true);
+  if (fixture === "row-actions") seedRowActionsBase();
+  if (fixture === "decision-actions") {
+    const sourceDatabasePath = join(source, ".gsd", "gsd.db");
+    seedDecisionActionsBase(sourceDatabasePath);
+    rmSync(sourceDatabasePath);
+  }
   const previewInput = { roots: createLegacyImportCorpusSourceRoots(source) };
   const base = captureCurrentLegacyImportBaseSnapshot();
   const preview = createLegacyImportPreview(previewInput);
+  if (fixture === "row-actions" || fixture === "decision-actions") {
+    assert.equal(preview.preview.counts.unresolved, 0, JSON.stringify({
+      diagnoses: preview.preview.diagnoses,
+      resolutions: preview.preview.resolutions,
+    }));
+  }
+  const plan = compileLegacyImportApplicationPlan(preview);
+  if (fixture === "row-actions") {
+    assert.deepEqual(instructionDescriptors(plan), [
+      ["update", "M001/S01"],
+      ["replace-slice-dependencies", "M001/S01"],
+      ["delete-slice-dependencies", "M001/S02"],
+      ["delete", "M001/S02"],
+    ]);
+  }
+  if (fixture === "decision-actions") {
+    assert.deepEqual(instructionDescriptors(plan), [
+      ["create-decision-memory", "D001"],
+      ["update-decision-memory", "D002"],
+      ["delete-decision-memory", "D003"],
+      ["preserve", ".gsd/STATE.md"],
+    ]);
+  }
   const backup = prepareLegacyImportBackup({
     preview,
     base,
@@ -341,7 +525,7 @@ function runChild(
 
 function prepareSiblingCase(
   prepared: PreparedApplicationCase,
-  fixture: Exclude<MutationFixture, "decision-create">,
+  fixture: "gsd-nested" | "planning-flat-complete",
   expectedBase: LegacyImportBaseSnapshot = prepared.base,
 ): PreparedApplicationCase {
   applicationSequence += 1;
