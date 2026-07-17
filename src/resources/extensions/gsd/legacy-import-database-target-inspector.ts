@@ -2,12 +2,10 @@
 // File Purpose: Ephemeral-copy SQLite inspection for retained legacy import database bytes.
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
-import { createDbAdapter, type DbAdapter } from "./db-adapter.js";
-import { BETTER_SQLITE3_PACKAGE } from "./db-provider.js";
+import type { DbAdapter } from "./db-adapter.js";
 import type { LegacyImportSha256, LegacyImportValue } from "./legacy-import-contract.js";
 import type {
   LegacyImportDatabaseTargetHeaderEvidence,
@@ -20,6 +18,12 @@ import type {
   LegacyImportGsdDatabaseObservation,
 } from "./legacy-import-preview-gsd.js";
 import { hashLegacyImportBytes, hashLegacyImportValue } from "./legacy-import-preview.js";
+import {
+  configureSqliteReadOnly,
+  openSqliteReadOnly,
+  SqliteReadOnlyProviderUnavailableError,
+  type SqliteReadOnlyConnection,
+} from "./sqlite-readonly.js";
 
 const SQLITE_HEADER = Buffer.from("SQLite format 3\0", "binary");
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
@@ -53,10 +57,7 @@ export class LegacyImportDatabaseTargetInspectionError extends Error {
   }
 }
 
-export interface LegacyImportDatabaseTargetInspectionConnection {
-  db: DbAdapter;
-  enableDefensive?(): void;
-}
+export type LegacyImportDatabaseTargetInspectionConnection = SqliteReadOnlyConnection;
 
 export interface LegacyImportDatabaseTargetInspectorDeps {
   makeTemporaryDirectory(): string;
@@ -162,44 +163,11 @@ function rejectedEvidence(
   });
 }
 
-function systemRequire(): ReturnType<typeof createRequire> {
-  const packageRoot = process.env.GSD_WEB_PACKAGE_ROOT || process.env.GSD_PKG_ROOT || process.cwd();
-  return createRequire(resolve(packageRoot, "package.json"));
-}
-
 function defaultOpenReadOnly(path: string): LegacyImportDatabaseTargetInspectionConnection {
-  const require = systemRequire();
-  let nodeSqlite: unknown;
   try {
-    nodeSqlite = require("node:sqlite");
-  } catch {
-    nodeSqlite = undefined;
-  }
-  const NodeDatabase = (nodeSqlite as { DatabaseSync?: new (path: string, options: object) => unknown } | undefined)
-    ?.DatabaseSync;
-  if (NodeDatabase !== undefined) {
-    const raw = new NodeDatabase(path, {
-      readOnly: true,
-      allowExtension: false,
-      enableForeignKeyConstraints: false,
-    }) as { enableDefensive?(active: boolean): void };
-    return {
-      db: createDbAdapter(raw),
-      ...(typeof raw.enableDefensive === "function"
-        ? { enableDefensive: () => raw.enableDefensive!(true) }
-        : {}),
-    };
-  }
-  let betterSqlite: unknown;
-  try {
-    betterSqlite = require(BETTER_SQLITE3_PACKAGE);
-  } catch {
-    betterSqlite = undefined;
-  }
-  const BetterDatabase = typeof betterSqlite === "function"
-    ? betterSqlite
-    : (betterSqlite as { default?: unknown } | undefined)?.default;
-  if (typeof BetterDatabase !== "function") {
+    return openSqliteReadOnly(path);
+  } catch (error) {
+    if (!(error instanceof SqliteReadOnlyProviderUnavailableError)) throw error;
     throw new LegacyImportDatabaseTargetInspectionError(
       "provider",
       "LEGACY_IMPORT_DATABASE_INSPECTION_PROVIDER_UNAVAILABLE",
@@ -207,11 +175,6 @@ function defaultOpenReadOnly(path: string): LegacyImportDatabaseTargetInspection
       false,
     );
   }
-  const raw = new (BetterDatabase as new (path: string, options: object) => unknown)(path, {
-    readonly: true,
-    fileMustExist: true,
-  });
-  return { db: createDbAdapter(raw) };
 }
 
 const DEFAULT_DEPS: LegacyImportDatabaseTargetInspectorDeps = {
@@ -224,14 +187,6 @@ const DEFAULT_DEPS: LegacyImportDatabaseTargetInspectorDeps = {
 
 function firstValue(row: Record<string, unknown> | undefined): unknown {
   return row === undefined ? undefined : Object.values(row)[0];
-}
-
-function configureReadOnlyConnection(connection: LegacyImportDatabaseTargetInspectionConnection): void {
-  connection.enableDefensive?.();
-  connection.db.exec("PRAGMA query_only=ON");
-  connection.db.exec("PRAGMA trusted_schema=OFF");
-  connection.db.exec("PRAGMA cell_size_check=ON");
-  connection.db.exec("PRAGMA mmap_size=0");
 }
 
 function sqliteSchemaRows(db: DbAdapter): SchemaRow[] {
@@ -327,7 +282,7 @@ function inspectCopy(
   }
   try {
     try {
-      configureReadOnlyConnection(connection);
+      configureSqliteReadOnly(connection);
     } catch {
       return rejectedEvidence(request, "open-failed");
     }
@@ -510,7 +465,7 @@ function inspectGsdDatabaseEvidenceCopy(
   try {
     let observations: LegacyImportGsdDatabaseObservation[];
     try {
-      configureReadOnlyConnection(connection);
+      configureSqliteReadOnly(connection);
       if (firstValue(connection.db.prepare("PRAGMA quick_check(1)").get()) !== "ok") {
         evidenceError(
           request,
