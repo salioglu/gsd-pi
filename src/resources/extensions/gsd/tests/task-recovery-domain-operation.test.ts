@@ -1223,6 +1223,76 @@ test("durable budget use survives retries and exhausts to agent abort", async ()
   }), /current agent-owned abort/i);
 });
 
+test("deterministic repair abort resumes after restart and is consumed by one successor claim", () => {
+  const firstFailure = seedFailedAttempt();
+  const route = (
+    key: string,
+    failure: { attemptId: string; resultId: string },
+    summary: string,
+  ) =>
+    recordFailureAndSelectRecovery({
+      invocation: invocation(key),
+      ...failure,
+      owner: "agent",
+      classification: { failureKind: "worktree-invalid" },
+      summary,
+      evidence: { source: "executor", diagnostic: summary },
+      rationale: "repair the deterministic worktree fault",
+    });
+
+  const first = route(
+    "recovery/deterministic/1",
+    firstFailure,
+    "Worktree root was missing before the repair.",
+  );
+  assert.equal(first.action, "repair");
+
+  const secondFailure = seedRetryFailure(firstFailure.attemptId, 2);
+  const second = route(
+    "recovery/deterministic/2",
+    secondFailure,
+    "Worktree root was still missing after the repair attempt.",
+  );
+  assert.equal(second.action, "abort");
+  assert.equal(readTaskRecoveryRoute(secondFailure.attemptId)?.resumeAuthorized, false);
+
+  closeDatabase();
+  assert.equal(openDatabase(firstFailure.dbPath), true);
+  const resumed = resumeTaskRecovery({
+    invocation: invocation("recovery/deterministic/resume"),
+    recoveryActionId: second.recoveryActionId,
+    repairSummary: "Recreated the missing worktree root and verified GSD can resolve it.",
+    evidence: { command: "gsd doctor", exitCode: 0, verdict: "PASS" },
+  });
+  assert.equal(resumed.status, "committed");
+
+  closeDatabase();
+  assert.equal(openDatabase(firstFailure.dbPath), true);
+  assert.equal(readTaskRecoveryRoute(secondFailure.attemptId)?.resumeAuthorized, true);
+  assert.equal(readPendingTaskRecoveryContext({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+  })?.action, "resume");
+
+  const thirdDispatchId = insertClaimedDispatch(3);
+  const third = claimTaskAttempt({
+    invocation: invocation("recovery/deterministic/claim-after-resume"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: thirdDispatchId,
+    retryOfAttemptId: secondFailure.attemptId,
+  });
+  assert.equal(third.attemptNumber, 3);
+  assert.equal(readTaskRecoveryRoute(secondFailure.attemptId)?.resumeAuthorized, false);
+  assert.equal(readPendingTaskRecoveryContext({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+  }), null);
+});
+
 test("a pre-commit fault leaves no recovery residue and the same request retries cleanly", () => {
   const scope = seedFailedAttempt();
   const input = {
