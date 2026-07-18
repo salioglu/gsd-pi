@@ -166,7 +166,6 @@ async function runWithSerializedStdioTrustPrompt<T>(
 	} finally {
 		approvalAbort.cleanup();
 		releasePrompt();
-		if (stdioTrustPromptQueue === queued) stdioTrustPromptQueue = emptyStdioTrustPromptQueue;
 	}
 }
 
