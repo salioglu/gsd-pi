@@ -1600,7 +1600,7 @@ test("deep project setup: discuss-milestone question failure pauses instead of a
   }
 });
 
-test("verified task git closeout failure retries and continues auto-mode", async () => {
+test("verified task git closeout hook failure re-dispatches task remediation", async () => {
   const base = makeBase();
   try {
     execFileSync("git", ["init"], { cwd: base, stdio: "ignore" });
@@ -1642,15 +1642,70 @@ test("verified task git closeout failure retries and continues auto-mode", async
       updateProgressWidget: () => {},
     });
 
-    assert.equal(result, "continue");
+    assert.equal(result, "retry");
     assert.equal(pauseCalled, false);
     assert.equal(s.lastGitActionStatus, "failed");
+    assert.equal(s.pendingVerificationRetry?.unitId, "M001/S01/T01");
+    assert.equal(s.pendingVerificationRetry?.attempt, 1);
+    assert.match(s.pendingVerificationRetry?.failureContext ?? "", /blocked by test hook/);
+    assert.equal(s.verificationRetryCount.get("git-commit:execute-task:M001/S01/T01"), 1);
     const preCommitCount = Number(readFileSync(join(base, ".git", "pre-commit-count"), "utf-8"));
     assert.equal(Number.isFinite(preCommitCount), true);
-    assert.ok(preCommitCount >= 3, "git closeout should retry the failing commit path");
+    assert.equal(preCommitCount, 2, "git closeout should not outer-retry deterministic hook failures");
     assert.ok(
       notifications.some((entry) => entry.severity === "warning" && entry.message.includes("Git commit failed")),
-      "verified task git closeout failure should warn instead of stopping auto-mode",
+      "verified task git closeout failure should warn before retrying task remediation",
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("verified task git closeout hook failure pauses after remediation cap", async () => {
+  const base = makeBase();
+  try {
+    execFileSync("git", ["init"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Test User"], { cwd: base, stdio: "ignore" });
+    const hookPath = join(base, ".git", "hooks", "pre-commit");
+    writeFileSync(
+      hookPath,
+      [
+        "#!/bin/sh",
+        "echo blocked by test hook >&2",
+        "exit 1",
+      ].join("\n"),
+    );
+    chmodSync(hookPath, 0o755);
+    writeFileSync(join(base, "work.txt"), "changed\n");
+
+    const s = new AutoSession();
+    s.active = true;
+    s.basePath = base;
+    s.originalBasePath = base;
+    s.currentUnit = { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() };
+    s.verificationRetryCount.set("git-commit:execute-task:M001/S01/T01", 2);
+
+    let pauseCalled = false;
+    const notifications: Array<{ message: string; severity?: string }> = [];
+    const result = await postUnitPostVerification({
+      s,
+      ctx: { ui: { notify: (message: string, severity?: string) => notifications.push({ message, severity }) } } as any,
+      pi: {} as any,
+      buildSnapshotOpts: () => ({}) as any,
+      lockBase: () => base,
+      stopAuto: async () => {},
+      pauseAuto: async () => { pauseCalled = true; },
+      updateProgressWidget: () => {},
+    });
+
+    assert.equal(result, "stopped");
+    assert.equal(pauseCalled, true);
+    assert.equal(s.pendingVerificationRetry, null);
+    assert.equal(s.verificationRetryCount.has("git-commit:execute-task:M001/S01/T01"), false);
+    assert.ok(
+      notifications.some((entry) => entry.severity === "error" && entry.message.includes("after 2 remediation attempts")),
+      "hook commit failure should pause after the remediation cap",
     );
   } finally {
     rmSync(base, { recursive: true, force: true });

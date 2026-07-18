@@ -186,6 +186,37 @@ test("uok gitops turn action commit creates commit with unit trailer", () => {
   }
 });
 
+test("uok gitops turn action classifies commit hook failures as hook-content", () => {
+  const repo = makeRepo();
+  try {
+    const hookPath = join(repo, ".git", "hooks", "pre-commit");
+    writeFileSync(
+      hookPath,
+      [
+        "#!/bin/sh",
+        "echo blocked by test hook >&2",
+        "exit 1",
+      ].join("\n"),
+      "utf-8",
+    );
+    chmodSync(hookPath, 0o755);
+    writeFileSync(join(repo, "feature.ts"), "export const x = 1;\n", "utf-8");
+
+    const result = runTurnGitAction({
+      basePath: repo,
+      action: "commit",
+      unitType: "execute-task",
+      unitId: "M001/S01/T-hook",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.equal(result.failureClass, "hook-content");
+    assert.match(result.error ?? "", /blocked by test hook/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("uok gitops turn action commit defaults to child repositories in parent mode", () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-uok-gitops-parent-commit-"));
   try {
@@ -388,7 +419,18 @@ test("uok gitops turn action keeps non-infrastructure git failures recoverable",
 
   assert.equal(result.action, "commit");
   assert.equal(result.status, "failed");
+  assert.equal(result.failureClass, "unknown");
   assert.equal(result.error, "nothing to commit");
+});
+
+test("uok gitops turn action classifies git lock failures as transient", () => {
+  const err = Object.assign(new Error("fatal: Unable to create '.git/index.lock': File exists."), {
+    stderr: "fatal: Unable to create '.git/index.lock': File exists.",
+  });
+
+  const result = handleTurnGitActionError("commit", err);
+  assert.equal(result.status, "failed");
+  assert.equal(result.failureClass, "transient");
 });
 
 test("uok gitops turn action prefers stderr details for git failures", () => {
@@ -398,5 +440,6 @@ test("uok gitops turn action prefers stderr details for git failures", () => {
 
   const result = handleTurnGitActionError("commit", err);
   assert.equal(result.status, "failed");
+  assert.equal(result.failureClass, "unknown");
   assert.equal(result.error, "fatal: unable to auto-detect email address");
 });

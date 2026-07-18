@@ -119,10 +119,12 @@ export interface CommitOptions {
 }
 
 export type TurnGitActionMode = "commit" | "snapshot" | "status-only";
+export type TurnGitFailureClass = "transient" | "hook-content" | "unknown";
 
 export interface TurnGitActionResult {
   action: TurnGitActionMode;
   status: "ok" | "failed";
+  failureClass?: TurnGitFailureClass;
   commitMessage?: string;
   snapshotLabel?: string;
   dirty?: boolean;
@@ -1328,8 +1330,39 @@ export function handleTurnGitActionError(action: TurnGitActionMode, err: unknown
   return {
     action,
     status: "failed",
+    failureClass: classifyTurnGitActionFailure(action, err),
     error: errorWithStreams.stderr?.trim() || errorWithStreams.message || getErrorMessage(err),
   };
+}
+
+const TRANSIENT_GIT_FAILURE_PATTERNS: readonly RegExp[] = [
+  /index\.lock/i,
+  /another git process/i,
+  /unable to create ['"].*\.lock['"]/i,
+  /could not lock/i,
+  /cannot lock ref/i,
+  /resource temporarily unavailable/i,
+];
+
+function classifyTurnGitActionFailure(action: TurnGitActionMode, err: unknown): TurnGitFailureClass {
+  const errorWithStreams = err as { stderr?: string; message?: string; status?: number };
+  const stderr = errorWithStreams.stderr?.trim() ?? "";
+  const message = errorWithStreams.message ?? getErrorMessage(err);
+  const combined = `${stderr}\n${message}`;
+  if (TRANSIENT_GIT_FAILURE_PATTERNS.some((pattern) => pattern.test(combined))) {
+    return "transient";
+  }
+  if (action === "commit" && stderr && errorWithStreams.status === 1) {
+    return "hook-content";
+  }
+  return "unknown";
+}
+
+function mergeTurnGitFailureClasses(classes: readonly TurnGitFailureClass[]): TurnGitFailureClass {
+  if (classes.includes("unknown")) return "unknown";
+  if (classes.includes("hook-content")) return "hook-content";
+  if (classes.includes("transient")) return "transient";
+  return "unknown";
 }
 
 export function isRepositoryDirty(repoRoot: string): boolean {
@@ -1418,6 +1451,7 @@ function runPerRepositoryCommitAction(args: {
 }): {
   commitMessages: Record<string, string>;
   commitErrors: Record<string, string>;
+  commitFailureClasses: Record<string, TurnGitFailureClass>;
   skippedRepositories: string[];
 } {
   const preferences = loadEffectiveGSDPreferences(args.basePath)?.preferences;
@@ -1426,12 +1460,14 @@ function runPerRepositoryCommitAction(args: {
   const gitPrefs = preferences?.git ?? {};
   const commitMessages: Record<string, string> = {};
   const commitErrors: Record<string, string> = {};
+  const commitFailureClasses: Record<string, TurnGitFailureClass> = {};
   const skippedRepositories: string[] = [];
 
   for (const repoId of repoIds) {
     const repo = registry.byId.get(repoId);
     if (!repo) {
       commitErrors[repoId] = `unknown repository target: ${repoId}`;
+      commitFailureClasses[repoId] = "unknown";
       continue;
     }
     if (repo.commitPolicy === "skip") {
@@ -1453,10 +1489,11 @@ function runPerRepositoryCommitAction(args: {
       }
     } catch (err) {
       commitErrors[repo.id] = getErrorMessage(err);
+      commitFailureClasses[repo.id] = classifyTurnGitActionFailure("commit", err);
     }
   }
 
-  return { commitMessages, commitErrors, skippedRepositories };
+  return { commitMessages, commitErrors, commitFailureClasses, skippedRepositories };
 }
 
 export function runTurnGitAction(args: {
@@ -1499,6 +1536,7 @@ export function runTurnGitAction(args: {
       return {
         action: args.action,
         status: "failed",
+        failureClass: mergeTurnGitFailureClasses(Object.values(repoCommitResult.commitFailureClasses)),
         error: Object.entries(repoCommitResult.commitErrors)
           .map(([repoId, msg]) => `${repoId}: ${msg}`)
           .join("; "),
