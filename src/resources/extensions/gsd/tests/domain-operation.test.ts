@@ -1054,6 +1054,25 @@ test("ordinary operations retain the epoch and explicit authority handoff advanc
   });
 });
 
+test("generic Domain Operation currently lets an ordinary operation select Authority Epoch advancement", (t) => {
+  openFixture(t);
+  const result = execute(request({
+    operationType: "milestone.describe",
+    idempotencyKey: "characterization/generic-epoch",
+    advanceAuthorityEpoch: true,
+  }));
+
+  assertCommittedReceipt(result, 1, 1);
+  assert.deepEqual(row(`
+    SELECT operation_type, expected_authority_epoch, resulting_authority_epoch
+    FROM workflow_operations
+  `), {
+    operation_type: "milestone.describe",
+    expected_authority_epoch: 0,
+    resulting_authority_epoch: 1,
+  });
+});
+
 test("a restored v30 backup upgrades without inventing canonical history before its first operation", (t) => {
   const backupPath = createV30Backup();
   const restoredPath = join(dirname(backupPath), "restored-v30.db");
