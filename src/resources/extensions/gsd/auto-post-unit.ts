@@ -1340,7 +1340,14 @@ async function runCloseoutGitAction(
           failureClass: gitResult.failureClass,
           failureLogPath,
         });
-        if (opts?.softFailure && turnAction === "commit" && unit.type === "execute-task" && gitResult.failureClass === "hook-content") {
+        const hasPartialCommits = Object.keys(gitResult.commitMessages ?? {}).length > 0;
+        if (
+          opts?.softFailure &&
+          turnAction === "commit" &&
+          unit.type === "execute-task" &&
+          gitResult.failureClass === "hook-content" &&
+          !hasPartialCommits
+        ) {
           const retryKey = gitCommitRemediationRetryKey(unit.type, unit.id);
           const attempt = (s.verificationRetryCount.get(retryKey) ?? 0) + 1;
           if (attempt <= MAX_GIT_COMMIT_REMEDIATION_RETRIES) {
