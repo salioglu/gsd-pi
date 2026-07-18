@@ -73,25 +73,34 @@ import-specific Forward Repair planner/writer, and recommendation-led routing.
 
 ## Current implementation map
 
-### Authority Epoch is durable but its advancement is too broad
+### Authority Epoch is durable and its generic advancement is now closed
 
 `project_authority.authority_epoch` is protected by the Domain Operation
 compare-and-swap and copied into operations, events, outbox-related lineage,
 Projection Work, lifecycle records, and import receipts. It never decreases in
 the current writer.
 
-However, `DomainOperationRequest` publicly exposes
-`advanceAuthorityEpoch?: boolean`. The generic executor snapshots, validates,
-hashes, and honors that flag for any non-reserved operation type. The test
-`ordinary operations retain the epoch and explicit authority handoff advances
-it once` proves the real behavior through the database. No production caller
-currently passes `true`; Import Application hard-codes `false` and its typed
-executor rejects `true`. The risk is therefore a public bypass waiting for a
-caller, not an active production epoch change.
+T03 removed `advanceAuthorityEpoch` from the public request. Generic and Import
+Application operations always retain the epoch, reject the retired runtime
+property, and reserve `authority.cutover` for one typed aggregate. Ordinary
+request hashes deliberately retain the former explicit `false` member so
+already-committed operations replay byte-for-byte across the change.
 
-T03 will remove the option from the generic public request and move the
-increment into one private core mode reachable only through the typed cutover
-entrypoint. Ordinary callers will not need to pass `false`.
+The private advancing seam derives its receipt contract from the hashed
+cutover payload. Its transaction refuses both commit and replay unless exactly
+one immutable V45 cutover receipt matches the operation, result revision,
+result epoch, time, contract, evidence, and Consent hashes. A structural test
+limits that seam to the strict public cutover aggregate.
+
+The public aggregate accepts only the exact V1 contract, current V45 schema,
+explicit irreversible Consent, the exact current Import Application head, and
+quiet coordination. Its evidence revalidates the canonical sealed Preview,
+compiled plan, full production Application event receipt, operation and
+Application causality, delivery lineage, invocation, backup facts, revision,
+and epoch. The current schema cannot recompute the three hashes whose full
+preimages were not persisted (`applicationIdentityHash`, `backupArtifactHash`,
+and `backupId`); it therefore treats the exact immutable Application event as
+their durable identity receipt and binds all three into the evidence hash.
 
 ### Verified backup and restore drill are strong but deliberately non-live
 
@@ -370,6 +379,7 @@ legacy-corpus V45/V46 boundaries are executable tests.
 1. T02 adds the minimum durable cutover, restore, and Forward Repair receipt
    model. (Completed.)
 2. T03 makes epoch advancement private to one typed cutover operation.
+   (Completed.)
 3. T04 builds the pure exact restore assessor and recommendation result.
 4. T05 implements one crash-safe eligible live restore and records erased
    lineage in the restored database.

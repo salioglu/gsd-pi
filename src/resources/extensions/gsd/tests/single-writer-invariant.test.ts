@@ -442,6 +442,19 @@ test("production modules do not import DB open-state mechanics from gsd-db.ts", 
   }
 });
 
+test("only the strict project authority cutover aggregate uses the epoch-advancing seam", () => {
+  const references = walkTsFiles(gsdDir)
+    .map((path) => ({ path, content: readFileSync(path, "utf-8") }))
+    .filter(({ content }) => content.includes("_executeAuthorityCutoverDomainOperation"))
+    .map(({ path }) => relative(gsdDir, path).split("\\").join("/"))
+    .sort();
+
+  assert.deepEqual(references, [
+    "db/domain-operation.ts",
+    "project-authority-cutover-domain-operation.ts",
+  ]);
+});
+
 test("the invariant test touches every .ts module under gsd/ (sanity check)", () => {
   const files = walkTsFiles(gsdDir);
   // Rough sanity: ensure we're not accidentally walking an empty tree

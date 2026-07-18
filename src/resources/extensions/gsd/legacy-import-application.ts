@@ -753,7 +753,6 @@ function importRequest(snapshot: LegacyImportApplicationSnapshot): ImportDomainO
     ...(invocation.traceId === null ? {} : { traceId: invocation.traceId }),
     ...(invocation.turnId === null ? {} : { turnId: invocation.turnId }),
     payload: snapshot.input.preview,
-    advanceAuthorityEpoch: false as const,
   };
 }
 

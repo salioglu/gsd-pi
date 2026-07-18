@@ -125,7 +125,6 @@ function request(overrides: Partial<DomainOperationRequest> = {}): DomainOperati
     traceId: "trace-1",
     turnId: "turn-1",
     payload: { milestoneId: "M001", title: "Domain operation" },
-    advanceAuthorityEpoch: false,
     ...overrides,
   };
 }
@@ -179,7 +178,6 @@ function importRequest(
     traceId: "legacy-import-trace-1",
     turnId: "legacy-import-turn-1",
     payload,
-    advanceAuthorityEpoch: false,
     ...overrides,
   };
 }
@@ -433,7 +431,7 @@ test("import.apply Domain Operation: typed executor is internal and hard-require
         mutationCalls += 1;
         return mutation();
       }),
-      /import\.apply|Authority Epoch/i,
+      /import\.apply|Authority Epoch|advanceAuthorityEpoch/i,
     );
     assert.deepEqual(durableSnapshot(), before);
   }
@@ -665,11 +663,10 @@ test("import.apply Domain Operation: stale Preview revision and epoch leave no i
   );
   assert.deepEqual(durableSnapshot(), revisionBefore);
 
-  execute(request({
-    operationType: "authority.handoff",
-    idempotencyKey: "import-stale/authority-handoff",
-    advanceAuthorityEpoch: true,
-  }));
+  _getAdapter()?.prepare(`
+    UPDATE project_authority SET revision = 1, authority_epoch = 1
+    WHERE singleton = 1
+  `).run();
   const epochBefore = durableSnapshot();
   assertErrorCode(
     () => executeImportDomainOperation(importRequest(importPreview(1, 0)), () => {
@@ -820,10 +817,6 @@ test("revision and Authority Epoch inputs require safe increment headroom", (t) 
     request({ expectedRevision: unsafeInteger }),
     request({ expectedRevision: Number.MAX_SAFE_INTEGER }),
     request({ expectedAuthorityEpoch: unsafeInteger }),
-    request({
-      expectedAuthorityEpoch: Number.MAX_SAFE_INTEGER,
-      advanceAuthorityEpoch: true,
-    }),
   ];
 
   for (const invalidRequest of invalidRequests) {
@@ -850,16 +843,17 @@ test("outbox identities outside the safe integer range abort the operation", (t)
   assert.deepEqual(durableSnapshot(), before);
 });
 
-test("advanceAuthorityEpoch rejects malformed non-boolean runtime input", (t) => {
+test("advanceAuthorityEpoch rejects every retired runtime input", (t) => {
   openFixture(t);
   const initial = durableSnapshot();
-  const malformed = request({
-    advanceAuthorityEpoch: "true" as unknown as boolean,
-  });
+  const malformed = {
+    ...request(),
+    advanceAuthorityEpoch: "true",
+  } as unknown as DomainOperationRequest;
 
   assert.throws(
     () => execute(malformed),
-    /advanceAuthorityEpoch.*boolean/i,
+    /advanceAuthorityEpoch.*not accepted/i,
   );
   assert.deepEqual(durableSnapshot(), initial);
 });
@@ -1026,51 +1020,45 @@ test("callback mutation of operation provenance aborts the whole Domain Operatio
   }
 });
 
-test("ordinary operations retain the epoch and explicit authority handoff advances it once", (t) => {
+test("ordinary operations always retain the Authority Epoch", (t) => {
   openFixture(t);
   const ordinary = execute();
   assertCommittedReceipt(ordinary, 1, 0);
 
-  const handoff = execute(request({
-    operationType: "authority.handoff",
-    idempotencyKey: "authority/handoff-1",
+  const retained = execute(request({
+    idempotencyKey: "transport/request-2",
     expectedRevision: 1,
     expectedAuthorityEpoch: 0,
-    payload: { reason: "new owner" },
-    advanceAuthorityEpoch: true,
-  }));
-  assertCommittedReceipt(handoff, 2, 1);
-
-  const retained = execute(request({
-    idempotencyKey: "transport/request-3",
-    expectedRevision: 2,
-    expectedAuthorityEpoch: 1,
     payload: { milestoneId: "M001", title: "After handoff" },
   }));
-  assertCommittedReceipt(retained, 3, 1);
+  assertCommittedReceipt(retained, 2, 0);
   assert.deepEqual(row("SELECT revision, authority_epoch FROM project_authority"), {
-    revision: 3,
-    authority_epoch: 1,
+    revision: 2,
+    authority_epoch: 0,
   });
 });
 
-test("generic Domain Operation currently lets an ordinary operation select Authority Epoch advancement", (t) => {
+test("generic Domain Operation cannot select Authority Epoch advancement or invoke cutover", (t) => {
   openFixture(t);
-  const result = execute(request({
-    operationType: "milestone.describe",
-    idempotencyKey: "characterization/generic-epoch",
+  const before = durableSnapshot();
+  const compileTimeBypass: DomainOperationRequest = {
+    ...request({ idempotencyKey: "characterization/generic-epoch" }),
+    // @ts-expect-error Authority Epoch advancement is not a generic request capability.
     advanceAuthorityEpoch: true,
-  }));
+  };
 
-  assertCommittedReceipt(result, 1, 1);
-  assert.deepEqual(row(`
-    SELECT operation_type, expected_authority_epoch, resulting_authority_epoch
-    FROM workflow_operations
-  `), {
-    operation_type: "milestone.describe",
-    expected_authority_epoch: 0,
-    resulting_authority_epoch: 1,
-  });
+  assert.throws(
+    () => execute(compileTimeBypass),
+    /advanceAuthorityEpoch.*not accepted|typed authority cutover/i,
+  );
+  assert.throws(
+    () => execute(request({
+      operationType: "authority.cutover",
+      idempotencyKey: "characterization/generic-cutover",
+    })),
+    /authority\.cutover.*typed|typed authority cutover/i,
+  );
+  assert.deepEqual(durableSnapshot(), before);
 });
 
 test("a restored v30 backup upgrades without inventing canonical history before its first operation", (t) => {
@@ -1135,7 +1123,7 @@ function runWriter(dbPath: string, id: string, startAt: number): Promise<Record<
         operationType: 'race', idempotencyKey: 'race/' + id,
         expectedRevision: 0, expectedAuthorityEpoch: 0,
         actorType: 'agent', actorId: id, sourceTransport: 'process',
-        payload: { id }, advanceAuthorityEpoch: false,
+        payload: { id },
       }, () => ({
         events: [{ eventType: 'race.won', entityType: 'project', entityId: id, payload: { id }, destinations: ['projection'] }],
         projections: [{ projectionKey: 'race/' + id, projectionKind: 'markdown', rendererVersion: 'v1' }],

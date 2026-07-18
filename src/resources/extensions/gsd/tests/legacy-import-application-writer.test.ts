@@ -207,7 +207,6 @@ function importRequest(artifact: LegacyImportPreviewArtifact): ImportDomainOpera
     traceId: `trace-${importSequence}`,
     turnId: `turn-${importSequence}`,
     payload: artifact,
-    advanceAuthorityEpoch: false,
   };
 }
 

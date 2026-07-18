@@ -35,17 +35,28 @@ export interface DomainOperationRequest {
   traceId?: string;
   turnId?: string;
   payload: DomainJsonValue;
-  advanceAuthorityEpoch?: boolean;
 }
 
 export type ImportDomainOperationRequest = Omit<
   DomainOperationRequest,
-  "operationType" | "payload" | "advanceAuthorityEpoch"
+  "operationType" | "payload"
 > & {
   operationType: "import.apply";
   payload: LegacyImportPreviewArtifact;
-  advanceAuthorityEpoch?: false;
 };
+
+export type AuthorityCutoverDomainOperationRequest = Omit<
+  DomainOperationRequest,
+  "operationType"
+> & {
+  operationType: "authority.cutover";
+};
+
+interface AuthorityCutoverReceiptContract {
+  readonly authorityContractVersion: number;
+  readonly evidenceHash: string;
+  readonly consentHash: string;
+}
 
 type DomainOperationRequestIdentity = Omit<DomainOperationRequest, "payload">;
 
@@ -141,6 +152,46 @@ function requireNonNegativeSafeInteger(value: number, field: string): void {
   }
 }
 
+function snapshotAuthorityCutoverReceiptContract(payload: unknown): AuthorityCutoverReceiptContract {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("authority cutover payload must be the exact receipt contract");
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(payload);
+  const keys = Object.keys(descriptors);
+  const expected = ["authorityContractVersion", "evidenceHash", "consentHash"];
+  if (
+    Object.getPrototypeOf(payload) !== Object.prototype
+    || Object.getOwnPropertySymbols(payload).length !== 0
+    || keys.length !== expected.length
+    || !expected.every((key) => (
+      Object.hasOwn(descriptors, key)
+      && Object.hasOwn(descriptors[key] ?? {}, "value")
+      && descriptors[key]?.enumerable === true
+    ))
+  ) {
+    throw new Error("authority cutover payload must be the exact receipt contract");
+  }
+  const authorityContractVersion = descriptors["authorityContractVersion"]?.value as unknown;
+  const evidenceHash = descriptors["evidenceHash"]?.value as unknown;
+  const consentHash = descriptors["consentHash"]?.value as unknown;
+  if (!Number.isSafeInteger(authorityContractVersion) || Number(authorityContractVersion) < 1) {
+    throw new Error("authority cutover contract version must be a positive safe integer");
+  }
+  if (
+    typeof evidenceHash !== "string"
+    || typeof consentHash !== "string"
+    || !/^sha256:[0-9a-f]{64}$/.test(evidenceHash)
+    || !/^sha256:[0-9a-f]{64}$/.test(consentHash)
+  ) {
+    throw new Error("authority cutover receipt hashes must be canonical SHA-256 digests");
+  }
+  return Object.freeze({
+    authorityContractVersion: Number(authorityContractVersion),
+    evidenceHash,
+    consentHash,
+  });
+}
+
 function requiredRequestDataProperty(request: object, field: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(request, field);
   if (descriptor === undefined || !Object.hasOwn(descriptor, "value")) {
@@ -162,6 +213,11 @@ function snapshotDomainOperationRequest(request: object): {
   identity: DomainOperationRequestIdentity;
   payload: unknown;
 } {
+  if (Object.hasOwn(request, "advanceAuthorityEpoch")) {
+    throw new Error(
+      "advanceAuthorityEpoch is not accepted; use the typed authority cutover operation",
+    );
+  }
   return {
     identity: {
       operationType: requiredRequestDataProperty(request, "operationType") as string,
@@ -173,10 +229,6 @@ function snapshotDomainOperationRequest(request: object): {
       sourceTransport: requiredRequestDataProperty(request, "sourceTransport") as string,
       traceId: optionalRequestDataProperty(request, "traceId") as string | undefined,
       turnId: optionalRequestDataProperty(request, "turnId") as string | undefined,
-      advanceAuthorityEpoch: optionalRequestDataProperty(
-        request,
-        "advanceAuthorityEpoch",
-      ) as boolean | undefined,
     },
     payload: requiredRequestDataProperty(request, "payload"),
   };
@@ -218,15 +270,12 @@ function validateRequestScalars(request: DomainOperationRequestIdentity): void {
   if (request.expectedRevision === Number.MAX_SAFE_INTEGER) {
     throw new Error("expectedRevision requires safe integer increment headroom");
   }
-  if (request.advanceAuthorityEpoch !== undefined && typeof request.advanceAuthorityEpoch !== "boolean") {
-    throw new Error("advanceAuthorityEpoch must be a boolean");
-  }
-  if (request.advanceAuthorityEpoch === true && request.expectedAuthorityEpoch === Number.MAX_SAFE_INTEGER) {
-    throw new Error("expectedAuthorityEpoch requires safe integer increment headroom");
-  }
 }
 
-function requestHash(request: DomainOperationRequest): string {
+function requestHash(
+  request: DomainOperationRequest,
+  advanceAuthorityEpoch = false,
+): string {
   const canonical = canonicalDomainJson({
     operationType: request.operationType,
     expectedRevision: request.expectedRevision,
@@ -237,7 +286,9 @@ function requestHash(request: DomainOperationRequest): string {
     traceId: request.traceId ?? null,
     turnId: request.turnId ?? null,
     payload: request.payload,
-    advanceAuthorityEpoch: request.advanceAuthorityEpoch === true,
+    // Retain the explicit legacy false member so existing ordinary operations
+    // keep their exact replay hash after the public epoch switch is removed.
+    advanceAuthorityEpoch,
   });
   return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
 }
@@ -460,6 +511,36 @@ function requireMatchingImportApplication(
   }
 }
 
+function requireMatchingAuthorityCutover(
+  operation: OperationRow,
+  contract: Readonly<AuthorityCutoverReceiptContract>,
+): void {
+  const row = getDb().prepare(`
+    SELECT COUNT(*) AS count
+    FROM workflow_authority_cutovers
+    WHERE operation_id = :operation_id
+      AND project_id = :project_id
+      AND authority_contract_version = :authority_contract_version
+      AND evidence_hash = :evidence_hash
+      AND consent_hash = :consent_hash
+      AND cutover_at = :cutover_at
+      AND resulting_project_revision = :resulting_project_revision
+      AND resulting_authority_epoch = :resulting_authority_epoch
+  `).get({
+    ":operation_id": operation.operation_id,
+    ":project_id": operation.project_id,
+    ":authority_contract_version": contract.authorityContractVersion,
+    ":evidence_hash": contract.evidenceHash,
+    ":consent_hash": contract.consentHash,
+    ":cutover_at": operation.created_at,
+    ":resulting_project_revision": operation.resulting_revision,
+    ":resulting_authority_epoch": operation.resulting_authority_epoch,
+  });
+  if (row?.["count"] !== 1) {
+    throw new Error("authority cutover Domain Operation requires one exact receipt");
+  }
+}
+
 function staleAuthority(request: DomainOperationRequestIdentity, authority: AuthorityRow): never {
   if (authority.revision !== request.expectedRevision) {
     throw new GSDError(
@@ -498,6 +579,7 @@ function executeDomainOperationCore(
   request: DomainOperationRequestIdentity,
   hash: string,
   importPreview: LegacyImportPreviewArtifact | null,
+  authorityCutover: Readonly<AuthorityCutoverReceiptContract> | null,
   mutate: (context: Readonly<DomainOperationContext>) => DomainOperationMutation,
 ): DomainOperationResult {
   const result = runDomainOperationTransaction((): DomainOperationResult => {
@@ -525,6 +607,7 @@ function executeDomainOperationCore(
     if (existing) {
       requireReplayMatch(existing, request, hash);
       if (importPreview) requireMatchingImportApplication(existing, importPreview);
+      if (authorityCutover) requireMatchingAuthorityCutover(existing, authorityCutover);
       return loadReceipt(existing, "replayed");
     }
 
@@ -538,8 +621,7 @@ function executeDomainOperationCore(
     const now = new Date().toISOString();
     const operationId = randomUUID();
     const resultingRevision = request.expectedRevision + 1;
-    const resultingAuthorityEpoch =
-      request.expectedAuthorityEpoch + (request.advanceAuthorityEpoch === true ? 1 : 0);
+    const resultingAuthorityEpoch = request.expectedAuthorityEpoch + (authorityCutover ? 1 : 0);
     const context = Object.freeze({
       operationId,
       projectId: authority.project_id,
@@ -680,6 +762,7 @@ function executeDomainOperationCore(
     });
     hitFault("after-projections");
     if (importPreview) requireMatchingImportApplication(storedOperation, importPreview);
+    if (authorityCutover) requireMatchingAuthorityCutover(storedOperation, authorityCutover);
     hitFault("before-cas");
 
     const update = db.prepare(`
@@ -728,6 +811,9 @@ export function executeDomainOperation(
   if (snapshot.identity.operationType === "import.apply") {
     throw new Error("import.apply requires executeImportDomainOperation");
   }
+  if (snapshot.identity.operationType === "authority.cutover") {
+    throw new Error("authority.cutover requires the typed authority cutover operation");
+  }
   if (isInTransaction()) {
     throw new Error("Domain Operation must own the outer transaction");
   }
@@ -738,6 +824,7 @@ export function executeDomainOperation(
   return executeDomainOperationCore(
     snapshot.identity,
     requestHash(stableRequest),
+    null,
     null,
     mutate,
   );
@@ -751,9 +838,6 @@ export function executeImportDomainOperation(
   validateRequestScalars(snapshot.identity);
   if (snapshot.identity.operationType !== "import.apply") {
     throw new Error("executeImportDomainOperation requires operationType import.apply");
-  }
-  if (snapshot.identity.advanceAuthorityEpoch === true) {
-    throw new Error("import.apply cannot advance the Authority Epoch");
   }
   if (!isStrictLegacyImportData(snapshot.payload)) {
     throw new Error("import.apply Preview must contain strict data without accessors");
@@ -771,5 +855,39 @@ export function executeImportDomainOperation(
   if (isInTransaction()) {
     throw new Error("Domain Operation must own the outer transaction");
   }
-  return executeDomainOperationCore(snapshot.identity, preview.preview_hash, preview, mutate);
+  return executeDomainOperationCore(snapshot.identity, preview.preview_hash, preview, null, mutate);
+}
+
+/**
+ * Private epoch-advancing seam for the strict project-authority cutover
+ * aggregate. Public callers must use cutoverProjectAuthority, which validates
+ * current Application evidence, Consent, coordination, and the durable receipt.
+ */
+export function _executeAuthorityCutoverDomainOperation(
+  request: AuthorityCutoverDomainOperationRequest,
+  mutate: (context: Readonly<DomainOperationContext>) => DomainOperationMutation,
+): DomainOperationResult {
+  const snapshot = snapshotDomainOperationRequest(request);
+  validateRequestScalars(snapshot.identity);
+  if (snapshot.identity.operationType !== "authority.cutover") {
+    throw new Error("typed authority cutover requires operationType authority.cutover");
+  }
+  if (snapshot.identity.expectedAuthorityEpoch === Number.MAX_SAFE_INTEGER) {
+    throw new Error("expectedAuthorityEpoch requires safe integer increment headroom");
+  }
+  if (isInTransaction()) {
+    throw new Error("Domain Operation must own the outer transaction");
+  }
+  const stableRequest = {
+    ...snapshot.identity,
+    payload: snapshot.payload as DomainJsonValue,
+  };
+  const receipt = snapshotAuthorityCutoverReceiptContract(snapshot.payload);
+  return executeDomainOperationCore(
+    snapshot.identity,
+    requestHash(stableRequest, true),
+    null,
+    receipt,
+    mutate,
+  );
 }
