@@ -239,6 +239,99 @@ test("MCP stdio trust approval hard timeout rejects and releases the queue", asy
   }
 });
 
+test("MCP stdio trust keeps serializing when a queued caller aborts mid-prompt", async () => {
+  const harness = createConfirmHarness();
+  try {
+    const first = _assertTrustedStdioServerForTest(makeStdioConfig("parallel-a"), harness.ctx as any);
+    await waitForCondition("active first trust prompt", () => harness.prompts.length === 1);
+
+    const controller = new AbortController();
+    const second = _assertTrustedStdioServerForTest(
+      makeStdioConfig("parallel-b"),
+      harness.ctx as any,
+      controller.signal,
+    );
+    controller.abort(new Error("caller aborted"));
+    await assert.rejects(second, /caller aborted/);
+
+    // A third caller enters while the first prompt is STILL active. It must
+    // queue behind it rather than open a concurrent prompt. Regression guard for
+    // the queue-reset-allows-parallel-prompts bug: a queued caller aborting must
+    // not collapse the queue and let a new caller run alongside the live prompt.
+    const third = _assertTrustedStdioServerForTest(makeStdioConfig("parallel-c"), harness.ctx as any);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(harness.prompts.length, 1, "third caller must not open a concurrent prompt");
+    assert.equal(harness.maxActiveCount(), 1);
+
+    harness.prompts[0]?.resolve(true);
+    await first;
+    await waitForCondition("third prompt after first resolves", () => harness.prompts.length === 2);
+    assert.match(harness.prompts[1]?.title ?? "", /parallel-c/);
+    harness.prompts[1]?.resolve(true);
+    await third;
+    assert.equal(harness.maxActiveCount(), 1);
+  } finally {
+    for (const prompt of harness.prompts) prompt.reject(new Error("test cleanup"));
+    await _resetMcpClientStateForTest();
+  }
+});
+
+test("MCP stdio trust timeout does not run while queued behind another prompt", async () => {
+  const harness = createConfirmHarness();
+  try {
+    const first = _assertTrustedStdioServerForTest(makeStdioConfig("timeout-queue-a"), harness.ctx as any);
+    await waitForCondition("active first trust prompt", () => harness.prompts.length === 1);
+
+    // Short timeout on the queued caller. It must NOT fire while queued behind A;
+    // the hard timeout only covers the prompt, not time spent waiting in queue.
+    const second = _assertTrustedStdioServerForTest(
+      makeStdioConfig("timeout-queue-b"),
+      harness.ctx as any,
+      undefined,
+      50,
+    );
+
+    // Hold A active well past B's timeout budget. B must still be queued, not timed out.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(harness.prompts.length, 1, "queued caller must not open a prompt yet");
+
+    harness.prompts[0]?.resolve(true);
+    await first;
+    // B now owns the prompt; only here does its timeout begin.
+    await waitForCondition("second trust prompt after first resolves", () => harness.prompts.length === 2);
+    assert.match(harness.prompts[1]?.title ?? "", /timeout-queue-b/);
+    harness.prompts[1]?.resolve(true);
+    await second;
+    assert.equal(harness.maxActiveCount(), 1);
+  } finally {
+    for (const prompt of harness.prompts) prompt.reject(new Error("test cleanup"));
+    await _resetMcpClientStateForTest();
+  }
+});
+
+test("MCP stdio closeAll aborts queued trust waiters, not just the active prompt", async () => {
+  const harness = createConfirmHarness();
+  try {
+    const first = _assertTrustedStdioServerForTest(makeStdioConfig("close-a"), harness.ctx as any);
+    await waitForCondition("active first trust prompt", () => harness.prompts.length === 1);
+    const second = _assertTrustedStdioServerForTest(makeStdioConfig("close-b"), harness.ctx as any);
+
+    // closeAll (via reset) must cancel BOTH the active prompt and the queued
+    // waiter, so the queued waiter never reaches ui.confirm after shutdown.
+    const firstRejects = assert.rejects(first, /MCP session closed/);
+    const secondRejects = assert.rejects(second, /MCP session closed/);
+    await _resetMcpClientStateForTest();
+    await firstRejects;
+    await secondRejects;
+
+    assert.equal(harness.prompts.length, 1, "queued waiter must not reach ui.confirm after closeAll");
+    assert.equal(harness.maxActiveCount(), 1);
+  } finally {
+    for (const prompt of harness.prompts) prompt.reject(new Error("test cleanup"));
+    await _resetMcpClientStateForTest();
+  }
+});
+
 test("MCP stdio discover deduplicates concurrent first calls for the same server", async () => {
   const previousGsdHome = process.env.GSD_HOME;
   const originalCwd = process.cwd();
