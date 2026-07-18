@@ -69,6 +69,7 @@ export type {
   DomainOperationResult,
 } from "./db/domain-operation.js";
 export * from "./project-authority-cutover-domain-operation.js";
+export * from "./legacy-import-restore-assessment.js";
 // Query Module (read-only seam) — extracted from the single-writer file.
 export * from "./db/queries.js";
 // Domain Write Operations (Hierarchy Status Cascades).

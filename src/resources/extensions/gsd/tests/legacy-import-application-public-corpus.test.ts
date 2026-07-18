@@ -372,6 +372,7 @@ function assertDurableCommit(
     previewInputHash: identity.replayIdentity.previewInputHash,
     backupArtifactHash: hashLegacyImportValue(prepared.backup),
     backupId: prepared.backup.backup_id,
+    applicationRelevantRowsHash: captureCurrentLegacyImportBaseSnapshot().relevant_rows_hash,
     planSchemaVersion: plan.planSchemaVersion,
     eventFacts: plan.eventFacts,
     projectionKeys: plan.projectionKeys,

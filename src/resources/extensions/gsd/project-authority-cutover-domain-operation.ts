@@ -21,14 +21,13 @@ import { insertAuthorityCutoverReceipt } from "./db/writers/authority-recovery.j
 import {
   LEGACY_IMPORT_APPLICATION_EVENT_TYPE,
   LEGACY_IMPORT_APPLICATION_OPERATION_TYPE,
-  LEGACY_IMPORT_APPLICATION_REPLAY_IDENTITY_SCHEMA_VERSION,
 } from "./legacy-import-application.js";
-import { compileLegacyImportApplicationPlan } from "./legacy-import-application-plan.js";
 import {
-  canonicalLegacyImportJson,
-  isValidLegacyImportPreviewArtifact,
-  type LegacyImportPreviewArtifact,
-} from "./legacy-import-preview.js";
+  inspectLegacyImportApplicationEvidence,
+  LegacyImportApplicationEvidenceError,
+  type LegacyImportApplicationEvidence,
+} from "./legacy-import-application-evidence.js";
+import { captureCurrentLegacyImportBaseSnapshot } from "./legacy-import-preview-base.js";
 
 export const PROJECT_AUTHORITY_CONTRACT_VERSION = 1 as const;
 export const PROJECT_AUTHORITY_CUTOVER_EVIDENCE_SCHEMA_VERSION = 1 as const;
@@ -101,6 +100,7 @@ export interface ProjectAuthorityCutoverEvidence {
   readonly previewHash: string;
   readonly backupArtifactHash: string;
   readonly backupId: string;
+  readonly applicationRelevantRowsHash: string;
   readonly backupRef: string;
   readonly backupSha256: string;
   readonly backupByteSize: number;
@@ -188,36 +188,6 @@ function requireHash(value: unknown, field: string): string {
 function requireNonNegativeSafeInteger(value: unknown, field: string): number {
   if (!Number.isSafeInteger(value) || Number(value) < 0) {
     fail("PROJECT_AUTHORITY_CUTOVER_CONTRACT_INVALID", `${field} must be a non-negative safe integer`);
-  }
-  return Number(value);
-}
-
-function storedInvalid(message: string): never {
-  fail("PROJECT_AUTHORITY_CUTOVER_APPLICATION_NOT_CURRENT", message);
-}
-
-function requireStoredNonBlank(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    storedInvalid(`current Import Application ${field} is invalid`);
-  }
-  return value;
-}
-
-function requireStoredNullableNonBlank(value: unknown, field: string): string | null {
-  return value === null ? null : requireStoredNonBlank(value, field);
-}
-
-function requireStoredHash(value: unknown, field: string): string {
-  const hash = requireStoredNonBlank(value, field);
-  if (!/^sha256:[0-9a-f]{64}$/.test(hash)) {
-    storedInvalid(`current Import Application ${field} is invalid`);
-  }
-  return hash;
-}
-
-function requireStoredNonNegativeSafeInteger(value: unknown, field: string): number {
-  if (!Number.isSafeInteger(value) || Number(value) < 0) {
-    storedInvalid(`current Import Application ${field} is invalid`);
   }
   return Number(value);
 }
@@ -323,202 +293,45 @@ function currentSchemaVersion(): number {
   return Number(row?.["version"] ?? -1);
 }
 
-function loadCurrentApplication(): DbRow {
+function loadCurrentApplication(): {
+  evidence: LegacyImportApplicationEvidence;
+  revision: number;
+  authorityEpoch: number;
+} {
   const row = getDb().prepare(`
-    SELECT authority.project_id, authority.project_root_realpath,
-           authority.revision, authority.authority_epoch,
-           operation.operation_id,
-           operation.idempotency_key, operation.actor_type, operation.actor_id,
-           operation.source_transport, operation.trace_id, operation.turn_id,
-           operation.expected_revision AS operation_expected_revision,
-           operation.resulting_revision AS operation_resulting_revision,
-           operation.expected_authority_epoch AS operation_expected_authority_epoch,
-           operation.resulting_authority_epoch AS operation_resulting_authority_epoch,
-           operation.request_hash AS operation_request_hash,
-           operation.created_at AS operation_created_at,
-           application.import_kind, application.importer_version,
-           application.preview_schema_version, application.preview_id,
-           application.preview_hash, application.base_project_revision,
-           application.base_authority_epoch, application.base_database_schema_version,
-           application.source_set_hash, application.change_set_hash,
-           application.create_count, application.update_count, application.delete_count,
-           application.preserve_count, application.unparsed_count, application.unresolved_count,
-           application.preview_json, application.backup_ref,
-           application.backup_sha256, application.backup_byte_size,
-           application.backup_schema_version, application.backup_project_revision,
-           application.backup_authority_epoch, application.backup_quick_check,
-           application.backup_verified_at, application.applied_at,
-           application.resulting_project_revision, application.resulting_authority_epoch,
-           event.event_id, event.payload_json
+    SELECT authority.revision, authority.authority_epoch, operation.operation_id
     FROM project_authority authority
     JOIN workflow_operations operation
       ON operation.project_id = authority.project_id
      AND operation.resulting_revision = authority.revision
      AND operation.resulting_authority_epoch = authority.authority_epoch
      AND operation.operation_type = '${LEGACY_IMPORT_APPLICATION_OPERATION_TYPE}'
-    JOIN workflow_import_applications application
-      ON application.operation_id = operation.operation_id
-     AND application.project_id = operation.project_id
-     AND application.resulting_project_revision = operation.resulting_revision
-     AND application.resulting_authority_epoch = operation.resulting_authority_epoch
-    JOIN workflow_domain_events event
-      ON event.operation_id = operation.operation_id
-     AND event.event_index = 0
-     AND event.event_type = '${LEGACY_IMPORT_APPLICATION_EVENT_TYPE}'
-     AND event.project_id = operation.project_id
-     AND event.project_revision = operation.resulting_revision
-     AND event.authority_epoch = operation.resulting_authority_epoch
-     AND event.entity_type = 'legacy-import'
-     AND event.entity_id = application.preview_id
-     AND event.caused_by_event_id IS NULL
-     AND event.created_at = application.applied_at
     WHERE authority.singleton = 1
-      AND (SELECT COUNT(*) FROM workflow_domain_events all_events
-           WHERE all_events.operation_id = operation.operation_id) = 1
   `).get() as DbRow | undefined;
-  if (!row) {
+  if (
+    !row
+    || typeof row["operation_id"] !== "string"
+    || !Number.isSafeInteger(row["revision"])
+    || !Number.isSafeInteger(row["authority_epoch"])
+  ) {
     fail(
       "PROJECT_AUTHORITY_CUTOVER_APPLICATION_NOT_CURRENT",
       "authority cutover requires the current canonical head to be one Import Application",
     );
   }
-  return row;
-}
-
-function applicationPayload(row: DbRow): DbRow {
   try {
-    const parsed = JSON.parse(String(row["payload_json"]));
-    if (!isPlainRecord(parsed)) throw new Error("payload is not an object");
-    return parsed;
-  } catch {
+    return {
+      evidence: inspectLegacyImportApplicationEvidence(row["operation_id"]),
+      revision: Number(row["revision"]),
+      authorityEpoch: Number(row["authority_epoch"]),
+    };
+  } catch (error) {
+    if (!(error instanceof LegacyImportApplicationEvidenceError)) throw error;
     fail(
       "PROJECT_AUTHORITY_CUTOVER_APPLICATION_NOT_CURRENT",
       "current Import Application evidence is malformed",
-      false,
-      {},
     );
   }
-}
-
-function currentApplicationArtifact(row: DbRow): LegacyImportPreviewArtifact {
-  const previewJson = requireStoredNonBlank(row["preview_json"], "preview JSON");
-  let preview: unknown;
-  try {
-    preview = JSON.parse(previewJson);
-  } catch {
-    storedInvalid("current Import Application Preview JSON is malformed");
-  }
-  const artifact = {
-    preview,
-    preview_hash: requireStoredHash(row["preview_hash"], "Preview hash"),
-  };
-  if (!isValidLegacyImportPreviewArtifact(artifact)) {
-    storedInvalid("current Import Application Preview identity is invalid");
-  }
-  if (canonicalLegacyImportJson(artifact.preview) !== row["preview_json"]) {
-    storedInvalid("current Import Application Preview JSON is not canonical");
-  }
-  return artifact;
-}
-
-function requireCurrentApplicationAggregate(row: DbRow): {
-  payload: DbRow;
-  artifact: LegacyImportPreviewArtifact;
-} {
-  const payload = applicationPayload(row);
-  const artifact = currentApplicationArtifact(row);
-  const preview = artifact.preview;
-  let plan: ReturnType<typeof compileLegacyImportApplicationPlan>;
-  try {
-    plan = compileLegacyImportApplicationPlan(artifact);
-  } catch {
-    storedInvalid("current Import Application plan evidence is invalid");
-  }
-  const applicationFieldsMatch = [
-    ["import_kind", preview.import_kind],
-    ["importer_version", preview.importer_version],
-    ["preview_schema_version", preview.preview_schema_version],
-    ["preview_id", preview.preview_id],
-    ["base_project_revision", preview.base_project_revision],
-    ["base_authority_epoch", preview.base_authority_epoch],
-    ["base_database_schema_version", preview.base_database_schema_version],
-    ["source_set_hash", preview.source_set_hash],
-    ["change_set_hash", preview.change_set_hash],
-    ["create_count", preview.counts.create],
-    ["update_count", preview.counts.update],
-    ["delete_count", preview.counts.delete],
-    ["preserve_count", preview.counts.preserve],
-    ["unparsed_count", preview.counts.unparsed],
-    ["unresolved_count", preview.counts.unresolved],
-  ].every(([field, expected]) => row[String(field)] === expected);
-  const operationFieldsMatch =
-    row["operation_request_hash"] === artifact.preview_hash
-    && row["operation_expected_revision"] === preview.base_project_revision
-    && row["operation_resulting_revision"] === preview.base_project_revision + 1
-    && row["operation_expected_authority_epoch"] === preview.base_authority_epoch
-    && row["operation_resulting_authority_epoch"] === preview.base_authority_epoch
-    && row["resulting_project_revision"] === row["operation_resulting_revision"]
-    && row["resulting_authority_epoch"] === row["operation_resulting_authority_epoch"]
-    && row["resulting_project_revision"] === row["revision"]
-    && row["resulting_authority_epoch"] === row["authority_epoch"]
-    && row["applied_at"] === row["operation_created_at"];
-  const exactPayload = hasExactDataKeys(payload, [
-    "replayIdentitySchemaVersion",
-    "applicationIdentityHash",
-    "previewInputHash",
-    "backupArtifactHash",
-    "backupId",
-    "planSchemaVersion",
-    "eventFacts",
-    "projectionKeys",
-  ])
-    && payload["replayIdentitySchemaVersion"]
-      === LEGACY_IMPORT_APPLICATION_REPLAY_IDENTITY_SCHEMA_VERSION
-    && payload["planSchemaVersion"] === plan.planSchemaVersion
-    && canonicalDomainJson(payload["eventFacts"] as DomainJsonValue)
-      === canonicalDomainJson(plan.eventFacts as unknown as DomainJsonValue)
-    && canonicalDomainJson(payload["projectionKeys"] as DomainJsonValue)
-      === canonicalDomainJson([...plan.projectionKeys]);
-  if (!applicationFieldsMatch || !operationFieldsMatch || !exactPayload) {
-    storedInvalid("current Import Application durable identity is inconsistent");
-  }
-
-  const outbox = getDb().prepare(`
-    SELECT outbox.event_id, outbox.destination
-    FROM workflow_outbox outbox
-    JOIN workflow_domain_events event ON event.event_id = outbox.event_id
-    WHERE event.operation_id = :operation_id
-    ORDER BY outbox.outbox_id
-  `).all({ ":operation_id": row["operation_id"] });
-  const projections = getDb().prepare(`
-    SELECT projection_work_id, project_id, projection_key, projection_kind,
-           source_project_revision, source_authority_epoch, renderer_version,
-           enqueue_operation_id, created_at
-    FROM workflow_projection_work
-    WHERE enqueue_operation_id = :operation_id
-    ORDER BY projection_work_id
-  `).all({ ":operation_id": row["operation_id"] });
-  const exactOutbox = outbox.length === 1
-    && outbox[0]?.["event_id"] === row["event_id"]
-    && outbox[0]?.["destination"] === "projection";
-  const exactProjections = projections.length === plan.projectionKeys.length
-    && plan.projectionKeys.every((projectionKey, index) => {
-      const projection = projections[index];
-      return projection?.["projection_work_id"]
-          === `${String(row["operation_id"])}:${String(index).padStart(4, "0")}`
-        && projection["project_id"] === row["project_id"]
-        && projection["projection_key"] === projectionKey
-        && projection["projection_kind"] === "markdown"
-        && projection["source_project_revision"] === row["operation_resulting_revision"]
-        && projection["source_authority_epoch"] === row["resulting_authority_epoch"]
-        && projection["renderer_version"] === "v1"
-        && projection["enqueue_operation_id"] === row["operation_id"]
-        && projection["created_at"] === row["operation_created_at"];
-    });
-  if (!exactOutbox || !exactProjections) {
-    storedInvalid("current Import Application event delivery lineage is inconsistent");
-  }
-  return { payload, artifact };
 }
 
 function requireNoRecordedRecovery(applicationOperationId: string): void {
@@ -552,49 +365,46 @@ export function inspectProjectAuthorityCutoverEvidence(): ProjectAuthorityCutove
         { expectedSchemaVersion: SCHEMA_VERSION, observedSchemaVersion: schemaVersion },
       );
     }
-    const row = loadCurrentApplication();
-    const { payload } = requireCurrentApplicationAggregate(row);
-    const applicationOperationId = requireStoredNonBlank(row["operation_id"], "operation ID");
+    const current = loadCurrentApplication();
+    const application = current.evidence;
+    if (captureCurrentLegacyImportBaseSnapshot().relevant_rows_hash
+      !== application.applicationRelevantRowsHash) {
+      fail(
+        "PROJECT_AUTHORITY_CUTOVER_APPLICATION_NOT_CURRENT",
+        "current canonical rows no longer match the Import Application result",
+      );
+    }
+    const applicationOperationId = application.operationId;
     requireNoRecordedRecovery(applicationOperationId);
     const evidenceWithoutHash = {
       evidenceSchemaVersion: PROJECT_AUTHORITY_CUTOVER_EVIDENCE_SCHEMA_VERSION,
-      projectId: requireStoredNonBlank(row["project_id"], "project ID"),
-      projectRootRealpath: requireStoredNonBlank(row["project_root_realpath"], "project root"),
+      projectId: application.projectId,
+      projectRootRealpath: application.projectRootRealpath,
       databaseSchemaVersion: schemaVersion,
       applicationOperationId,
-      applicationIdempotencyKey: requireStoredNonBlank(row["idempotency_key"], "idempotency key"),
-      applicationActorType: requireStoredNonBlank(row["actor_type"], "actor type"),
-      applicationActorId: requireStoredNullableNonBlank(row["actor_id"], "actor ID"),
-      applicationSourceTransport: requireStoredNonBlank(row["source_transport"], "source transport"),
-      applicationTraceId: requireStoredNullableNonBlank(row["trace_id"], "trace ID"),
-      applicationTurnId: requireStoredNullableNonBlank(row["turn_id"], "turn ID"),
-      applicationIdentityHash: requireStoredHash(payload["applicationIdentityHash"], "identity hash"),
-      previewInputHash: requireStoredHash(payload["previewInputHash"], "Preview input hash"),
-      previewId: requireStoredNonBlank(row["preview_id"], "Preview ID"),
-      previewHash: requireStoredHash(row["preview_hash"], "Preview hash"),
-      backupArtifactHash: requireStoredHash(payload["backupArtifactHash"], "backup artifact hash"),
-      backupId: requireStoredHash(payload["backupId"], "backup ID"),
-      backupRef: requireStoredNonBlank(row["backup_ref"], "backup reference"),
-      backupSha256: requireStoredHash(row["backup_sha256"], "backup SHA-256"),
-      backupByteSize: requireStoredNonNegativeSafeInteger(row["backup_byte_size"], "backup byte size"),
-      backupSchemaVersion: requireStoredNonNegativeSafeInteger(
-        row["backup_schema_version"],
-        "backup schema version",
-      ),
-      backupProjectRevision: requireStoredNonNegativeSafeInteger(
-        row["backup_project_revision"],
-        "backup project revision",
-      ),
-      backupAuthorityEpoch: requireStoredNonNegativeSafeInteger(
-        row["backup_authority_epoch"],
-        "backup authority epoch",
-      ),
-      backupQuickCheck: row["backup_quick_check"] === "ok"
-        ? "ok"
-        : storedInvalid("current Import Application backup quick check is invalid"),
-      backupVerifiedAt: requireStoredNonBlank(row["backup_verified_at"], "backup verification time"),
-      projectRevision: requireStoredNonNegativeSafeInteger(row["revision"], "project revision"),
-      authorityEpoch: requireStoredNonNegativeSafeInteger(row["authority_epoch"], "authority epoch"),
+      applicationIdempotencyKey: application.idempotencyKey,
+      applicationActorType: application.actorType,
+      applicationActorId: application.actorId,
+      applicationSourceTransport: application.sourceTransport,
+      applicationTraceId: application.traceId,
+      applicationTurnId: application.turnId,
+      applicationIdentityHash: application.applicationIdentityHash,
+      previewInputHash: application.previewInputHash,
+      previewId: application.preview.preview.preview_id,
+      previewHash: application.preview.preview_hash,
+      backupArtifactHash: application.backupArtifactHash,
+      backupId: application.backupId,
+      applicationRelevantRowsHash: application.applicationRelevantRowsHash,
+      backupRef: application.backupRef,
+      backupSha256: application.backupSha256,
+      backupByteSize: application.backupByteSize,
+      backupSchemaVersion: application.backupSchemaVersion,
+      backupProjectRevision: application.backupProjectRevision,
+      backupAuthorityEpoch: application.backupAuthorityEpoch,
+      backupQuickCheck: application.backupQuickCheck,
+      backupVerifiedAt: application.backupVerifiedAt,
+      projectRevision: current.revision,
+      authorityEpoch: current.authorityEpoch,
     } satisfies Omit<ProjectAuthorityCutoverEvidence, "evidenceHash">;
     return Object.freeze({
       ...evidenceWithoutHash,

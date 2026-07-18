@@ -34,6 +34,7 @@ import {
   LEGACY_IMPORT_APPLICATION_REPLAY_IDENTITY_SCHEMA_VERSION,
 } from "../legacy-import-application.ts";
 import { compileLegacyImportApplicationPlan } from "../legacy-import-application-plan.ts";
+import { captureCurrentLegacyImportBaseSnapshot } from "../legacy-import-preview-base.ts";
 import {
   cutoverProjectAuthority,
   inspectProjectAuthorityCutoverEvidence,
@@ -190,6 +191,7 @@ function seedApplication(): ProjectAuthorityCutoverEvidence {
           previewInputHash: PREVIEW_INPUT_HASH,
           backupArtifactHash: BACKUP_ARTIFACT_HASH,
           backupId: BACKUP_ID,
+          applicationRelevantRowsHash: captureCurrentLegacyImportBaseSnapshot().relevant_rows_hash,
           planSchemaVersion: plan.planSchemaVersion,
           eventFacts: plan.eventFacts as unknown as DomainJsonValue,
           projectionKeys: [...plan.projectionKeys],
@@ -442,6 +444,19 @@ test("malformed durable Application evidence is reported as not current", (t) =>
     ":event_id": applicationEvent.event_id,
     ":payload_json": JSON.stringify({ ...payload, applicationIdentityHash: "damaged" }),
   });
+
+  expectCode(
+    () => inspectProjectAuthorityCutoverEvidence(),
+    "PROJECT_AUTHORITY_CUTOVER_APPLICATION_NOT_CURRENT",
+  );
+});
+
+test("authority cutover rejects unrecorded row drift after Application", (t) => {
+  openFixture(t);
+  seedApplication();
+  db().prepare(`
+    INSERT INTO milestones (id, title, status) VALUES ('M001', 'unrecorded', 'active')
+  `).run();
 
   expectCode(
     () => inspectProjectAuthorityCutoverEvidence(),

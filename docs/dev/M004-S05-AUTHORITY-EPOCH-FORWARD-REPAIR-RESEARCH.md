@@ -186,8 +186,9 @@ Decision precedence is safety-first:
 
 1. validate the strict request without reading accessors or accepting unknown
    fields;
-2. load and validate the referenced committed Application;
-3. detect an already-restored exact request;
+2. detect an exact terminal restore or Forward Repair receipt, because a live
+   restore deliberately erases its source Application aggregate;
+3. otherwise load and validate the referenced committed Application;
 4. prove project, root, schema, and backup identity;
 5. prove whether any later operation or cutover exists;
 6. if the window is still open, prove exact revision, epoch, current head,
@@ -381,6 +382,11 @@ legacy-corpus V45/V46 boundaries are executable tests.
 2. T03 makes epoch advancement private to one typed cutover operation.
    (Completed.)
 3. T04 builds the pure exact restore assessor and recommendation result.
+   (Completed: strict input and Consent snapshotting, one shared durable
+   Application evidence reader, independently reverified backup bytes/base,
+   exact post-Application relevant-row hash, current head and coordination
+   fencing, deterministic difference digest, stale-read barrier, terminal
+   route recognition, and recommendation-led frozen results.)
 4. T05 implements one crash-safe eligible live restore and records erased
    lineage in the restored database.
 5. T06 proves fault, SIGKILL, restart, stale-validator, and contention

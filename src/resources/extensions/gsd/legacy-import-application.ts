@@ -449,6 +449,7 @@ function loadReplayAggregate(
 function applicationEventPayload(
   snapshot: LegacyImportApplicationSnapshot,
   plan: LegacyImportApplicationPlan,
+  applicationRelevantRowsHash: LegacyImportSha256,
 ): DomainJsonValue {
   return {
     replayIdentitySchemaVersion: LEGACY_IMPORT_APPLICATION_REPLAY_IDENTITY_SCHEMA_VERSION,
@@ -456,10 +457,23 @@ function applicationEventPayload(
     previewInputHash: snapshot.identity.replayIdentity.previewInputHash,
     backupArtifactHash: hashLegacyImportValue(snapshot.input.backup),
     backupId: snapshot.input.backup.backup_id,
+    applicationRelevantRowsHash,
     planSchemaVersion: plan.planSchemaVersion,
     eventFacts: plan.eventFacts as unknown as DomainJsonValue,
     projectionKeys: [...plan.projectionKeys],
   };
+}
+
+function storedApplicationRelevantRowsHash(payloadJson: unknown): LegacyImportSha256 {
+  try {
+    const value = (JSON.parse(String(payloadJson)) as DbRow)["applicationRelevantRowsHash"];
+    if (typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value)) {
+      return value as LegacyImportSha256;
+    }
+  } catch {
+    // Normalized below.
+  }
+  return receiptInconsistent("legacy import Application result rows hash is invalid");
 }
 
 function storedValueMatches(row: DbRow, field: string, expected: unknown): boolean {
@@ -550,8 +564,12 @@ function requireReplayAggregate(
   const resultingRevision = Number(aggregate.operation["resulting_revision"]);
   const resultingEpoch = Number(aggregate.operation["resulting_authority_epoch"]);
   const previewId = snapshot.input.preview.preview.preview_id;
-  const expectedPayload = canonicalDomainJson(applicationEventPayload(snapshot, plan));
   const event = aggregate.events[0];
+  const expectedPayload = canonicalDomainJson(applicationEventPayload(
+    snapshot,
+    plan,
+    storedApplicationRelevantRowsHash(event?.["payload_json"]),
+  ));
   if (
     aggregate.events.length !== 1
     || !event
@@ -827,6 +845,7 @@ export function applyLegacyImport(input: unknown): LegacyImportApplicationReceip
       }
       reachApplicationBoundary("after-final-validation");
       applyLegacyImportApplicationPlan(context, plan);
+      const applicationRelevantRowsHash = captureApplicationBase().relevant_rows_hash;
       reachApplicationBoundary("after-plan");
       try {
         insertLegacyImportApplicationReceipt(context, plan, preview, snapshot.input.backup);
@@ -845,7 +864,7 @@ export function applyLegacyImport(input: unknown): LegacyImportApplicationReceip
           eventType: LEGACY_IMPORT_APPLICATION_EVENT_TYPE,
           entityType: "legacy-import",
           entityId: preview.preview.preview_id,
-          payload: applicationEventPayload(snapshot, plan),
+          payload: applicationEventPayload(snapshot, plan, applicationRelevantRowsHash),
           destinations: ["projection"],
         }],
         projections: plan.projectionKeys.map((projectionKey) => ({
