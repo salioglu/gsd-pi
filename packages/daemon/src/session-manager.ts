@@ -455,7 +455,6 @@ export class SessionManager extends EventEmitter {
         projectDir: session.projectDir,
         projectName: session.projectName,
       });
-      this.markTerminal(session.projectDir);
       return;
     }
 
