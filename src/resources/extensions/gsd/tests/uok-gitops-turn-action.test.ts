@@ -309,6 +309,58 @@ workspace:
   }
 });
 
+test("uok gitops turn action preserves hook-content when mixed with unknown parent repo errors", () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-uok-gitops-parent-hook-"));
+  try {
+    initRepo(root);
+    mkdirSync(join(root, ".gsd"), { recursive: true });
+    mkdirSync(join(root, "frontend"), { recursive: true });
+    initRepo(join(root, "frontend"));
+    writeFileSync(join(root, ".gitignore"), "frontend/\n", "utf-8");
+    run("git add .gitignore", root);
+    run('git commit -m "chore: ignore nested repos"', root);
+    writeFileSync(join(root, ".gsd", "PREFERENCES.md"), `---
+version: 1
+workspace:
+  mode: parent
+  repositories:
+    frontend:
+      path: frontend
+---
+`, "utf-8");
+    run("git add .gsd/PREFERENCES.md", root);
+    run('git commit -m "chore: configure parent workspace repos"', root);
+
+    const hookPath = join(root, "frontend", ".git", "hooks", "pre-commit");
+    writeFileSync(
+      hookPath,
+      [
+        "#!/bin/sh",
+        "echo blocked by frontend hook >&2",
+        "exit 1",
+      ].join("\n"),
+      "utf-8",
+    );
+    chmodSync(hookPath, 0o755);
+    writeFileSync(join(root, "frontend", "README.md"), "# frontend dirty\n", "utf-8");
+
+    const result = runTurnGitAction({
+      basePath: root,
+      action: "commit",
+      unitType: "execute-task",
+      unitId: "M001/S01/T-parent-hook",
+      targetRepositories: ["frontend", "missing"],
+    });
+
+    assert.equal(result.status, "failed");
+    assert.equal(result.failureClass, "hook-content");
+    assert.match(result.commitErrors?.frontend ?? "", /blocked by frontend hook/);
+    assert.equal(result.commitErrors?.missing, "unknown repository target: missing");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("uok gitops turn action commit reuses the collected dirty status", () => {
   const repo = makeRepo();
   const wrapperDir = mkdtempSync(join(tmpdir(), "gsd-uok-git-wrapper-"));
