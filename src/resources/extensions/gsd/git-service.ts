@@ -1344,25 +1344,25 @@ const TRANSIENT_GIT_FAILURE_PATTERNS: readonly RegExp[] = [
   /resource temporarily unavailable/i,
 ];
 
+const GIT_OWNED_TRANSIENT_GIT_FAILURE_PATTERNS: readonly RegExp[] = [
+  /(?:^|\n)(?:fatal|error):[^\n]*index\.lock/i,
+  /(?:^|\n)(?:fatal|error):[^\n]*another git process/i,
+  /(?:^|\n)(?:fatal|error):[^\n]*unable to create ['"].*\.lock['"]/i,
+  /(?:^|\n)(?:fatal|error):[^\n]*could not lock/i,
+  /(?:^|\n)(?:fatal|error):[^\n]*cannot lock ref/i,
+  /(?:^|\n)(?:fatal|error):[^\n]*resource temporarily unavailable/i,
+  /(?:^|\n)another git process seems to be running/i,
+];
+
 function classifyTurnGitActionFailure(action: TurnGitActionMode, err: unknown): TurnGitFailureClass {
   const errorWithStreams = err as { stderr?: string; message?: string; status?: number };
   const stderr = errorWithStreams.stderr?.trim() ?? "";
   const message = errorWithStreams.message ?? getErrorMessage(err);
   const combined = `${stderr}\n${message}`;
-  // The exit code is the authoritative signal (verified empirically against git):
-  //   - A pre-commit / commit-msg hook rejection aborts `git commit` with exit code 1.
-  //   - Git's own lock/contention failures ("index.lock" held, "cannot lock ref", ...)
-  //     are fatal and exit with code 128, never 1.
-  // A hook's stderr is arbitrary user text and can coincidentally contain a transient
-  // lock phrase (e.g. a hook that guards lock files, or a linter that prints
-  // "could not lock"). Matching those patterns first would mislabel an exit-1 hook
-  // rejection as "transient" and silently warn-and-continue, stranding verified task work
-  // uncommitted (the bug this PR fixes). So a commit that exits 1 with stderr is always a
-  // hook rejection; genuine lock contention exits 128 and never matches this gate, so it
-  // still falls through to the transient patterns below. These branches are mutually
-  // exclusive by exit code — do not "optimize" by moving the transient check first.
-  const isCommitHookRejection = action === "commit" && stderr !== "" && errorWithStreams.status === 1;
-  if (isCommitHookRejection) {
+  if (action === "commit" && stderr !== "" && errorWithStreams.status === 1) {
+    if (GIT_OWNED_TRANSIENT_GIT_FAILURE_PATTERNS.some((pattern) => pattern.test(stderr))) {
+      return "transient";
+    }
     return "hook-content";
   }
   if (TRANSIENT_GIT_FAILURE_PATTERNS.some((pattern) => pattern.test(combined))) {

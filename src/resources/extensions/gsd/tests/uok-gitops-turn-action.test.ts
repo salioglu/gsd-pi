@@ -219,8 +219,8 @@ test("uok gitops turn action classifies commit hook failures as hook-content", (
 
 test("uok gitops turn action classifies hook rejection with lock-like output as hook-content", () => {
   // A pre-commit hook aborts `git commit` with exit code 1 and its stderr is arbitrary
-  // user text that may coincidentally match a transient lock pattern. The exit-1 signal
-  // must win so the failure routes to hook remediation, not silent transient continue.
+  // user text that may coincidentally match a transient lock pattern. Unless the stderr
+  // looks like git's own lock error, route it to hook remediation.
   const err = Object.assign(new Error("git commit failed: could not lock config file"), {
     stderr: "could not lock config file .pre-commit-guard\nblocked by policy",
     status: 1,
@@ -231,9 +231,22 @@ test("uok gitops turn action classifies hook rejection with lock-like output as 
   assert.equal(result.failureClass, "hook-content");
 });
 
+test("uok gitops turn action classifies exit-1 git lock output as transient", () => {
+  const err = Object.assign(new Error("git commit failed: fatal: Unable to create '.git/index.lock'"), {
+    stderr: [
+      "fatal: Unable to create '/tmp/repo/.git/index.lock': File exists.",
+      "",
+      "Another git process seems to be running in this repository.",
+    ].join("\n"),
+    status: 1,
+  });
+
+  const result = handleTurnGitActionError("commit", err);
+  assert.equal(result.status, "failed");
+  assert.equal(result.failureClass, "transient");
+});
+
 test("uok gitops turn action classifies exit-128 lock contention as transient", () => {
-  // Git's own lock contention is fatal (exit 128, never 1), so it must remain transient
-  // even though the hook-content gate sits first in the classifier.
   const err = Object.assign(new Error("fatal: cannot lock ref 'HEAD'"), {
     stderr: "fatal: cannot lock ref 'HEAD': Unable to create '.git/refs/heads/main.lock': File exists.",
     status: 128,
