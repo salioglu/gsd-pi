@@ -360,7 +360,15 @@ export class SessionManager {
 
     for (const session of this.sessions.values()) {
       session.unsubscribe?.();
-      if (session.status === 'running' || session.status === 'starting' || session.status === 'blocked') {
+      // A paused session still owns a live headless child process (its RpcClient
+      // is retained for resume). On shutdown that process must be reclaimed too,
+      // otherwise pausing then stopping leaks it.
+      if (
+        session.status === 'running' ||
+        session.status === 'starting' ||
+        session.status === 'blocked' ||
+        session.status === 'paused'
+      ) {
         stopPromises.push(
           session.client.stop().catch(() => { /* swallow */ })
         );

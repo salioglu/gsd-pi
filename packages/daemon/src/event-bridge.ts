@@ -291,10 +291,19 @@ export class EventBridge {
 
   private async onSessionPaused(data: SessionPausedPayload): Promise<void> {
     const { sessionId, projectName } = data;
-    // The pause notification has already gone through session:event. Flush any
-    // pending batch and tear down per-session bridge state so a resumed/fresh
-    // run for the same project can register cleanly.
-    await this.cleanupSession(sessionId);
+    // A paused auto-mode session stays interactive: the SessionManager keeps the
+    // session and its RpcClient so the user can "type to interact" (relayed via
+    // prompt() in handleMessageCreate). Tearing down the channel mapping or the
+    // batcher here would drop those messages and silence resumed output, so the
+    // bridge stays wired. We only release stale blocker collectors, since pause
+    // clears any pending blocker, and flush the pending batch so the pause
+    // notice is delivered promptly without destroying the batcher.
+    const collectorSet = this.collectors.get(sessionId);
+    if (collectorSet) {
+      for (const collector of collectorSet) collector.stop('session-paused');
+      this.collectors.delete(sessionId);
+    }
+    await this.batchers.get(sessionId)?.flush();
     this.logger.info('bridge: session paused', { sessionId, projectName });
   }
 
