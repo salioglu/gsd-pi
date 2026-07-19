@@ -173,6 +173,7 @@ class TestableSessionManager extends SessionManager {
         );
       }
       existing.unsubscribe?.();
+      void existing.client.stop().catch(() => { /* swallow */ });
       (this as any).sessions.delete(resolvedDir);
     }
 
@@ -376,11 +377,13 @@ describe('SessionManager', () => {
       const dir = `/tmp/evict-${terminalStatus}`;
       const firstSessionId = await sm.startSession(dir, { cliPath: '/usr/bin/gsd' });
       const first = sm.getSession(firstSessionId)!;
+      const firstClient = sm.lastClient!;
       first.status = terminalStatus;
 
       // Should not throw — terminal session is evicted, fresh one starts.
       const secondSessionId = await sm.startSession(dir, { cliPath: '/usr/bin/gsd' });
       assert.notEqual(secondSessionId, firstSessionId);
+      assert.ok(firstClient.stopped, `evicted '${terminalStatus}' session client should be stopped`);
       const second = sm.getSession(secondSessionId)!;
       assert.equal(second.status, 'running');
       assert.equal(sm.getSessionByDir(dir)!.sessionId, secondSessionId);
@@ -612,8 +615,34 @@ describe('SessionManager', () => {
 
     const nextSessionId = await sm.startSession(dir, { cliPath: '/usr/bin/gsd' });
     assert.notEqual(nextSessionId, sessionId);
+    assert.ok(client.stopped);
     assert.equal(sm.getSessionByDir(dir)!.sessionId, nextSessionId);
     assert.equal(sm.getSession(nextSessionId)!.status, 'running');
+  });
+
+  it('pause detection keeps the event subscription for resumed output', async () => {
+    const dir = '/tmp/terminal-paused-resume';
+    const sessionId = await sm.startSession(dir, { cliPath: '/usr/bin/gsd' });
+    const client = sm.lastClient!;
+
+    client.emitEvent({
+      type: 'extension_ui_request',
+      method: 'notify',
+      message: 'Auto-mode paused (Escape). Type to interact, or /gsd auto to resume.',
+      id: 'pause-1',
+    });
+
+    const session = sm.getSession(sessionId)!;
+    assert.equal(session.status, 'paused');
+
+    client.emitEvent({
+      type: 'extension_ui_request',
+      method: 'notify',
+      message: 'Auto-mode stopped: completed all tasks',
+      id: 'term-1',
+    });
+
+    assert.equal(session.status, 'completed');
   });
 
   it('pause detection: structured orchestrator terminal pause sets status to paused', async () => {
