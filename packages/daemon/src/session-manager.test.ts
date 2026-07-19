@@ -577,6 +577,33 @@ describe('SessionManager', () => {
     assert.equal(manager.getSessionByDir(dir)!.sessionId, nextSessionId);
   });
 
+  it('keeps the event subscription after pause so resumed output still transitions state', async () => {
+    const { manager } = createManager();
+    const dir = '/tmp/paused-resume-test';
+
+    const sessionId = await manager.startSession({ projectDir: dir });
+    const session = manager.getSession(sessionId)!;
+
+    manager.lastClient!.emitEvent({
+      type: 'extension_ui_request',
+      id: 'p1',
+      method: 'notify',
+      message: 'Auto-mode paused (Escape). Type to interact, or /gsd auto to resume.',
+    });
+    assert.equal(session.status, 'paused');
+
+    // A resumed session ("type to interact") keeps producing events. They must
+    // still reach handleEvent: a later terminal notification transitions the
+    // session to completed rather than being dropped with the subscription.
+    manager.lastClient!.emitEvent({
+      type: 'extension_ui_request',
+      id: 'n1',
+      method: 'notify',
+      message: 'Auto-mode stopped: completed all tasks',
+    });
+    assert.equal(session.status, 'completed');
+  });
+
   it('detects paused from structured orchestrator terminal pause event', async () => {
     const { manager } = createManager();
     const dir = '/tmp/structured-paused-terminal-test';

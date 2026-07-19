@@ -452,11 +452,13 @@ export class SessionManager extends EventEmitter {
 
     // Paused detection — pauseAuto() is resumable and must not leave the
     // session looking active, or duplicate-start prevention will deadlock.
+    // Keep the RpcClient event subscription: a paused session stays interactive
+    // ("type to interact"), so resumed agent output and later terminal/blocked
+    // notifications must still reach handleEvent to relay and update status.
+    // The subscription is torn down on cleanup/eviction/cancel instead.
     if (isPausedEvent(event as Record<string, unknown>)) {
       session.status = 'paused';
       session.pendingBlocker = null;
-      session.unsubscribe?.();
-      session.unsubscribe = undefined;
       this.logger.info('session paused', { sessionId: session.sessionId, projectDir: session.projectDir });
       this.emit('session:paused', {
         sessionId: session.sessionId,

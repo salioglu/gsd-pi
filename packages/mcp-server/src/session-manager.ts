@@ -138,6 +138,10 @@ export class SessionManager {
         );
       }
       existing.unsubscribe?.();
+      // Reclaim the evicted session's live headless child process. A paused (or
+      // otherwise terminal) session keeps its RpcClient alive, so deleting the
+      // map entry alone would orphan the child process.
+      void existing.client.stop().catch(() => { /* swallow */ });
       this.sessions.delete(resolvedDir);
     }
 
@@ -425,10 +429,12 @@ export class SessionManager {
 
     // Paused detection — pauseAuto() is resumable and must not leave the
     // session looking active, or duplicate-start prevention will deadlock.
+    // Keep the RpcClient event subscription so resumed output and later
+    // terminal/blocked notifications still reach handleEvent (a paused session
+    // stays resumable); it is torn down on cleanup/eviction instead.
     if (isPausedEvent(event as Record<string, unknown>)) {
       session.status = 'paused';
       session.pendingBlocker = null;
-      session.unsubscribe?.();
       return;
     }
 
