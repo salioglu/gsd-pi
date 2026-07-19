@@ -78,14 +78,11 @@ function isOrchestratorPausedEvent(event: Record<string, unknown>): boolean {
   const eventType = String(event.eventType ?? '');
   const name = String(data?.name ?? '');
   const reason = String(data?.reason ?? '').toLowerCase();
-  return eventType === 'orchestrator-terminal' && name === 'stop' && reason === 'pause';
-}
-
-function isOrchestratorBlockedEvent(event: Record<string, unknown>): boolean {
-  const data = event.data as Record<string, unknown> | undefined;
-  const eventType = String(event.eventType ?? '');
-  const name = String(data?.name ?? '');
-  return eventType === 'orchestrator-guard-block' && name === 'advance-paused';
+  return (
+    eventType === 'orchestrator-guard-block' && name === 'advance-paused'
+  ) || (
+    eventType === 'orchestrator-terminal' && name === 'stop' && reason === 'pause'
+  );
 }
 
 function isPausedEvent(event: Record<string, unknown>): boolean {
@@ -418,13 +415,6 @@ export class SessionManager {
       }
     }
 
-    // Orchestrator guard blocks need operator intervention (headless: blocked).
-    if (isOrchestratorBlockedEvent(event as Record<string, unknown>)) {
-      session.status = 'blocked';
-      session.pendingBlocker = extractOrchestratorBlocker(event as Record<string, unknown>);
-      return;
-    }
-
     // Paused detection — pauseAuto() is resumable and must not leave the
     // session looking active, or duplicate-start prevention will deadlock.
     if (isPausedEvent(event as Record<string, unknown>)) {
@@ -475,17 +465,3 @@ function extractBlocker(event: SdkAgentEvent): PendingBlocker {
   };
 }
 
-function extractOrchestratorBlocker(event: Record<string, unknown>): PendingBlocker {
-  const data = event.data as Record<string, unknown> | undefined;
-  const name = String(data?.name ?? 'advance-paused');
-  const reason = String(data?.reason ?? '');
-  const id = `orchestrator:${name}`;
-  const message = reason || name;
-  const notifyEvent: RpcExtensionUIRequest = {
-    type: 'extension_ui_request',
-    id,
-    method: 'notify',
-    message,
-  };
-  return { id, method: 'notify', message, event: notifyEvent };
-}
