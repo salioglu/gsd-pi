@@ -1019,27 +1019,68 @@ describe('SessionManager', () => {
 
   // ---- Evicting a non-paused terminal session does not re-emit teardown ----
 
-  it('evicting a completed session does not emit session:cancelled (already torn down)', async () => {
-    const { manager } = createManager();
+  it('evicting non-paused terminal sessions does not re-emit session:cancelled', async () => {
+    {
+      const { manager } = createManager();
 
-    const sessionId = await manager.startSession({ projectDir: '/tmp/evict-completed' });
-    const resolvedDir = resolve('/tmp/evict-completed');
+      await manager.startSession({ projectDir: '/tmp/evict-completed' });
+      const resolvedDir = resolve('/tmp/evict-completed');
 
-    manager.lastClient!.emitEvent({
-      type: 'extension_ui_request',
-      id: 'n1',
-      method: 'notify',
-      message: 'Auto-mode stopped: completed all tasks',
-    });
-    assert.equal(manager.getSessionByDir(resolvedDir)!.status, 'completed');
+      manager.lastClient!.emitEvent({
+        type: 'extension_ui_request',
+        id: 'n1',
+        method: 'notify',
+        message: 'Auto-mode stopped: completed all tasks',
+      });
+      assert.equal(manager.getSessionByDir(resolvedDir)!.status, 'completed');
 
-    let cancelled = false;
-    manager.on('session:cancelled', () => { cancelled = true; });
+      let cancelledCount = 0;
+      manager.on('session:cancelled', () => { cancelledCount++; });
 
-    (manager as unknown as { evictSession(dir: string): void }).evictSession(resolvedDir);
+      (manager as unknown as { evictSession(dir: string): void }).evictSession(resolvedDir);
 
-    assert.equal(cancelled, false, 'completed sessions already tore down their bridge state on completion');
-    assert.equal(manager.getSessionByDir(resolvedDir), undefined);
+      assert.equal(cancelledCount, 0, 'completed sessions already tore down their bridge state on completion');
+      assert.equal(manager.getSessionByDir(resolvedDir), undefined);
+    }
+
+    {
+      const { manager } = createManager();
+      const resolvedDir = resolve('/tmp/evict-error');
+
+      manager.nextInitError = new Error('Connection refused');
+      await assert.rejects(
+        () => manager.startSession({ projectDir: '/tmp/evict-error' }),
+        /Failed to start session/
+      );
+      assert.equal(manager.getSessionByDir(resolvedDir)!.status, 'error');
+
+      let cancelledCount = 0;
+      manager.on('session:cancelled', () => { cancelledCount++; });
+
+      (manager as unknown as { evictSession(dir: string): void }).evictSession(resolvedDir);
+
+      assert.equal(cancelledCount, 0, 'error sessions already tore down their bridge state on error');
+      assert.equal(manager.getSessionByDir(resolvedDir), undefined);
+    }
+
+    {
+      const { manager } = createManager();
+
+      const sessionId = await manager.startSession({ projectDir: '/tmp/evict-cancelled' });
+      const resolvedDir = resolve('/tmp/evict-cancelled');
+
+      let cancelledCount = 0;
+      manager.on('session:cancelled', () => { cancelledCount++; });
+
+      await manager.cancelSession(sessionId);
+      assert.equal(manager.getSessionByDir(resolvedDir)!.status, 'cancelled');
+      assert.equal(cancelledCount, 1, 'cancelSession should emit exactly once');
+
+      (manager as unknown as { evictSession(dir: string): void }).evictSession(resolvedDir);
+
+      assert.equal(cancelledCount, 1, 'evicting a cancelled session should not emit a duplicate cancellation');
+      assert.equal(manager.getSessionByDir(resolvedDir), undefined);
+    }
   });
 
   // ---- cleanup empties the sessions map (no retained references) ----
