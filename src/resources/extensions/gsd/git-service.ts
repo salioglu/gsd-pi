@@ -1372,8 +1372,8 @@ function classifyTurnGitActionFailure(action: TurnGitActionMode, err: unknown): 
 }
 
 function mergeTurnGitFailureClasses(classes: readonly TurnGitFailureClass[]): TurnGitFailureClass {
-  if (classes.includes("unknown")) return "unknown";
   if (classes.includes("hook-content")) return "hook-content";
+  if (classes.includes("unknown")) return "unknown";
   if (classes.includes("transient")) return "transient";
   return "unknown";
 }
