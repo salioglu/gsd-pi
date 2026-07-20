@@ -20,6 +20,7 @@ import {
   markCompleted,
   markFailed,
   markStuck,
+  markPaused,
   markCanceled,
   markLatestActiveForWorkerCanceled,
   getRecentForUnit,
@@ -295,12 +296,27 @@ test("terminal transitions do not overwrite an already terminal dispatch", (t) =
   assert.equal(markCompleted(claim.dispatchId, { exitReason: "done" }), true);
   assert.equal(markFailed(claim.dispatchId, { errorSummary: "late-failure" }), false);
   assert.equal(markStuck(claim.dispatchId, "late-stuck"), false);
+  assert.equal(markPaused(claim.dispatchId), false);
   assert.equal(markCanceled(claim.dispatchId, "late-cancel"), false);
 
   const row = getLatestForUnit("M001/S09")!;
   assert.equal(row.status, "completed");
   assert.equal(row.exit_reason, "done");
   assert.equal(row.error_summary, null);
+});
+
+test("terminal helpers report missing dispatch ids as no-op writes", (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  setup(base);
+
+  const missingDispatchId = 999_999;
+
+  assert.equal(markCompleted(missingDispatchId), false);
+  assert.equal(markFailed(missingDispatchId, { errorSummary: "missing-failure" }), false);
+  assert.equal(markStuck(missingDispatchId, "missing-stuck"), false);
+  assert.equal(markPaused(missingDispatchId), false);
+  assert.equal(markCanceled(missingDispatchId, "missing-cancel"), false);
 });
 
 test("recordDispatchClaim rejects claims for missing leases before insert", (t) => {
