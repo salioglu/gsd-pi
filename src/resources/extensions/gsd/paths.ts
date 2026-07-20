@@ -736,7 +736,7 @@ function slugLooksLikeTeamSuffixProjection(slugPart: string): boolean {
   return /^[a-z0-9]{6}(-|$)/.test(slugPart);
 }
 
-function phaseDirMatchesMilestoneId(
+export function phaseDirMatchesMilestoneId(
   dirName: string,
   milestoneId: string,
   phaseNum: number,
