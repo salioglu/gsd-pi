@@ -3,6 +3,8 @@
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
+import { logWarning } from "../workflow-logger.js";
+
 type AbortableContext =
   | Pick<ExtensionContext, "abort" | "isIdle">
   | { abort?: unknown; isIdle?: unknown };
@@ -24,8 +26,14 @@ export function abortActiveUnitTurn(ctx: AbortableContext | null | undefined): b
   if (isIdle) {
     try {
       if (isIdle.call(ctx)) return false;
-    } catch {
+    } catch (err) {
       // Idleness could not be determined; fall through to best-effort abort.
+      logWarning(
+        "recovery",
+        `abortActiveUnitTurn: isIdle() check failed, falling back to abort: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 
