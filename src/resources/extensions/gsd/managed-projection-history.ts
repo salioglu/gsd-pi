@@ -2187,16 +2187,23 @@ function createInitialProjectionDirectory(directoryPath: string): boolean {
   }
   if (basename(projectionRoot).toLocaleLowerCase("en-US") !== ".gsd") return false;
   const targetRoot = dirname(projectionRoot);
+  if (!isProjectionRootIdentityLockAvailable()) {
+    // Validate the project root before mkdir-ing under it, mirroring the
+    // native lock's identity-stable, non-symlink root guard. A missing root
+    // is not an error here: the recursive mkdir creates it (fresh worktrees
+    // have no .gsd ancestor on disk yet).
+    if (existsSync(targetRoot)) {
+      const rootStat = lstatSync(targetRoot, { bigint: true });
+      if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+        throw new Error("managed projection project root is not identity-stable");
+      }
+    }
+    mkdirSync(directoryPath, { recursive: true });
+    return true;
+  }
   const rootStat = lstatSync(targetRoot, { bigint: true });
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
     throw new Error("managed projection project root is not identity-stable");
-  }
-  // Validate the project root is an identity-stable, non-symlink directory in
-  // both paths before branching, so the plain-fs fallback cannot mkdir under a
-  // symlinked or non-directory root that the native lock would have rejected.
-  if (!isProjectionRootIdentityLockAvailable()) {
-    mkdirSync(directoryPath, { recursive: true });
-    return true;
   }
   const handle = acquireProjectionRootIdentityLock(
     realpathSync(targetRoot),
