@@ -31,3 +31,47 @@ test("abortActiveUnitTurn is best-effort when context lacks abort or abort throw
 
   assert.equal(aborted, false);
 });
+
+test("abortActiveUnitTurn skips abort when the context reports idle", () => {
+  let abortCalls = 0;
+
+  const aborted = abortActiveUnitTurn({
+    isIdle: () => true,
+    abort: () => {
+      abortCalls += 1;
+    },
+  });
+
+  assert.equal(aborted, false);
+  assert.equal(abortCalls, 0);
+});
+
+test("abortActiveUnitTurn aborts when the context reports non-idle", () => {
+  let abortCalls = 0;
+
+  const aborted = abortActiveUnitTurn({
+    isIdle: () => false,
+    abort: () => {
+      abortCalls += 1;
+    },
+  });
+
+  assert.equal(aborted, true);
+  assert.equal(abortCalls, 1);
+});
+
+test("abortActiveUnitTurn falls back to abort when isIdle throws", () => {
+  let abortCalls = 0;
+
+  const aborted = abortActiveUnitTurn({
+    isIdle: () => {
+      throw new Error("isIdle failed");
+    },
+    abort: () => {
+      abortCalls += 1;
+    },
+  });
+
+  assert.equal(aborted, true);
+  assert.equal(abortCalls, 1);
+});
