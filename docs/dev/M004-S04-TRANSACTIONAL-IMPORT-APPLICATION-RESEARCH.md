@@ -1,13 +1,13 @@
 # M004/S04 Transactional Import Application Research
 
-Status: accepted implementation boundary for M004/S04
-Scope: research and contract only; Import Application execution begins in T02
+Status: completed implementation boundary for M004/S04
+Scope: Import Application contract and implementation completed through T07
 
 ## Decision
 
-GSD will expose one explicit `applyLegacyImport` boundary. A fresh call will consume an unchanged sealed Preview, the Preview creation input, and one independently verified backup. It will recapture the current database base rather than accept caller-selected revision fences. One `import.apply` Domain Operation will own every canonical mutation, the immutable Application receipt, one bounded audit event, outbox delivery, projection work, and the single project revision increment. Authority Epoch will not change in S04.
+GSD exposes one explicit `applyLegacyImport` boundary. A fresh call consumes an unchanged sealed Preview, the Preview creation input, and one independently verified backup. It recaptures the current database base rather than accepting caller-selected revision fences. One `import.apply` Domain Operation owns every canonical mutation, the immutable Application receipt, one bounded audit event, outbox delivery, projection work, and the single project revision increment. Authority Epoch does not change in S04.
 
-T01 intentionally adds no Application executor. It freezes the public contract and records the unsafe current behavior that T02-T05 must close.
+T01 intentionally added no Application executor. It froze the public contract and recorded the unsafe baseline that T02-T05 closed.
 
 ## Research method
 
@@ -21,13 +21,16 @@ Three independent tracks inspected the production schema and transaction kernel,
 
 The existing destructive restore writer is not an Application seam. It owns broad replacement transactions and compatibility cleanup; extending it would create a second authority path.
 
-## Current executable gaps
+## Pre-implementation executable gaps
 
-### Generic `import.apply` can commit without an Application
+The following gaps describe the T01 baseline. T02-T05 closed them in the
+completed Application boundary.
 
-`executeDomainOperation` accepts any nonblank operation type. A generic `import.apply` operation with ordinary event and projection output currently commits, advances revision, and leaves no `workflow_import_applications` row. The Application table triggers validate a row when one is inserted; they do not require every import operation to create one.
+### Generic `import.apply` could commit without an Application
 
-T02 must reserve `import.apply` for a typed import-only executor and require exactly one matching Application row before the authority compare-and-swap.
+At the T01 baseline, `executeDomainOperation` accepted any nonblank operation type. A generic `import.apply` operation with ordinary event and projection output committed, advanced revision, and left no `workflow_import_applications` row. The Application table triggers validated a row when one was inserted; they did not require every import operation to create one.
+
+T02 reserved `import.apply` for a typed import-only executor and requires exactly one matching Application row before the authority compare-and-swap.
 
 ### Generic request hashing cannot satisfy receipt causality
 
@@ -39,19 +42,19 @@ workflow_operations.request_hash = workflow_import_applications.preview_hash
 
 The generic Domain Operation hashes the complete request envelope: operation type, revision and epoch fences, actor and transport provenance, tracing, payload, and epoch behavior. Even when the payload is the exact Preview envelope, that whole-request hash is not the Preview hash. A real receipt insert therefore aborts through the production causality trigger.
 
-The narrow resolution is an import-only executor which records the already validated Preview hash. The generic executor and its hashing remain unchanged. There will be no caller-supplied hash, hash strategy, operation registry, or relaxed trigger.
+The narrow resolution is an import-only executor which records the already validated Preview hash. The generic executor and its hashing remain unchanged. There is no caller-supplied hash, hash strategy, operation registry, or relaxed trigger.
 
 ### Structural Preview validation is not semantic Application authorization
 
 Preview validation proves exact JSON shape, hashes, ordering, counts, and evidence relationships. Its target validator deliberately accepts any nonblank kind, key, and optional field. A cryptographically valid Preview can therefore contain a target that Application cannot write.
 
-T03 must compile the entire Preview through the one explicit target adapter allowlist before a write transaction begins. Zero unresolved diagnoses is necessary but not sufficient; the Preview must also be compiler-valid.
+T03 compiles the entire Preview through the one explicit target adapter allowlist before a write transaction begins. Zero unresolved diagnoses is necessary but not sufficient; the Preview must also be compiler-valid.
 
 ### Preview hash is not the complete replay identity
 
 Two verified backups can share one Preview hash while differing in backup bytes, size, reference, verification time, or other metadata. Changed bytes or size produce a new `backup_id`; relocation or verification-time changes can retain the same `backup_id` while the complete artifacts still differ. Invocation provenance can also differ while the Preview remains identical. The schema-required operation request hash must still be the Preview hash, so exact replay needs a separate versioned Application identity.
 
-The durable replay aggregate will combine:
+The durable replay aggregate combines:
 
 - normalized invocation provenance, retaining idempotency key, actor, transport, trace, and turn;
 - a canonical identity for the Preview creation input;
@@ -77,7 +80,7 @@ The caller does not provide an operation type, request hash, project revision, A
 
 The compact result contains committed or replayed status, operation and project identity, the separate Application identity hash, Preview and backup identities, base and resulting revision/epoch, application time, and event/outbox/projection receipt identities. It does not duplicate raw legacy content.
 
-T01 rejects non-finite, cyclic, accessor-backed, symbol-bearing, sparse, or non-plain nested request data before cloning; it then detaches and deeply freezes the replay identity and safe error context. The input and receipt interfaces define shape; T05 will detach and freeze the complete public request and persisted result at the execution boundary. This is an in-memory guarantee only; fresh execution must still revalidate referenced files and database authority.
+T01 rejects non-finite, cyclic, accessor-backed, symbol-bearing, sparse, or non-plain nested request data before cloning; it then detaches and deeply freezes the replay identity and safe error context. The input and receipt interfaces define shape; T05 detaches and freezes the complete public request and persisted result at the execution boundary. This is an in-memory guarantee only; fresh execution must still revalidate referenced files and database authority.
 
 ## Failure contract
 
@@ -175,13 +178,13 @@ S04 does not implement:
 - generic request-hash customization;
 - caller bypasses or test callback injection in public handlers.
 
-Those restore and epoch boundaries remain in S05. The full quantitative ingress audit remains in S06.
+Those restore and epoch boundaries are owned by S05. The full quantitative ingress audit remains in S06.
 
 ## Test obligations
 
-T01 characterizes all four current gaps through real behavior, never source-text assertions. Later tasks must update the temporary unsafe-behavior expectations as the boundary closes.
+T01 characterized all four baseline gaps through real behavior, never source-text assertions. Later tasks updated the temporary unsafe-behavior expectations as the boundary closed.
 
-The final S04 proof must include:
+The final S04 proof includes:
 
 - real schema triggers and the real Domain Operation transaction;
 - Test Writer RED, GREEN, and sabotage evidence;
@@ -197,9 +200,12 @@ The final S04 proof must include:
 
 ## Implementation sequence
 
-1. T02 reserves `import.apply` and adds the typed Preview-hash Domain Operation path.
-2. T03 builds the pure whole-Preview compiler.
-3. T04 adds strict context-bound canonical writers.
-4. T05 composes public preflight, durable receipt/event identity, and replay.
-5. T06 proves fault, crash, restart, and contention behavior.
-6. T07 seals the public corpus and compatibility recovery capstone.
+1. T02 reserved `import.apply` and added the typed Preview-hash Domain Operation path. (Completed.)
+2. T03 built the pure whole-Preview compiler. (Completed.)
+3. T04 added strict context-bound canonical writers. (Completed.)
+4. T05 composed public preflight, durable receipt/event identity, and replay. (Completed.)
+5. T06 proved fault, crash, restart, and contention behavior. (Completed.)
+6. T07 sealed the public corpus and compatibility recovery capstone. (Completed.)
+
+M004/S04 is complete through T07; no implementation task remains planned in
+this slice.

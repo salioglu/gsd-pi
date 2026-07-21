@@ -1,18 +1,20 @@
 # M004/S03 Verified Backup Research
 
+Status: implemented and verified backup boundary.
+
 ## Decision
 
 Import Application must fail closed until it has a verified, independently
 openable SQLite backup bound to the exact approved Preview and canonical
 database base. A backup is evidence, not merely a copied file.
 
-The implementation will use parameter-bound `VACUUM INTO ?` to create the
+The implementation uses parameter-bound `VACUUM INTO ?` to create the
 snapshot. A strict `PRAGMA wal_checkpoint(TRUNCATE)` is still required as a
 preflight gate, but it is not the consistency mechanism: another process can
 commit after a successful checkpoint, so copying the live main database file
 cannot close the cross-process WAL race. `VACUUM INTO` produces a consistent
-snapshot containing committed data and works through both supported SQLite
-providers. Node's online-backup API is not available across the project's Node
+snapshot containing committed data through the supported `node:sqlite`
+provider. Node's online-backup API is not available across the project's Node
 22 support floor.
 
 ## Required proof
@@ -57,9 +59,8 @@ part of that identity.
 - S03 proves backup and isolated restore rehearsal. Live replacement, explicit
   consent, Authority Epoch changes, and Forward Repair belong to S05.
 
-Existing recovery paths that continue destructive clearing after a missing or
-failed backup are bypasses. They must fail closed in this slice and ultimately
-delegate to the Preview/Application boundary.
+Recovery paths fail closed after a missing or failed backup and delegate to the
+Preview/Application boundary; they do not continue destructive clearing.
 
 ## Failure contract
 
@@ -68,10 +69,10 @@ Checkpoint busy, base/source drift, and transient publication races may be
 retried only through bounded deterministic policy. Integrity, identity, and
 publication-collision failures are never treated as successful degradation.
 
-The implementation stages introduce failure codes only when the corresponding
-behavior exists. The expected categories are checkpoint busy/invalid, base or
-source drift, snapshot/sync/hash failure, independent-open failure, integrity or
-foreign-key failure, identity mismatch, and publication collision/failure.
+The implementation reports checkpoint busy/invalid, base or source drift,
+snapshot/sync/hash failure, independent-open failure, integrity or foreign-key
+failure, identity mismatch, and publication collision/failure only from the
+corresponding stages.
 
 ## Primary references
 

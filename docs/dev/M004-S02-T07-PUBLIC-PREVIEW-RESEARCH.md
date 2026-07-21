@@ -1,18 +1,20 @@
 # M004/S02/T07 Public Preview research
 
+Status: implemented and verified public Preview boundary.
+
 ## Decision
 
-`createLegacyImportPreview` will be the only public composition boundary for a legacy import Preview. It will:
+`createLegacyImportPreview` is the only public composition boundary for a legacy import Preview. It:
 
-1. capture every declared source root into one stable retained-byte snapshot;
-2. capture one atomic schema-v45 canonical base snapshot from the already-open database;
-3. assign every retained non-directory source to exactly one interpreter;
-4. interpret and classify entirely in memory;
-5. re-enumerate and rehash the declared source roots;
-6. capture the canonical base a second time and compare the complete approval tuple;
-7. seal and return only `{ preview, preview_hash }`.
+1. captures every declared source root into one stable retained-byte snapshot;
+2. captures one atomic schema-v45 canonical base snapshot from the already-open database;
+3. assigns every retained non-directory source to exactly one interpreter;
+4. interprets and classifies entirely in memory;
+5. re-enumerates and rehashes the declared source roots;
+6. captures the canonical base a second time and compares the complete approval tuple;
+7. seals and returns only `{ preview, preview_hash }`.
 
-`revalidateLegacyImportPreview` will recreate the Preview through the same boundary and compare its exact hash with the expected sealed artifact. It will not add hidden approval state or reread legacy input during a later application.
+`revalidateLegacyImportPreview` recreates the Preview through the same boundary and compares its exact hash with the expected sealed artifact. It does not add hidden approval state or reread legacy input during a later application.
 
 ## Existing guarantees to reuse
 
@@ -35,36 +37,36 @@ The public boundary must not run every interpreter over every source and merge t
 
 This avoids a second hand-maintained surface registry and prevents GSD's fallback preservation from duplicating supplemental evidence.
 
-## Lifecycle database evidence gap
+## Resolved lifecycle database evidence gap
 
-The lifecycle corpus currently builds `LegacyImportGsdDatabaseEvidence` only in a test helper. The production database-target inspector records schema and target suitability but does not collect `slices.depends` and `slice_dependencies.depends_on_slice_id` observations.
+The lifecycle corpus originally built `LegacyImportGsdDatabaseEvidence` only in a test helper. The production database-target inspector recorded schema and target suitability but did not collect `slices.depends` and `slice_dependencies.depends_on_slice_id` observations.
 
-T07 must add a production retained-byte collector for those complete row sets, or the public path cannot honestly reproduce the lifecycle corpus. The collector must:
+T07 added a production retained-byte collector for those complete row sets. The collector:
 
-- inspect only the retained private copy;
-- bind observations to the source capture/hash and inspection version;
-- report complete coverage and stable ordering;
-- attach exact source byte spans when uniquely recoverable;
-- fail closed when a value cannot be bound to unique retained bytes;
-- perform no migration, checkpoint, backup, replay, projection, receipt, or authoritative write.
+- inspects only the retained private copy;
+- binds observations to the source capture/hash and inspection version;
+- reports complete coverage and stable ordering;
+- attaches exact source byte spans when uniquely recoverable;
+- fails closed when a value cannot be bound to unique retained bytes;
+- performs no migration, checkpoint, backup, replay, projection, receipt, or authoritative write.
 
 ## Race boundary
 
 The required order is source A, base A, pure interpretation/classification, source revalidation, base B, exact A/B comparison, then seal. This covers source drift during interpretation, concurrent canonical writers, and out-of-band relevant-row changes that fail to advance revision.
 
-S04 must still revalidate the sealed Preview, enforce revision/epoch inside its write transaction, and apply only sealed normalized changes. Revalidation does not lock the filesystem and must never authorize rereading legacy bytes during application.
+S04 revalidates the sealed Preview, enforces revision/epoch inside its write transaction, and applies only sealed normalized changes. Revalidation does not lock the filesystem and never authorizes rereading legacy bytes during application.
 
 ## Error boundary
 
 Valid ambiguity remains Preview data. Infrastructure or identity inconsistency throws a typed, redacted error with stage, stable code, retryability, and expected/observed hashes or base tuple fields. A public call never returns a partial artifact.
 
-## Verification lean
+## Verification coverage
 
-- Keep existing focused source, interpreter, classifier, inspector, seal, and corpus-validator suites as component owners.
-- Add a table-driven public-path sweep over all 26 corpus cases rather than duplicating their unit contracts.
-- Compare deterministic public replay exactly. Compare the historical hand-authored corpus oracles through an ID-normalized semantic projection because their IDs are fixture labels and T06 deliberately tightened composite completeness behavior.
-- Keep small exact action-matrix, lifecycle-database, and stricter composite capstones.
-- Prove source trees, database tables, `project_authority`, coordination/event/outbox/projection/import tables, `total_changes`, database/WAL/SHM fingerprints, backup inventory, projection files, and receipts are unchanged.
-- Sabotage final source/base revalidation, parser/importer identity, diagnoses/resolutions/counts, source ownership, and attempted writer/backup/receipt/projector reachability.
+- Focused source, interpreter, classifier, inspector, seal, and corpus-validator suites remain the component owners.
+- A table-driven public-path sweep covers all 26 corpus cases without duplicating their unit contracts.
+- Deterministic public replay compares exactly. Historical hand-authored corpus oracles compare through an ID-normalized semantic projection because their IDs are fixture labels and T06 deliberately tightened composite completeness behavior.
+- Exact action-matrix, lifecycle-database, and stricter composite capstones remain focused.
+- No-write proofs cover source trees, database tables, `project_authority`, coordination/event/outbox/projection/import tables, `total_changes`, database/WAL/SHM fingerprints, backup inventory, projection files, and receipts.
+- Sabotage coverage exercises final source/base revalidation, parser/importer identity, diagnoses/resolutions/counts, source ownership, and attempted writer/backup/receipt/projector reachability.
 
 GitHub labels and tags are not inputs to this contract.

@@ -2021,7 +2021,9 @@ fn open_windows_node(path: &Path, write: bool) -> Result<File> {
         // sibling nodes mid-operation (ERROR_SHARING_VIOLATION / os error 32).
         .share_mode(0x0000_0001 | 0x0000_0002 | FILE_SHARE_DELETE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
-    let file = options.open(path).map_err(|error| projection_path_error(path, error))?;
+    let file = options
+        .open(path)
+        .map_err(|error| projection_path_error(path, error))?;
     let information = windows_file_information(&file)?;
     if information.file_attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(Error::new(
@@ -4169,7 +4171,9 @@ fn recover_windows_native_evidence_descriptors(root: &Path, root_handle: &File) 
     }
     reject_windows_reparse(&directory)?;
     let directory_handle = open_windows_directory(&directory)?;
-    for entry in fs::read_dir(&directory).map_err(|error| projection_path_error(&directory, error))? {
+    for entry in
+        fs::read_dir(&directory).map_err(|error| projection_path_error(&directory, error))?
+    {
         let entry = entry.map_err(projection_error)?;
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(prepared_name) = name.strip_prefix('.') else {

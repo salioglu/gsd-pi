@@ -5,7 +5,7 @@ Scope: restore policy, cutover ownership, and Forward Repair contract; runtime i
 
 ## Decision
 
-GSD will have one narrow, irreversible authority boundary.
+GSD has one narrow, irreversible authority boundary.
 
 A verified pre-import backup may replace the live database only while the
 corresponding Import Application is still the exact canonical head, no later
@@ -21,8 +21,8 @@ after later writes is removed. Consent authorizes an otherwise eligible
 destructive restore; it never overrides stale authority, later work, cutover,
 invalid evidence, or active coordination.
 
-Authority Epoch advancement will no longer be a caller-selected option on the
-generic Domain Operation request. One typed cutover operation will own it.
+Authority Epoch advancement is no longer a caller-selected option on the
+generic Domain Operation request. One typed cutover operation owns it.
 Import Application, live restore, ordinary workflow changes, and Forward
 Repair retain the current epoch.
 
@@ -125,7 +125,7 @@ project database in `legacy-import-live-restore.ts`.
 
 `applyVerifiedRecoverApplication` builds a fresh Preview, captures the current
 base, creates and drills a verified backup, then calls `applyLegacyImport`.
-Interactive `/gsd recover --confirm` and `gsd headless recover` both delegate to
+Interactive `/gsd recover` and `gsd headless recover` both delegate to
 that boundary, then pass the committed Application to
 `executeLegacyImportRecoveryAction`. They import modeled Markdown changes and
 preserve database-only rows. The default action is `assess`: the read-only
@@ -170,7 +170,7 @@ Import Application provenance, backup differences, or project-wide current
 state.
 
 Reusing either would weaken constraints and entangle unrelated policy. T02
-will add the minimum project/import recovery receipts and reuse the common
+added the minimum project/import recovery receipts and reused the common
 operation, event, outbox, Projection Work, authority, Application, and backup
 identities around them.
 
@@ -324,17 +324,15 @@ destructive Consent.
 
 ## Characterization evidence retained from S03/S04
 
-T01 adds one focused behavior test beside the existing Domain Operation
-contract. It proves an ordinary operation type can select epoch advancement;
-the older `authority.handoff` example alone could be mistaken for a typed
-cutover. Existing executable tests already freeze every other current behavior
-required before production changes, so T01 does not duplicate them:
+T01 added a focused characterization beside the existing Domain Operation
+contract to prove that the former generic API allowed an ordinary operation to
+select epoch advancement. T03 inverted that characterization. Current
+executable tests freeze the completed boundary:
 
-- `tests/domain-operation.test.ts` — `ordinary operations retain the epoch and
-  explicit authority handoff advances it once` and `generic Domain Operation
-  currently lets an ordinary operation select Authority Epoch advancement`
-  prove the generic public request can advance Authority Epoch exactly once
-  without semantic ownership by an authority operation.
+- `tests/domain-operation.test.ts` — `ordinary operations always retain the
+  Authority Epoch` and `generic Domain Operation cannot select Authority Epoch
+  advancement or invoke cutover` prove the generic public request cannot own
+  epoch advancement.
 - `tests/domain-operation.test.ts` — Import Application rejects epoch advance,
   stale epochs leave no residue, exact replay is stable, and every pre-commit
   fault rolls back.
@@ -349,13 +347,12 @@ required before production changes, so T01 does not duplicate them:
   recovery routes delegate to verified Import Application rather than direct
   database replacement.
 
-T03 must invert the generic epoch-advance characterization through the public
-Domain Operation API. T04-T08 add new behavior-first acceptance tests for
-assessment, live restore, Forward Repair, routing, and the public capstone.
+T04-T08 added behavior-first acceptance tests for assessment, live restore,
+Forward Repair, routing, and the public capstone.
 
 ## Explicit exclusions
 
-S05 will not add:
+S05 does not add:
 
 - post-write restore with a review or force override;
 - epoch decrement, down migration, or disk-authority restoration;
@@ -384,23 +381,23 @@ genuine V44 upgrade, pre-migration backup, injected-fault rollback with no
 leaked V45 objects, independent backup reopen, exact causality, and sealed
 legacy-corpus V45/V46 boundaries are executable tests.
 
-1. T02 adds the minimum durable cutover, restore, and Forward Repair receipt
+1. T02 added the minimum durable cutover, restore, and Forward Repair receipt
    model. (Completed.)
-2. T03 makes epoch advancement private to one typed cutover operation.
+2. T03 made epoch advancement private to one typed cutover operation.
    (Completed.)
-3. T04 builds the pure exact restore assessor and recommendation result.
+3. T04 built the pure exact restore assessor and recommendation result.
    (Completed: strict input and Consent snapshotting, one shared durable
    Application evidence reader, independently reverified backup bytes/base,
    exact post-Application relevant-row hash, current head and coordination
    fencing, deterministic difference digest, stale-read barrier, terminal
    route recognition, and recommendation-led frozen results.)
-4. T05 implements one crash-safe eligible live restore and records erased
+4. T05 implemented one crash-safe eligible live restore and recorded erased
    lineage in the restored database. (Completed.)
-5. T06 proves fault, SIGKILL, restart, stale-validator, and contention
+5. T06 proved fault, SIGKILL, restart, stale-validator, and contention
    convergence. (Completed.)
-6. T07 builds three-way import Forward Repair against current canonical state.
+6. T07 built three-way import Forward Repair against current canonical state.
    (Completed.)
-7. T08 seals public routes and the complete corpus across journal modes.
+7. T08 sealed public routes and the complete corpus across journal modes.
    (Completed.)
 
 M004/S05 is complete through T08; no implementation task remains planned in
@@ -413,7 +410,7 @@ replacement boundary:
 
 - The existing best-effort checkpoint, close-all, and refresh helpers cannot
   prove a safe replacement because they suppress checkpoint or close failures
-  and the workspace cache can retain target adapters. T05 therefore adds one
+  and the workspace cache can retain target adapters. T05 therefore uses one
   engine-owned strict detach/reopen token that pins the active file path,
   requires an exact completed checkpoint tuple, strictly closes every cached
   alias, preserves workspace identity, and fails before publication on any
@@ -456,7 +453,7 @@ replacement boundary:
   pre-publication reopen, the rename/intent crash window, post-publication
   convergence, installed-byte tampering, intent inode replacement, unsafe
   intent paths, sidecar links, and unsupported directory durability. T06
-  completes the exhaustive boundary-fault, real SIGKILL, startup,
+  completed the exhaustive boundary-fault, real SIGKILL, startup,
   stale-validator, and multi-process contention matrices.
 
 ### T06 reconciled fault and contention research
@@ -478,16 +475,15 @@ epoch combination. A cutover that wins before the restore claim may advance to
 
 #### Writer-wins serialization rule
 
-The T05 cooperative intent fence is necessary but not sufficient. Its final
-eligibility assessment and intent creation currently occur without SQLite's
-reserved writer lock. A writer can therefore begin first, commit after the
-last assessment, be included in the detach checkpoint, and then be erased by
-publication. Writers that checked the fence before blocking on SQLite can also
-begin after an intent appears unless the fence is checked again after the
-writer lock is acquired. Direct autocommit writers bypass the transaction
-entry fence entirely.
+At the T05 boundary, the cooperative intent fence was necessary but not
+sufficient. Its final eligibility assessment and intent creation occurred
+without SQLite's reserved writer lock. A writer could therefore begin first,
+commit after the last assessment, be included in the detach checkpoint, and
+then be erased by publication. Writers that checked the fence before blocking
+on SQLite could also begin after an intent appeared, and direct autocommit
+writers bypassed the transaction-entry fence.
 
-T06 freezes this ordering:
+T06 closed those gaps with this ordering:
 
 1. restore acquires `BEGIN IMMEDIATE` before its final eligibility check;
 2. while holding that lock it re-reads exact Application, head, authority,
