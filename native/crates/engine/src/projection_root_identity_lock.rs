@@ -3690,10 +3690,10 @@ fn windows_source_has_public_evidence(root: &Path, source: &Path) -> Result<bool
         .to_string_lossy()
         .replace('\\', "/");
     let directory = root.join("migration/native-projection-evidence");
-    let entries = match fs::read_dir(directory) {
+    let entries = match fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(projection_path_error(directory, error)),
+        Err(error) => return Err(projection_path_error(&directory, error)),
     };
     for entry in entries {
         let path = entry.map_err(projection_error)?.path();
