@@ -51,6 +51,7 @@ import {
   type LegacyImportBaseRow,
   type LegacyImportBaseSnapshot,
 } from "../legacy-import-preview-base.ts";
+import { assessLegacyImportRestore } from "../legacy-import-restore-assessment.ts";
 import { _getAdapter, closeDatabase, openDatabase, SCHEMA_VERSION } from "../gsd-db.ts";
 import { createLegacyImportCorpusSourceRoots } from "./helpers/legacy-import-corpus.ts";
 
@@ -265,6 +266,46 @@ test("Forward Repair preserves accepted later work and commits one exact termina
   assert.equal(replayed.status, "replayed");
   assert.equal(replayed.operationId, committed.operationId);
   assert.equal(db().prepare("SELECT COUNT(*) AS count FROM workflow_import_forward_repairs").get()?.["count"], 1);
+});
+
+test("retain receipts do not consume the Application terminal recovery route", () => {
+  const prepared = prepareCase();
+  commitLaterCanonicalRow(prepared);
+  const evidence = {
+    applicationIdentityHash: prepared.applicationIdentityHash,
+    backup: prepared.backup,
+  };
+  const retainPlan = inspectLegacyImportForwardRepair(evidence, "retain");
+  const retained = applyLegacyImportForwardRepair({
+    invocation: {
+      idempotencyKey: `legacy-import/forward-repair-${sequence}-retain`,
+      sourceTransport: "internal",
+      actorType: "agent",
+      actorId: "forward-repair-test",
+    },
+    ...evidence,
+    plan: retainPlan,
+  });
+
+  assert.equal(retained.status, "committed");
+  assert.equal(assessLegacyImportRestore(evidence).decision, "forward-repair-required");
+
+  const revertPlan = inspectLegacyImportForwardRepair(evidence);
+  const repaired = applyLegacyImportForwardRepair({
+    invocation: {
+      idempotencyKey: `legacy-import/forward-repair-${sequence}-revert-after-retain`,
+      sourceTransport: "internal",
+      actorType: "agent",
+      actorId: "forward-repair-test",
+    },
+    ...evidence,
+    plan: revertPlan,
+  });
+  assert.equal(repaired.status, "committed");
+  assert.deepEqual(
+    db().prepare("SELECT goal FROM workflow_import_forward_repairs ORDER BY repaired_at").all(),
+    [{ goal: "retain" }, { goal: "revert" }],
+  );
 });
 
 test("Forward Repair tombstones unchanged hierarchy introduced by the Import Application", () => {

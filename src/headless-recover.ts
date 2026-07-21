@@ -22,8 +22,13 @@ import { resolveGsdAgentExtensionsDir, shouldUseAgentExtensionsDir } from './hea
 import { resolveBundledGsdExtensionModule } from './bundled-resource-path.js'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
+import { getJitiWorkspaceAliases } from './jiti-workspace-aliases.js'
 
-const jiti = createJiti(fileURLToPath(import.meta.url), { interopDefault: true, debug: false })
+const jiti = createJiti(fileURLToPath(import.meta.url), {
+  alias: getJitiWorkspaceAliases(import.meta.url),
+  interopDefault: true,
+  debug: false,
+})
 
 const agentExtensionsDir = resolveGsdAgentExtensionsDir()
 const { useAgentDir } = shouldUseAgentExtensionsDir({ env: process.env })
@@ -48,127 +53,44 @@ function recoveryErrorMessage(error: unknown): string {
 }
 
 async function loadExtensionModules() {
-  const workspaceModule = await jiti.import(gsdExtensionPath('db-workspace.ts'), {}) as any
-  const actionModule = await jiti.import(gsdExtensionPath('legacy-import-recovery-action.ts'), {}) as any
-  const choiceTokenModule = await jiti.import(gsdExtensionPath('legacy-import-forward-repair-choice-token.ts'), {}) as any
+  const workspaceModule = await jiti.import(gsdExtensionPath('db-workspace.ts'), {}) as typeof import('./resources/extensions/gsd/db-workspace.js')
+  const orchestratorModule = await jiti.import(gsdExtensionPath('legacy-import-recovery-orchestrator.ts'), {}) as typeof import('./resources/extensions/gsd/legacy-import-recovery-orchestrator.js')
+  const choiceTokenModule = await jiti.import(gsdExtensionPath('legacy-import-forward-repair-choice-token.ts'), {}) as typeof import('./resources/extensions/gsd/legacy-import-forward-repair-choice-token.js')
   const openWorkflowDatabase = workspaceModule.openWorkflowDatabase
   const closeWorkflowDatabase = workspaceModule.closeWorkflowDatabase
-  const prepareVerifiedRecoverApplication = workspaceModule.prepareVerifiedRecoverApplication
-  const applyPreparedVerifiedRecoverApplication = workspaceModule.applyPreparedVerifiedRecoverApplication
-  const loadRetainedVerifiedRecoverApplication = workspaceModule.loadRetainedVerifiedRecoverApplication
   const loadVerifiedRecoverApplication = workspaceModule.loadVerifiedRecoverApplication
-  const executeLegacyImportRecoveryAction = actionModule.executeLegacyImportRecoveryAction
-  const parseLegacyImportRecoveryAction = actionModule.parseLegacyImportRecoveryAction
+  const executeLegacyImportRecovery = orchestratorModule.executeLegacyImportRecovery
+  const validateLegacyImportRecoveryRequest = orchestratorModule.validateLegacyImportRecoveryRequest
   const formatLegacyImportForwardRepairChoice = choiceTokenModule.formatLegacyImportForwardRepairChoice
-  const parseLegacyImportForwardRepairChoices = choiceTokenModule.parseLegacyImportForwardRepairChoices
   if (typeof openWorkflowDatabase !== 'function') {
     throw new Error('selected GSD extensions do not support workflow database recovery; synchronize the extension bundle')
   }
   if (typeof closeWorkflowDatabase !== 'function') {
     throw new Error('selected GSD extensions do not support workflow database closeout; synchronize the extension bundle')
   }
-  if (typeof prepareVerifiedRecoverApplication !== 'function'
-    || typeof applyPreparedVerifiedRecoverApplication !== 'function'
-    || typeof loadRetainedVerifiedRecoverApplication !== 'function') {
-    throw new Error('selected GSD extensions do not support verified Import Application recovery; synchronize the extension bundle')
-  }
   if (typeof loadVerifiedRecoverApplication !== 'function') {
     throw new Error('selected GSD extensions do not support retained Import Application recovery; synchronize the extension bundle')
   }
-  if (typeof executeLegacyImportRecoveryAction !== 'function') {
+  if (typeof executeLegacyImportRecovery !== 'function'
+    || typeof validateLegacyImportRecoveryRequest !== 'function') {
     throw new Error('selected GSD extensions do not support executable recovery actions; synchronize the extension bundle')
   }
-  if (typeof parseLegacyImportRecoveryAction !== 'function') {
-    throw new Error('selected GSD extensions do not support recovery action parsing; synchronize the extension bundle')
-  }
-  if (typeof formatLegacyImportForwardRepairChoice !== 'function'
-    || typeof parseLegacyImportForwardRepairChoices !== 'function') {
+  if (typeof formatLegacyImportForwardRepairChoice !== 'function') {
     throw new Error('selected GSD extensions do not support recovery choice tokens; synchronize the extension bundle')
   }
   return {
     openWorkflowDatabase: openWorkflowDatabase as (basePath: string) => { ok: boolean },
     closeWorkflowDatabase: closeWorkflowDatabase as () => void,
-    prepareVerifiedRecoverApplication: prepareVerifiedRecoverApplication as PrepareVerifiedRecoverApplication,
-    applyPreparedVerifiedRecoverApplication: applyPreparedVerifiedRecoverApplication as ApplyPreparedVerifiedRecoverApplication,
-    loadRetainedVerifiedRecoverApplication: loadRetainedVerifiedRecoverApplication as () => VerifiedRecoverApplicationResult | null,
-    loadVerifiedRecoverApplication: loadVerifiedRecoverApplication as (operationId: string) => VerifiedRecoverApplicationResult,
-    executeLegacyImportRecoveryAction: executeLegacyImportRecoveryAction as ExecuteLegacyImportRecoveryAction,
-    parseLegacyImportRecoveryAction: parseLegacyImportRecoveryAction as ParseLegacyImportRecoveryAction,
-    formatLegacyImportForwardRepairChoice: formatLegacyImportForwardRepairChoice as FormatLegacyImportForwardRepairChoice,
-    parseLegacyImportForwardRepairChoices: parseLegacyImportForwardRepairChoices as ParseLegacyImportForwardRepairChoices,
+    loadVerifiedRecoverApplication,
+    executeLegacyImportRecovery,
+    validateLegacyImportRecoveryRequest,
+    formatLegacyImportForwardRepairChoice,
   }
 }
 
 export interface RecoverResult {
   exitCode: number
 }
-
-interface VerifiedRecoverApplicationResult {
-  receipt: { operationId: string; applicationIdentityHash: string }
-  backup: { backup_ref: string; [key: string]: unknown }
-  counts: { milestones: number; slices: number; tasks: number }
-}
-
-interface PreparedVerifiedRecoverApplication {
-  preview: { preview_hash: string }
-  authorizationText: string
-}
-
-interface RecoveryAssessment {
-  decision: string
-  evidenceHash: string
-  reasonCode: string
-  recommendation: { recommendationText: string }
-}
-
-type PrepareVerifiedRecoverApplication = (
-  basePath: string,
-) => PreparedVerifiedRecoverApplication | Promise<PreparedVerifiedRecoverApplication>
-
-type ApplyPreparedVerifiedRecoverApplication = (
-  prepared: PreparedVerifiedRecoverApplication,
-  approvedPreviewHash: string,
-) => VerifiedRecoverApplicationResult | Promise<VerifiedRecoverApplicationResult>
-
-type ExecuteLegacyImportRecoveryAction = (
-  application: VerifiedRecoverApplicationResult,
-  action: 'assess' | 'restore' | 'forward-repair',
-  choices?: readonly {
-    instructionIndex: number
-    targetKind: string
-    targetKey: string
-    reviewHash: string
-    decision: 'preserve-later' | 'restore-backup'
-  }[], consent?: { consentSchemaVersion: 1; decision: 'proceed'; destructiveDatabaseRestore: true; evidenceHash: string },
-) => {
-  status: 'assessed' | 'restored' | 'forward-repaired' | 'choice-required'
-  assessment?: RecoveryAssessment
-  result?: { status: string }
-  choices?: readonly {
-    instructionIndex: number
-    targetKind: string
-    targetKey: string
-    reasonCode: string
-    reviewHash: string
-    currentValueJson: string
-    proposedMutationJson: string
-    recommendedDecision: 'preserve-later'
-    recommendationRationale: string
-  }[]
-}
-
-type ParseLegacyImportRecoveryAction = (
-  flags: readonly string[],
-) => 'assess' | 'restore' | 'forward-repair'
-
-type ForwardRepairChoice = NonNullable<Parameters<ExecuteLegacyImportRecoveryAction>[2]>[number]
-
-type FormatLegacyImportForwardRepairChoice = (
-  choice: Omit<ForwardRepairChoice, 'decision'>,
-  decision: ForwardRepairChoice['decision'],
-) => string
-
-type ParseLegacyImportForwardRepairChoices = (args: string) => ForwardRepairChoice[]
 
 export async function handleRecover(
   basePath: string,
@@ -189,70 +111,47 @@ export async function handleRecover(
     return { exitCode: 1 }
   }
 
-  let action: 'assess' | 'restore' | 'forward-repair'
   try {
-    action = modules.parseLegacyImportRecoveryAction(args)
-  } catch (err) {
-    process.stderr.write(`[headless] recover: ${recoveryErrorMessage(err)}\n`)
+    modules.validateLegacyImportRecoveryRequest(args.join(' '))
+  } catch (error) {
+    const message = recoveryErrorMessage(error)
+    const prefix = /choice token/iu.test(message)
+      ? '[headless] recover: malformed --choice token: '
+      : '[headless] recover: '
+    process.stderr.write(`${prefix}${message}\n`)
     return { exitCode: 1 }
   }
+
   const opened = modules.openWorkflowDatabase(basePath)
   if (!opened.ok) {
     process.stderr.write(`[headless] recover: failed to open or create the GSD database at ${basePath}\n`)
     return { exitCode: 1 }
   }
   try {
-  const applicationId = args.find((arg) => arg.startsWith('--application='))?.slice('--application='.length)
-  if (!applicationId && action !== 'assess') {
-    process.stderr.write('[headless] recover: assess first, then provide --application evidence\n')
-    return { exitCode: 1 }
-  }
-  let application: VerifiedRecoverApplicationResult
+  let execution: NonNullable<Awaited<ReturnType<typeof modules.executeLegacyImportRecovery>>>
   try {
-    const retained = applicationId
-      ? modules.loadVerifiedRecoverApplication(applicationId)
-      : modules.loadRetainedVerifiedRecoverApplication()
-    if (retained) {
-      application = retained
-    } else {
-      const prepared = await modules.prepareVerifiedRecoverApplication(basePath)
-      const approvedPreviewHash = args
-        .map((arg) => /^--preview=(sha256:[0-9a-f]{64})$/u.exec(arg)?.[1])
-        .find((value): value is string => value !== undefined)
+    const result = await modules.executeLegacyImportRecovery({
+      basePath,
+      args: args.join(' '),
+      approvePrepared: async (prepared, approvedPreviewHash) => {
       if (approvedPreviewHash !== prepared.preview.preview_hash) {
         process.stderr.write(`[headless] recover: ${prepared.authorizationText}\n`)
         process.stderr.write(
           `[headless] recover: import not applied; re-run with --preview=${prepared.preview.preview_hash}\n`,
         )
-        return { exitCode: 1 }
+          return false
       }
-      application = await modules.applyPreparedVerifiedRecoverApplication(prepared, approvedPreviewHash)
-    }
+        return true
+      },
+    })
+    if (!result) return { exitCode: 1 }
+    execution = result
   } catch (err) {
     const msg = recoveryErrorMessage(err)
     process.stderr.write(`[headless] recover failed: ${msg}\n`)
     return { exitCode: 1 }
   }
-
-  let choices: ForwardRepairChoice[]
-  try {
-    choices = modules.parseLegacyImportForwardRepairChoices(args.join(' '))
-  } catch (error) {
-    process.stderr.write(`[headless] recover: malformed --choice token: ${recoveryErrorMessage(error)}\n`)
-    return { exitCode: 1 }
-  }
-  let recoveryAction: ReturnType<ExecuteLegacyImportRecoveryAction>
-  try {
-    const consentHash = args
-      .map((arg) => /^--consent=proceed:destructive-database-restore:(sha256:[0-9a-f]{64})$/u.exec(arg)?.[1])
-      .find((value): value is string => value !== undefined)
-    const consent = consentHash ? { consentSchemaVersion: 1 as const, decision: 'proceed' as const, destructiveDatabaseRestore: true as const, evidenceHash: consentHash } : undefined
-    recoveryAction = modules.executeLegacyImportRecoveryAction(application, action, choices, consent)
-  } catch (err) {
-    const msg = recoveryErrorMessage(err)
-    process.stderr.write(`[headless] recover action failed: ${msg}\n`)
-    return { exitCode: 1 }
-  }
+  const { application, recoveryAction } = execution
   process.stderr.write(
     `[headless] recover: verified backup and restore rehearsal completed at ${application.backup.backup_ref}\n`,
   )

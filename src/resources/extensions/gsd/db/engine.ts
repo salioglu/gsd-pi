@@ -122,6 +122,7 @@ import {
 } from "../sqlite-readonly.js";
 import { processStartIdentity } from "../process-start-identity.js";
 import {
+  BETTER_SQLITE3_PACKAGE,
   createSqliteProviderLoader,
   suppressSqliteWarning,
   type DbProviderName,
@@ -151,6 +152,11 @@ const providerLoader = createSqliteProviderLoader({
     const req = getGsdRequire();
     if (!req) throw new Error("unavailable");
     return req("node:sqlite");
+  },
+  tryRequireBetterSqlite3: () => {
+    const req = getGsdRequire();
+    if (!req) throw new Error("unavailable");
+    return req(BETTER_SQLITE3_PACKAGE);
   },
   suppressSqliteWarning,
   nodeVersion: process.versions.node,

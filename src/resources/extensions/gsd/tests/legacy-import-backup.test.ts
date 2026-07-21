@@ -1911,6 +1911,7 @@ interface LegacyImportBackupPreparationInputForTest {
   preview: LegacyImportPreviewArtifact;
   base: LegacyImportBaseSnapshot;
   roots: readonly LegacyImportSourceRoot[];
+  bundledDefinitionNames?: readonly string[];
   destination_directory: string;
   label: string;
 }
@@ -2343,6 +2344,22 @@ describe("legacy import backup preparation", () => {
     );
     assert.equal(revalidations, 1);
     assert.deepEqual(readdirSync(sourceFixture.destinationDirectory), []);
+  });
+
+  test("backup revalidation preserves the complete normalized Preview input", (t) => {
+    const fixture = preparationFixture(t);
+    const input = { ...fixture.input, bundledDefinitionNames: [] };
+    let revalidations = 0;
+    const backup = _prepareLegacyImportBackupForTest(input, preparationDependencies({
+      revalidatePreview(observed, expected) {
+        revalidations += 1;
+        assert.deepEqual(observed.bundledDefinitionNames, []);
+        return revalidateLegacyImportPreview(observed, expected);
+      },
+    }));
+
+    assert.equal(revalidations, 1);
+    assert.equal(backup.preview_hash, input.preview.preview_hash);
   });
 
   test("an EEXIST race preserves a valid wrong final and rejects it as a nonretryable collision", (t) => {

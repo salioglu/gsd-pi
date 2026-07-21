@@ -32,7 +32,6 @@ import * as applicationModule from "../legacy-import-application.ts";
 import {
   LegacyImportApplicationError,
   applyLegacyImport,
-  createLegacyImportApplicationConsent,
   createLegacyImportApplicationIdentity,
   type LegacyImportApplicationInput,
   type LegacyImportApplicationReceipt,
@@ -440,9 +439,6 @@ function prepareCase(fixture: MutationFixture = "gsd-nested"): PreparedApplicati
     previewInput,
     preview,
     backup,
-    ...(preview.preview.counts.delete > 0
-      ? { destructiveConsent: createLegacyImportApplicationConsent(preview) }
-      : {}),
   };
   return { workspace, databasePath, base, backup, input };
 }

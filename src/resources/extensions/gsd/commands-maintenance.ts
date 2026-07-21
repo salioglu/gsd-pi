@@ -12,22 +12,11 @@ import { gsdProjectionRoot, gsdRoot } from "./paths.js";
 import { nativeBranchList, nativeDetectMainBranch, nativeBranchListMerged, nativeBranchDelete, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
 import { logWarning } from "./workflow-logger.js";
 import {
-  applyPreparedVerifiedRecoverApplication,
-  loadRetainedVerifiedRecoverApplication,
-  loadVerifiedRecoverApplication,
-  prepareVerifiedRecoverApplication,
   type PreparedVerifiedRecoverApplication,
   refreshWorkflowDatabaseFromDisk,
 } from "./db-workspace.js";
-import {
-  executeLegacyImportRecoveryAction,
-  parseLegacyImportRecoveryAction,
-} from "./legacy-import-recovery-action.js";
-import {
-  formatLegacyImportForwardRepairChoice,
-  parseLegacyImportForwardRepairChoices,
-} from "./legacy-import-forward-repair-choice-token.js";
-import { LEGACY_IMPORT_RESTORE_ASSESSMENT_CONSENT_SCHEMA_VERSION, type LegacyImportRestoreAssessmentConsent } from "./legacy-import-restore-assessment.js";
+import { formatLegacyImportForwardRepairChoice } from "./legacy-import-forward-repair-choice-token.js";
+import { executeLegacyImportRecovery } from "./legacy-import-recovery-orchestrator.js";
 
 export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
   let branches: string[];
@@ -500,19 +489,6 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
 
 type HierarchyCounts = { milestones: number; slices: number; tasks: number };
 
-function requestedApplication(args: string): string | null {
-  return /(?:^|\s)--application=([^\s]+)(?=\s|$)/u.exec(args)?.[1] ?? null;
-}
-
-function requestedPreviewApproval(args: string): string | null {
-  return /(?:^|\s)--preview=(sha256:[0-9a-f]{64})(?=\s|$)/u.exec(args)?.[1] ?? null;
-}
-
-function requestedRestoreConsent(args: string): LegacyImportRestoreAssessmentConsent | undefined {
-  const evidenceHash = /(?:^|\s)--consent=proceed:destructive-database-restore:(sha256:[0-9a-f]{64})(?=\s|$)/u.exec(args)?.[1];
-  return evidenceHash ? { consentSchemaVersion: LEGACY_IMPORT_RESTORE_ASSESSMENT_CONSENT_SCHEMA_VERSION, decision: "proceed", destructiveDatabaseRestore: true, evidenceHash } : undefined;
-}
-
 async function confirmRecover(
   ctx: ExtensionCommandContext,
   prepared: Readonly<PreparedVerifiedRecoverApplication>,
@@ -587,37 +563,20 @@ export async function handleRecover(
   const beforeDb = countDbHierarchy();
 
   try {
-    const action = parseLegacyImportRecoveryAction(args.trim().split(/\s+/u).filter(Boolean));
-    const applicationId = requestedApplication(args);
-    if (!applicationId && action !== "assess") {
-      throw new Error("run gsd recover assessment first, then use its --application evidence");
-    }
-    let application = applicationId
-      ? loadVerifiedRecoverApplication(applicationId)
-      : loadRetainedVerifiedRecoverApplication();
-    let appliedPreview = false;
-    if (!application) {
-      const prepared = prepareVerifiedRecoverApplication(basePath);
-      if (!(await confirmRecover(
+    const execution = await executeLegacyImportRecovery({
+      basePath,
+      args,
+      approvePrepared: (prepared, approvedPreviewHash) => confirmRecover(
         ctx,
         prepared,
-        requestedPreviewApproval(args),
+        approvedPreviewHash,
         markdown,
         beforeDb,
-      ))) return;
-      application = applyPreparedVerifiedRecoverApplication(
-        prepared,
-        prepared.preview.preview_hash,
-      );
-      appliedPreview = true;
-    }
+      ),
+    });
+    if (!execution) return;
+    const { application, applicationId, appliedPreview, recoveryAction } = execution;
     const { backup } = application;
-    const recoveryAction = executeLegacyImportRecoveryAction(
-      application,
-      action,
-      parseLegacyImportForwardRepairChoices(args),
-      requestedRestoreConsent(args),
-    );
     const recoveryAssessment = recoveryAction.status === "assessed"
       || recoveryAction.status === "choice-required"
       ? recoveryAction.assessment

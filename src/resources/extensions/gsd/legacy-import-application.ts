@@ -66,7 +66,6 @@ export {
 export const LEGACY_IMPORT_APPLICATION_OPERATION_TYPE = "import.apply" as const;
 export const LEGACY_IMPORT_APPLICATION_EVENT_TYPE = "legacy-import.applied" as const;
 export const LEGACY_IMPORT_APPLICATION_REPLAY_IDENTITY_SCHEMA_VERSION = 1 as const;
-export const LEGACY_IMPORT_APPLICATION_CONSENT_SCHEMA_VERSION = 1 as const;
 
 export type LegacyImportApplicationBoundaryPoint =
   | "after-coordination"
@@ -95,15 +94,6 @@ export interface LegacyImportApplicationInput {
   readonly previewInput: Readonly<LegacyImportPreviewCreateInput>;
   readonly preview: Readonly<LegacyImportPreviewArtifact>;
   readonly backup: Readonly<LegacyImportVerifiedBackup>;
-  readonly destructiveConsent?: Readonly<LegacyImportApplicationConsent>;
-}
-
-export interface LegacyImportApplicationConsent {
-  readonly consentSchemaVersion: typeof LEGACY_IMPORT_APPLICATION_CONSENT_SCHEMA_VERSION;
-  readonly decision: "proceed";
-  readonly previewHash: LegacyImportSha256;
-  readonly changeSetHash: LegacyImportSha256;
-  readonly deleteCount: number;
 }
 
 export interface LegacyImportApplicationInvocationIdentity {
@@ -277,77 +267,8 @@ interface LegacyImportApplicationSnapshot {
   readonly identity: LegacyImportApplicationIdentity;
 }
 
-function normalizeDestructiveConsent(value: unknown): LegacyImportApplicationConsent | undefined {
-  if (value === undefined) return undefined;
-  if (!hasExactKeys(value, [
-    "consentSchemaVersion",
-    "decision",
-    "previewHash",
-    "changeSetHash",
-    "deleteCount",
-  ])) {
-    failContract("legacy import destructive consent does not satisfy the exact v1 contract");
-  }
-  if (
-    value["consentSchemaVersion"] !== LEGACY_IMPORT_APPLICATION_CONSENT_SCHEMA_VERSION
-    || value["decision"] !== "proceed"
-    || typeof value["previewHash"] !== "string"
-    || typeof value["changeSetHash"] !== "string"
-    || !/^sha256:[0-9a-f]{64}$/u.test(value["previewHash"])
-    || !/^sha256:[0-9a-f]{64}$/u.test(value["changeSetHash"])
-    || !Number.isSafeInteger(value["deleteCount"])
-    || Number(value["deleteCount"]) < 1
-  ) {
-    failContract("legacy import destructive consent is invalid");
-  }
-  return {
-    consentSchemaVersion: LEGACY_IMPORT_APPLICATION_CONSENT_SCHEMA_VERSION,
-    decision: "proceed",
-    previewHash: value["previewHash"] as LegacyImportSha256,
-    changeSetHash: value["changeSetHash"] as LegacyImportSha256,
-    deleteCount: Number(value["deleteCount"]),
-  };
-}
-
-export function createLegacyImportApplicationConsent(
-  preview: Readonly<LegacyImportPreviewArtifact>,
-): LegacyImportApplicationConsent {
-  if (!isValidLegacyImportPreviewArtifact(preview) || preview.preview.counts.delete < 1) {
-    failContract("legacy import destructive consent requires a sealed Preview with deletes");
-  }
-  return deepFreeze({
-    consentSchemaVersion: LEGACY_IMPORT_APPLICATION_CONSENT_SCHEMA_VERSION,
-    decision: "proceed",
-    previewHash: preview.preview_hash,
-    changeSetHash: preview.preview.change_set_hash,
-    deleteCount: preview.preview.counts.delete,
-  });
-}
-
-function requireDestructiveConsent(snapshot: LegacyImportApplicationSnapshot): void {
-  const preview = snapshot.input.preview;
-  if (preview.preview.counts.delete === 0) return;
-  const consent = snapshot.input.destructiveConsent;
-  if (
-    consent?.previewHash === preview.preview_hash
-    && consent.changeSetHash === preview.preview.change_set_hash
-    && consent.deleteCount === preview.preview.counts.delete
-  ) return;
-  throw new LegacyImportApplicationError(
-    "preview",
-    "LEGACY_IMPORT_APPLICATION_DESTRUCTIVE_CONSENT_REQUIRED",
-    "legacy import deletes require consent bound to the sealed Preview",
-    false,
-    {
-      preview_hash: preview.preview_hash,
-      change_set_hash: preview.preview.change_set_hash,
-      delete_count: preview.preview.counts.delete,
-    },
-  );
-}
-
 function snapshotLegacyImportApplication(value: unknown): LegacyImportApplicationSnapshot {
-  if (!hasExactKeys(value, ["invocation", "previewInput", "preview", "backup"], ["destructiveConsent"])) {
+  if (!hasExactKeys(value, ["invocation", "previewInput", "preview", "backup"])) {
     failContract("legacy import Application input does not satisfy the exact v1 contract");
   }
   if (!isStrictLegacyImportData(value)) {
@@ -366,7 +287,6 @@ function snapshotLegacyImportApplication(value: unknown): LegacyImportApplicatio
   const normalizedPreviewInput = normalizePreviewInput(detached["previewInput"]);
   requireBackupLinkage(detached["backup"], preview);
   const invocation = normalizeInvocation(detached["invocation"]);
-  const destructiveConsent = normalizeDestructiveConsent(detached["destructiveConsent"]);
   const replayIdentity: LegacyImportApplicationReplayIdentity = {
     replayIdentitySchemaVersion: LEGACY_IMPORT_APPLICATION_REPLAY_IDENTITY_SCHEMA_VERSION,
     invocation,
@@ -387,7 +307,6 @@ function snapshotLegacyImportApplication(value: unknown): LegacyImportApplicatio
     previewInput: normalizedPreviewInput,
     preview,
     backup: detached["backup"],
-    ...(destructiveConsent === undefined ? {} : { destructiveConsent }),
   };
   return deepFreeze({
     input,
@@ -944,7 +863,6 @@ export function applyLegacyImport(input: unknown): LegacyImportApplicationReceip
   if (existing) return existing;
 
   const plan = compileLegacyImportApplicationPlan(snapshot.input.preview);
-  requireDestructiveConsent(snapshot);
   let preview: LegacyImportPreviewArtifact;
   try {
     preview = revalidateLegacyImportPreview(snapshot.input.previewInput, snapshot.input.preview);

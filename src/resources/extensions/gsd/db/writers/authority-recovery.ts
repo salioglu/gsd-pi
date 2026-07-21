@@ -519,13 +519,13 @@ export function insertImportForwardRepairReceipt(
   const result = getDb().prepare(`INSERT INTO workflow_import_forward_repairs (
       operation_id, project_id, application_operation_id, application_identity_hash,
       preview_id, preview_hash, backup_id, difference_hash,
-      plan_schema_version, plan_hash, plan_json,
+      goal, plan_schema_version, plan_hash, plan_json,
       target_count, mutation_count, preserved_count, rejected_count, unresolved_count,
       repaired_at, resulting_project_revision, resulting_authority_epoch
     ) VALUES (
       :operation_id, :project_id, :application_operation_id, :application_identity_hash,
       :preview_id, :preview_hash, :backup_id, :difference_hash,
-      :plan_schema_version, :plan_hash, :plan_json,
+      :goal, :plan_schema_version, :plan_hash, :plan_json,
       :target_count, :mutation_count, :preserved_count, :rejected_count, :unresolved_count,
       :repaired_at, :resulting_project_revision, :resulting_authority_epoch
     )`).run({
@@ -537,6 +537,7 @@ export function insertImportForwardRepairReceipt(
     ":preview_hash": plan.previewHash,
     ":backup_id": plan.backupId,
     ":difference_hash": plan.differenceHash,
+    ":goal": plan.goal,
     ":plan_schema_version": plan.planSchemaVersion,
     ":plan_hash": planHash,
     ":plan_json": planJson,

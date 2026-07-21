@@ -211,6 +211,7 @@ export function createAuthorityRecoverySchemaV45(db: DbAdapter): void {
         difference_hash = lower(difference_hash) AND
         substr(difference_hash, 8) NOT GLOB '*[^0-9a-f]*'
       ),
+      goal TEXT NOT NULL CHECK (goal IN ('revert', 'retain')),
       plan_schema_version INTEGER NOT NULL CHECK (plan_schema_version > 0),
       plan_hash TEXT NOT NULL UNIQUE CHECK (
         length(plan_hash) = 71 AND substr(plan_hash, 1, 7) = 'sha256:' AND
@@ -225,6 +226,7 @@ export function createAuthorityRecoverySchemaV45(db: DbAdapter): void {
         json_extract(plan_json, '$.previewHash') IS preview_hash AND
         json_extract(plan_json, '$.backupId') IS backup_id AND
         json_extract(plan_json, '$.differenceHash') IS difference_hash AND
+        json_extract(plan_json, '$.goal') IS goal AND
         json_extract(plan_json, '$.targetCount') IS target_count AND
         json_extract(plan_json, '$.mutationCount') IS mutation_count AND
         json_extract(plan_json, '$.preservedCount') IS preserved_count AND
@@ -239,7 +241,6 @@ export function createAuthorityRecoverySchemaV45(db: DbAdapter): void {
       repaired_at TEXT NOT NULL CHECK (length(trim(repaired_at)) > 0),
       resulting_project_revision INTEGER NOT NULL CHECK (resulting_project_revision > 0),
       resulting_authority_epoch INTEGER NOT NULL CHECK (resulting_authority_epoch >= 0),
-      UNIQUE (project_id, application_operation_id),
       FOREIGN KEY (project_id) REFERENCES project_authority(project_id),
       FOREIGN KEY (application_operation_id)
         REFERENCES workflow_import_applications(operation_id),
@@ -250,6 +251,10 @@ export function createAuthorityRecoverySchemaV45(db: DbAdapter): void {
       ),
       CHECK (target_count = mutation_count + preserved_count + rejected_count)
     );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_import_forward_repairs_terminal
+    ON workflow_import_forward_repairs(project_id, application_operation_id)
+    WHERE goal = 'revert';
 
     CREATE TRIGGER IF NOT EXISTS trg_workflow_import_forward_repair_causality
     BEFORE INSERT ON workflow_import_forward_repairs

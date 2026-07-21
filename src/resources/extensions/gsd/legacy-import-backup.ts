@@ -85,6 +85,7 @@ const BACKUP_PREFLIGHT_INPUT_KEYS = [
   "destination_directory",
   "label",
 ] as const;
+const BACKUP_PREFLIGHT_OPTIONAL_INPUT_KEYS = ["bundledDefinitionNames"] as const;
 const BACKUP_PREFLIGHT_KEYS = [
   "database_path",
   "database_identity",
@@ -577,6 +578,7 @@ export interface LegacyImportBackupPreflightInput {
   preview: LegacyImportPreviewArtifact;
   base: LegacyImportBaseSnapshot;
   roots: readonly LegacyImportSourceRoot[];
+  bundledDefinitionNames?: readonly string[];
   destination_directory: string;
   label: string;
 }
@@ -666,13 +668,30 @@ function requirePreflightRoots(
   return roots;
 }
 
-function requireApprovedPreviewRoots(
-  roots: readonly LegacyImportSourceRoot[],
+function hasBackupPreflightInputProperties(value: unknown): value is Record<string, unknown> {
+  return hasExactDataProperties(value, BACKUP_PREFLIGHT_INPUT_KEYS)
+    || hasExactDataProperties(value, [
+      ...BACKUP_PREFLIGHT_INPUT_KEYS,
+      ...BACKUP_PREFLIGHT_OPTIONAL_INPUT_KEYS,
+    ]);
+}
+
+function previewCreateInput(input: LegacyImportBackupPreflightInput): LegacyImportPreviewCreateInput {
+  return {
+    roots: input.roots,
+    ...(input.bundledDefinitionNames === undefined
+      ? {}
+      : { bundledDefinitionNames: input.bundledDefinitionNames }),
+  };
+}
+
+function requireApprovedPreviewInput(
+  input: LegacyImportBackupPreflightInput,
   expected: LegacyImportPreviewArtifact,
   revalidatePreview: LegacyImportBackupPreflightDependencies["revalidatePreview"],
 ): void {
   try {
-    const observed = revalidatePreview({ roots }, expected);
+    const observed = revalidatePreview(previewCreateInput(input), expected);
     if (hashLegacyImportValue(observed) !== hashLegacyImportValue(expected)) {
       throw new Error("Preview revalidation returned a different artifact");
     }
@@ -1119,7 +1138,7 @@ export function _prepareLegacyImportBackupPreflightForTest(
   input: LegacyImportBackupPreflightInput,
   dependencies: LegacyImportBackupPreflightDependencies,
 ): LegacyImportBackupPreflight {
-  if (!hasExactDataProperties(input, BACKUP_PREFLIGHT_INPUT_KEYS)) {
+  if (!hasBackupPreflightInputProperties(input)) {
     fail(
       "LEGACY_IMPORT_BACKUP_CONTRACT_INVALID",
       "verified backup preflight requires one exact plain input object",
@@ -1134,7 +1153,7 @@ export function _prepareLegacyImportBackupPreflightForTest(
       "verified backup preflight input must be detached strict data",
     );
   }
-  if (!hasExactDataProperties(snapshot, BACKUP_PREFLIGHT_INPUT_KEYS)) {
+  if (!hasBackupPreflightInputProperties(snapshot)) {
     fail(
       "LEGACY_IMPORT_BACKUP_CONTRACT_INVALID",
       "verified backup preflight input changed while being detached",
@@ -1143,7 +1162,7 @@ export function _prepareLegacyImportBackupPreflightForTest(
   validatePreviewAndBase(snapshot.preview, snapshot.base);
   const roots = requirePreflightRoots(snapshot.roots, snapshot.preview);
   const rootSetHash = hashLegacyImportValue(roots);
-  requireApprovedPreviewRoots(roots, snapshot.preview, dependencies.revalidatePreview);
+  requireApprovedPreviewInput(snapshot, snapshot.preview, dependencies.revalidatePreview);
   const destination = requireSafeDestination(
     snapshot.destination_directory,
     snapshot.label,
@@ -2594,7 +2613,7 @@ function preparationOps(
 function preparationInput(
   value: LegacyImportBackupPreflightInput,
 ): LegacyImportBackupPreflightInput {
-  if (!hasExactDataProperties(value, BACKUP_PREFLIGHT_INPUT_KEYS)) {
+  if (!hasBackupPreflightInputProperties(value)) {
     fail(
       "LEGACY_IMPORT_BACKUP_CONTRACT_INVALID",
       "legacy import backup preparation requires one exact plain input object",
@@ -2609,7 +2628,7 @@ function preparationInput(
       "legacy import backup preparation input must be detached strict data",
     );
   }
-  if (!hasExactDataProperties(input, BACKUP_PREFLIGHT_INPUT_KEYS)) {
+  if (!hasBackupPreflightInputProperties(input)) {
     fail(
       "LEGACY_IMPORT_BACKUP_CONTRACT_INVALID",
       "legacy import backup preparation input changed while being detached",
@@ -2653,7 +2672,7 @@ function revalidatePreparationPreview(
   revalidate: LegacyImportBackupPreparationDependencies["revalidatePreview"],
 ): void {
   try {
-    const observed = revalidate({ roots: input.roots }, input.preview);
+    const observed = revalidate(previewCreateInput(input), input.preview);
     if (hashLegacyImportValue(observed) !== hashLegacyImportValue(input.preview)) {
       throw new Error("Preview revalidation returned a different artifact");
     }

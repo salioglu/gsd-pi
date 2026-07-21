@@ -12,7 +12,6 @@ import { test } from "node:test";
 import { prepareLegacyImportBackup } from "../legacy-import-backup.ts";
 import {
   applyLegacyImport,
-  createLegacyImportApplicationConsent,
   createLegacyImportApplicationIdentity,
   LegacyImportApplicationError,
   type LegacyImportApplicationInput,
@@ -150,9 +149,6 @@ test("every eligible sealed corpus Application restores exactly once after expli
           previewInput,
           preview,
           backup,
-          ...(preview.preview.counts.delete === 0
-            ? {}
-            : { destructiveConsent: createLegacyImportApplicationConsent(preview) }),
         };
         const applicationIdentityHash = createLegacyImportApplicationIdentity(
           applicationInput,

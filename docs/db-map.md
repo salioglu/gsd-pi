@@ -60,6 +60,7 @@ After commit: regenerate markdown artifacts → write to disk → invalidate cac
 
 **Provider selection:**
 1. `node:sqlite` (Node ≥ 22.18 built-in)
+2. `better-sqlite3` fallback on supported Node 22 installations
 2. null → DB unavailable. Runtime `deriveState()` fails closed with an explicit blocker; markdown-only recovery is available only through explicit migration/recovery commands.
 
 **Runtime state derivation:** `deriveState()` opens the existing workflow DB through `state/derive/db-open.ts`, projects rows in `state/derive/from-db.ts`, and returns a DB-unavailable blocker instead of implicitly deriving runtime state from markdown projections. Markdown hierarchy import is explicit recovery/migration behavior, not the normal read path. When `GSD_MILESTONE_LOCK` changes, auto-mode invalidates the short-lived derive cache because the cache key is only the base path while the DB projection is lock-filtered.

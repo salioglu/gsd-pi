@@ -25,7 +25,6 @@ import {
 import {
   LegacyImportApplicationError,
   applyLegacyImport,
-  createLegacyImportApplicationConsent,
   createLegacyImportApplicationIdentity,
   type LegacyImportApplicationInput,
   type LegacyImportApplicationReceipt,
@@ -67,6 +66,7 @@ const MANIFEST = JSON.parse(
 ) as LegacyImportCorpusManifest;
 
 const ELIGIBLE_CASES = new Set([
+  "action-matrix",
   "custom-workflow",
   "gsd-nested",
   "jsonl-history",
@@ -465,16 +465,7 @@ function expectUnresolved(run: () => unknown, name: string): LegacyImportApplica
   return observed;
 }
 
-function expectDestructiveConsentRequired(run: () => unknown): void {
-  assert.throws(run, (error) => (
-    error instanceof LegacyImportApplicationError
-    && error.stage === "preview"
-    && error.code === "LEGACY_IMPORT_APPLICATION_DESTRUCTIVE_CONSENT_REQUIRED"
-    && error.retryable === false
-  ));
-}
-
-test("public Application commits and exactly replays all 12 eligible fresh corpus cases", (t) => {
+test("public Application commits and exactly replays all 13 eligible fresh corpus cases", (t) => {
   assert.equal(MANIFEST.cases.length, 26);
   const root = mkdtempSync(join(tmpdir(), "gsd-application-public-eligible-"));
   t.after(() => {
@@ -545,7 +536,7 @@ test("public Application commits and exactly replays all 12 eligible fresh corpu
   assert.deepEqual(preserveNames.sort(), [...PRESERVE_ONLY_CASES].sort());
 });
 
-test("public Application refuses all 14 unapproved or unresolved fresh corpus cases with zero residue", (t) => {
+test("public Application refuses all 13 unresolved fresh corpus cases with zero residue", (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-application-public-refused-"));
   t.after(() => {
     closeDatabase();
@@ -561,16 +552,9 @@ test("public Application refuses all 14 unapproved or unresolved fresh corpus ca
       const backupBefore = hashLegacyImportBytes(readFileSync(prepared.backup.backup_ref));
       const inventoryBefore = treeInventory(prepared.caseRoot);
 
-      if (entry.name === "action-matrix") {
-        assert.equal(prepared.preview.preview.counts.unresolved, 0, entry.name);
-        assert.equal(prepared.preview.preview.counts.delete, 1, entry.name);
-        assert.doesNotThrow(() => compileLegacyImportApplicationPlan(prepared.preview));
-        expectDestructiveConsentRequired(() => applyLegacyImport(prepared.input));
-      } else {
-        assert.ok(prepared.preview.preview.counts.unresolved > 0, entry.name);
-        expectUnresolved(() => compileLegacyImportApplicationPlan(prepared.preview), entry.name);
-        expectUnresolved(() => applyLegacyImport(prepared.input), entry.name);
-      }
+      assert.ok(prepared.preview.preview.counts.unresolved > 0, entry.name);
+      expectUnresolved(() => compileLegacyImportApplicationPlan(prepared.preview), entry.name);
+      expectUnresolved(() => applyLegacyImport(prepared.input), entry.name);
 
       assert.deepEqual(tableSnapshot(DURABLE_TABLES), before, `${entry.name}: zero residue`);
       assert.equal(totalChanges(), changesBeforeRefusal, `${entry.name}: refusal performs no writes`);
@@ -581,14 +565,14 @@ test("public Application refuses all 14 unapproved or unresolved fresh corpus ca
     });
   }
 
-  assert.equal(refusedNames.length, 14);
+  assert.equal(refusedNames.length, 13);
   assert.deepEqual(refusedNames.sort(), MANIFEST.cases
     .filter((candidate) => !ELIGIBLE_CASES.has(candidate.name))
     .map((candidate) => candidate.name)
     .sort());
 });
 
-test("public Application applies the action matrix only with exact Preview-bound delete consent", (t) => {
+test("public Application applies the approved action matrix through the v1 boundary", (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-application-public-delete-consent-"));
   t.after(() => {
     closeDatabase();
@@ -596,8 +580,7 @@ test("public Application applies the action matrix only with exact Preview-bound
   });
 
   withPreparedCase(root, "action-matrix", (prepared) => {
-    const consent = createLegacyImportApplicationConsent(prepared.preview);
-    const committed = applyLegacyImport({ ...prepared.input, destructiveConsent: consent });
+    const committed = applyLegacyImport(prepared.input);
 
     assert.equal(committed.status, "committed");
     const tombstone = rows(`SELECT structured_fields FROM memories

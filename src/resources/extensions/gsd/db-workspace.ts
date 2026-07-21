@@ -29,7 +29,6 @@ import {
 } from "./gsd-db.js";
 import {
   applyLegacyImport,
-  createLegacyImportApplicationConsent,
   type LegacyImportApplicationReceipt,
 } from "./legacy-import-application.js";
 import {
@@ -395,6 +394,9 @@ function prepareVerifiedImportEvidence(
     preview: evidence.preview,
     base,
     roots: previewInput.roots,
+    ...(previewInput.bundledDefinitionNames === undefined
+      ? {}
+      : { bundledDefinitionNames: previewInput.bundledDefinitionNames }),
     destination_directory: destinationDirectory,
     label,
   });
@@ -491,9 +493,6 @@ export function applyPreparedVerifiedRecoverApplication(
     previewInput: evidence.previewInput,
     preview: finalPreview,
     backup: prepared.backup,
-    ...(finalPreview.preview.counts.delete === 0
-      ? {}
-      : { destructiveConsent: createLegacyImportApplicationConsent(finalPreview) }),
   });
   const database = _getAdapter();
   if (!database) throw new Error("gsd recover lost its open project database");

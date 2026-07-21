@@ -3,12 +3,14 @@
 
 import { closeSync, openSync } from "node:fs";
 
-export type DbProviderName = "node:sqlite";
+export type DbProviderName = "node:sqlite" | "better-sqlite3";
 
 export const MIN_SQLITE_NODE_VERSION = "22.18.0";
+export const BETTER_SQLITE3_PACKAGE = ["better", "sqlite3"].join("-");
 
 export interface SqliteProviderDeps {
   tryRequireNodeSqlite(): unknown;
+  tryRequireBetterSqlite3(): unknown;
   suppressSqliteWarning(): void;
   nodeVersion: string;
   writeStderr(message: string): void;
@@ -27,6 +29,9 @@ type RawDatabase = {
 type NodeSqliteModule = {
   DatabaseSync?: new (path: string, options?: { readOnly?: boolean }) => RawDatabase;
 };
+
+type BetterSqliteDatabase = new (path: string) => RawDatabase;
+type BetterSqliteModule = BetterSqliteDatabase | { default?: BetterSqliteDatabase };
 
 function isClosedDatabaseError(error: unknown): boolean {
   return /database (?:is )?not open|database is closed/iu.test(String(error));
@@ -110,7 +115,8 @@ function withReadOnlyCloseGuard(writable: RawDatabase, readOnlyGuard: RawDatabas
 }
 
 export class SqliteProviderLoader {
-  private providerModule: NodeSqliteModule | null = null;
+  private providerName: DbProviderName | null = null;
+  private providerModule: NodeSqliteModule | BetterSqliteDatabase | null = null;
   private loadAttempted = false;
   private readonly deps: SqliteProviderDeps;
 
@@ -129,6 +135,7 @@ export class SqliteProviderLoader {
         const mod = this.deps.tryRequireNodeSqlite() as NodeSqliteModule;
         if (mod.DatabaseSync) {
           this.providerModule = mod;
+          this.providerName = "node:sqlite";
           return;
         }
       } catch {
@@ -136,20 +143,32 @@ export class SqliteProviderLoader {
       }
     }
 
+    const fallback = this.loadBetterSqliteModule();
+    if (fallback) {
+      this.providerModule = fallback;
+      this.providerName = "better-sqlite3";
+      return;
+    }
+
     const versionHint = supportedRuntime
       ? " Use a Node build with node:sqlite enabled."
       : ` GSD requires Node >= ${MIN_SQLITE_NODE_VERSION} for node:sqlite (current: v${this.deps.nodeVersion}). Upgrade Node to fix this.`;
-    this.deps.writeStderr(`gsd-db: No SQLite provider available.${versionHint}\n`);
+    this.deps.writeStderr(
+      `gsd-db: No SQLite provider available (tried node:sqlite, better-sqlite3).${versionHint}\n`,
+    );
   }
 
   getProviderName(): DbProviderName | null {
-    return this.providerModule ? "node:sqlite" : null;
+    return this.providerName;
   }
 
   openRaw(path: string): unknown {
     this.load();
-    const DatabaseSync = this.providerModule?.DatabaseSync;
-    if (!DatabaseSync) return null;
+    if (!this.providerModule || !this.providerName) return null;
+    if (this.providerName === "better-sqlite3") {
+      return new (this.providerModule as BetterSqliteDatabase)(path);
+    }
+    const DatabaseSync = (this.providerModule as NodeSqliteModule).DatabaseSync!;
     if (path === ":memory:") return new DatabaseSync(path);
 
     closeSync(openSync(path, "a"));
@@ -165,6 +184,18 @@ export class SqliteProviderLoader {
   reset(): void {
     this.loadAttempted = false;
     this.providerModule = null;
+    this.providerName = null;
+  }
+
+  private loadBetterSqliteModule(): BetterSqliteDatabase | null {
+    try {
+      const module = this.deps.tryRequireBetterSqlite3() as BetterSqliteModule;
+      if (typeof module === "function") return module;
+      if (module && typeof module.default === "function") return module.default;
+    } catch {
+      return null;
+    }
+    return null;
   }
 }
 

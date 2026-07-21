@@ -207,9 +207,8 @@ test("gitAvailableOnPath finds git via a $PATH scan without spawning a subproces
 });
 
 test("loader MIN_NODE_VERSION matches package.json engines field exactly", async () => {
-  // Imports the actual minimum used by the loader and SQLite provider.
+  // Imports the actual minimum used by the loader.
   const { MIN_NODE_VERSION } = await import("../runtime-checks.ts");
-  const { MIN_SQLITE_NODE_VERSION } = await import("../resources/extensions/gsd/db-provider.ts");
 
   const pkg = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf-8"));
   const engineRange: string = pkg.engines?.node ?? "";
@@ -221,7 +220,6 @@ test("loader MIN_NODE_VERSION matches package.json engines field exactly", async
     match[1],
     `runtime-checks minimum (${MIN_NODE_VERSION}) must equal package.json engines.node (${match[1]})`,
   );
-  assert.strictEqual(MIN_NODE_VERSION, MIN_SQLITE_NODE_VERSION);
 });
 
 test("gsd update and upgrade bypass the managed-resource-mismatch gate; other commands trigger it", async (t) => {

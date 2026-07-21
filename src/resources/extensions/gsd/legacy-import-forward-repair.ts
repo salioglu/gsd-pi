@@ -340,6 +340,7 @@ function repairResult(
     || row["preview_hash"] !== expectedPlan.previewHash
     || row["backup_id"] !== expectedPlan.backupId
     || row["difference_hash"] !== expectedPlan.differenceHash
+    || row["goal"] !== expectedPlan.goal
     || row["plan_schema_version"] !== expectedPlan.planSchemaVersion
     || row["plan_hash"] !== planHash
     || row["plan_json"] !== planJson

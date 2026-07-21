@@ -311,6 +311,7 @@ function terminalReceipt(identityHash: string): TerminalReceipt | null {
       JOIN workflow_operations operation USING (operation_id)
       JOIN project_authority authority ON authority.project_id = receipt.project_id
       WHERE receipt.application_identity_hash = :application_identity_hash
+        AND receipt.goal = 'revert'
       ORDER BY route, operation_id
     `).all({ ":application_identity_hash": identityHash });
     if (rows.length === 0) return null;

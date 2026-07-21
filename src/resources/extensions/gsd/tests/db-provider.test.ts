@@ -64,6 +64,9 @@ function createDeps(overrides: Partial<SqliteProviderDeps> = {}): SqliteProvider
     tryRequireNodeSqlite(): unknown {
       return { DatabaseSync: FakeNodeDatabase };
     },
+    tryRequireBetterSqlite3(): unknown {
+      throw new Error("unavailable");
+    },
     suppressSqliteWarning(): void {},
     nodeVersion: "22.18.0",
     writeStderr(message: string): void {
@@ -276,7 +279,21 @@ describe("db-provider", () => {
     assert.equal(guard.closed, true);
   });
 
-  test("reports provider unavailability with the supported Node version", () => {
+  test("uses better-sqlite3 when node:sqlite lacks the required API", () => {
+    class FakeBetterDatabase extends FakeNodeDatabase {}
+    const loader = createSqliteProviderLoader(createDeps({
+      tryRequireBetterSqlite3(): unknown {
+        return FakeBetterDatabase;
+      },
+      nodeVersion: "22.0.0",
+    }));
+
+    const raw = loader.openRaw(":memory:") as RawDatabase;
+    assert.equal(loader.getProviderName(), "better-sqlite3");
+    raw.close();
+  });
+
+  test("reports both unavailable providers", () => {
     const deps = createDeps({
       tryRequireNodeSqlite(): unknown {
         throw new Error("unavailable");
@@ -291,6 +308,6 @@ describe("db-provider", () => {
     assert.equal(deps.stderr.length, 1);
     assert.match(deps.stderr[0], /No SQLite provider available/);
     assert.match(deps.stderr[0], /Node >= 22\.18\.0/);
-    assert.doesNotMatch(deps.stderr[0], /better-sqlite3/);
+    assert.match(deps.stderr[0], /better-sqlite3/);
   });
 });
