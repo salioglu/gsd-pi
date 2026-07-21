@@ -16,6 +16,7 @@ export const GSD_MODE_MCP_WORKFLOW_ADAPTER_TOOL_NAMES = [
 	"gsd_captures",
 	"gsd_knowledge",
 	"gsd_graph",
+	"ask_user_questions",
 ] as const;
 
 export interface GenericMcpToolDef {

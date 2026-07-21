@@ -213,7 +213,7 @@ function resolveStatusSession(
     if (session) return { session };
     if (sessionManager.listSessions().length === 0) {
       return {
-        error: 'No tracked GSD sessions. Call gsd_execute first, or pass projectDir for a session tracked by this server.',
+        error: 'No tracked GSD sessions. Call gsd_execute first to start a session.',
       };
     }
     return { error: `Session not found for projectDir: ${projectDir}` };
