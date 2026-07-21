@@ -1,7 +1,7 @@
-import { closeSync, constants as fsConstants, existsSync, fsyncSync, lstatSync, openSync, realpathSync, writeFileSync, renameSync, unlinkSync, mkdirSync, promises as fs } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, writeFileSync, renameSync, unlinkSync, mkdirSync, promises as fs } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import { acquireProjectionRootIdentityLock, type ProjectionRootIdentityLock } from "@gsd/native/file-identity";
+import { acquireProjectionRootIdentityLock, isProjectionRootIdentityLockAvailable, type ProjectionRootIdentityLock } from "@gsd/native/file-identity";
 import { syncDirectoryEntry } from "@gsd/native/directory-sync";
 import { withProjectionMutation, withProjectionMutationSync } from "./database-maintenance-fence.js";
 import {
@@ -417,6 +417,50 @@ function readStableProjectionSource(handle: ProjectionRootIdentityLock, logicalP
   return first;
 }
 
+// Plain-fs source proof used when the native identity lock is unavailable
+// (pinned engine binary predates ProjectionRootIdentityLock, or the addon
+// failed to load). Mirrors readStableProjectionSource: double-read with a
+// content hash plus a dev:ino identity comparison.
+function readStableProjectionSourceFallback(sourcePath: string): Buffer {
+  const statIdentity = (stat: { dev: bigint; ino: bigint }) => `${stat.dev}:${stat.ino}`;
+  const before = lstatSync(sourcePath, { bigint: true });
+  const first = readFileSync(sourcePath);
+  projectionCopyBoundaryForTest?.();
+  const second = readFileSync(sourcePath);
+  if (statIdentity(before) !== statIdentity(lstatSync(sourcePath, { bigint: true }))
+    || createHash("sha256").update(first).digest("hex") !== createHash("sha256").update(second).digest("hex")) {
+    throw new Error("projection copy source changed during identity proof");
+  }
+  return first;
+}
+
+// Plain-fs tree transfer used when the native identity lock is unavailable.
+// Preserves transferProjectionTreeSync semantics: existing non-directory
+// targets are kept unless overwrite, and symlink entries are skipped so the
+// copy cannot escape the source root.
+function transferProjectionTreeFallbackSync(
+  sourcePath: string,
+  directoryPath: string,
+  overwrite: boolean,
+  include: (sourcePath: string) => boolean,
+): void {
+  function transferDirectory(sourceDir: string, target: string): void {
+    if (!overwrite && existsSync(target) && !lstatSync(target).isDirectory()) return;
+    createProjectionDirectorySync(target);
+    for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+      const sourceEntry = join(sourceDir, entry.name);
+      if (!include(sourceEntry)) continue;
+      const targetEntry = join(target, entry.name);
+      if (entry.isDirectory()) transferDirectory(sourceEntry, targetEntry);
+      else if (entry.isSymbolicLink()) continue;
+      else if (overwrite || !existsSync(targetEntry)) {
+        atomicWriteBufferSync(targetEntry, readStableProjectionSourceFallback(sourceEntry));
+      }
+    }
+  }
+  transferDirectory(sourcePath, directoryPath);
+}
+
 function transferProjectionTreeSync(
   sourcePath: string,
   directoryPath: string,
@@ -426,6 +470,10 @@ function transferProjectionTreeSync(
   const stat = lstatSync(sourcePath, { bigint: true });
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error("projection copy source is not an identity-stable directory");
+  }
+  if (!isProjectionRootIdentityLockAvailable()) {
+    transferProjectionTreeFallbackSync(sourcePath, directoryPath, overwrite, include);
+    return;
   }
   const handle = acquireProjectionRootIdentityLock(realpathSync(sourcePath), stat.dev.toString(), stat.ino.toString());
   function transferDirectory(logicalDirectory: string, target: string): void {
@@ -457,6 +505,14 @@ export function copyProjectionFileSync(sourcePath: string, filePath: string, ove
   const parentStat = lstatSync(parent, { bigint: true });
   if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) {
     throw new Error("projection copy source parent is not identity-stable");
+  }
+  if (!isProjectionRootIdentityLockAvailable()) {
+    const fallbackStat = lstatSync(sourcePath);
+    if (!fallbackStat.isFile() || fallbackStat.isSymbolicLink()) {
+      throw new Error("projection copy source is not a regular file");
+    }
+    atomicWriteBufferSync(filePath, readStableProjectionSourceFallback(sourcePath));
+    return;
   }
   const handle = acquireProjectionRootIdentityLock(realpathSync(parent), parentStat.dev.toString(), parentStat.ino.toString());
   const logicalPath = basename(sourcePath);

@@ -2186,6 +2186,10 @@ function createInitialProjectionDirectory(directoryPath: string): boolean {
     projectionRoot = dirname(projectionRoot);
   }
   if (basename(projectionRoot).toLocaleLowerCase("en-US") !== ".gsd") return false;
+  if (!isProjectionRootIdentityLockAvailable()) {
+    mkdirSync(directoryPath, { recursive: true });
+    return true;
+  }
   const targetRoot = dirname(projectionRoot);
   const rootStat = lstatSync(targetRoot, { bigint: true });
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
