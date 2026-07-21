@@ -16,6 +16,7 @@
 
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -137,6 +138,53 @@ function recoverPreviewApproval(base: string): string[] {
 function sha256(path: string): string {
   return `sha256:${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
 }
+
+test("headless recover verifies backups from a populated synced extension", (t) => {
+  const base = makeCorpusFixture();
+  const home = mkdtempSync(join(tmpdir(), "gsd-headless-recover-home-"));
+  const agentDir = join(home, "agent");
+  const env = {
+    ...process.env,
+    GSD_AGENT_DIR: agentDir,
+    GSD_HOME: home,
+    GSD_SUPPRESS_LOGO: "1",
+  };
+  delete env.NODE_TEST_CONTEXT;
+  t.after(() => {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const runRecover = (args: readonly string[] = []) => spawnSync(process.execPath, [
+    "--import",
+    join(process.cwd(), "src/resources/extensions/gsd/tests/resolve-ts.mjs"),
+    "--experimental-strip-types",
+    join(process.cwd(), "src/loader.ts"),
+    "headless",
+    "recover",
+    ...args,
+  ], {
+    cwd: base,
+    env,
+    encoding: "utf8",
+    timeout: 180_000,
+  });
+
+  const preview = runRecover();
+  const previewHash = /^Preview hash: (sha256:[0-9a-f]{64})$/mu.exec(preview.stderr)?.[1];
+  assert.equal(preview.status, 1, preview.stderr);
+  assert.ok(previewHash, preview.stderr);
+  assert.ok(
+    existsSync(join(agentDir, "extensions", "gsd", "legacy-import-restore-drill.ts")),
+    "headless startup must populate the synced TypeScript extension",
+  );
+
+  const recovered = runRecover([`--preview=${previewHash}`]);
+
+  assert.equal(recovered.status, 0, recovered.stderr);
+  assert.match(recovered.stderr, /gsd-recover: recovered 4M\/7S\/5T hierarchy/u);
+  assert.ok(existsSync(join(base, ".gsd", "gsd.db")));
+});
 
 test("legacy Markdown importer populates hierarchy in a direct compatibility fixture", async (t) => {
   const base = makeMarkdownFixture();

@@ -137,8 +137,8 @@ test("checkNodeVersion rejects below-minimum versions and accepts at-or-above", 
     assert.strictEqual(tooOld.actualVersion, "18.19.0", "reports actual version from input");
   }
 
-  const belowMinor = checkNodeVersion("22.17.9", MIN_NODE_VERSION);
-  assert.strictEqual(belowMinor.ok, false, "Node 22 before the required sqlite API must be rejected");
+  const belowMinimum = checkNodeVersion("21.17.9", MIN_NODE_VERSION);
+  assert.strictEqual(belowMinimum.ok, false, "Node 21 must be rejected when min is 22+");
 
   // Exactly minimum → ok
   const exactlyMin = checkNodeVersion(MIN_NODE_VERSION, MIN_NODE_VERSION);

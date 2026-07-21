@@ -9,6 +9,7 @@ import {
   closeSync,
   constants as fsConstants,
   copyFileSync,
+  existsSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -448,10 +449,26 @@ function childArguments(): string[] {
   return args;
 }
 
+function freshProcessWorkerPath(): string {
+  const currentPath = fileURLToPath(import.meta.url);
+  const workflowPath = process.env.GSD_WORKFLOW_PATH;
+  if (workflowPath === undefined) return currentPath;
+
+  const extension = currentPath.endsWith(".ts") ? ".ts" : ".js";
+  const bundledPath = resolve(
+    workflowPath,
+    "..",
+    "extensions",
+    "gsd",
+    `legacy-import-restore-drill${extension}`,
+  );
+  return existsSync(bundledPath) ? bundledPath : currentPath;
+}
+
 function verifyInFreshProcess(input: FreshProcessInput): FreshProcessEvidence {
   const child = spawnSync(process.execPath, [
     ...childArguments(),
-    fileURLToPath(import.meta.url),
+    freshProcessWorkerPath(),
     WORKER_ARGUMENT,
   ], {
     input: JSON.stringify(input),
