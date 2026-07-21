@@ -68,6 +68,10 @@ const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
 #[cfg(windows)]
 const FILE_ATTRIBUTE_DEVICE: u32 = 0x0000_0040;
 #[cfg(windows)]
+const FILE_SHARE_READ: u32 = 0x0000_0001;
+#[cfg(windows)]
+const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+#[cfg(windows)]
 const FILE_SHARE_DELETE: u32 = 0x0000_0004;
 
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -1135,11 +1139,8 @@ impl ProjectionRootIdentityLock {
         {
             let (path, mut guards) = self.safe_windows_path(&relative_path, false)?;
             reject_windows_reparse(&path)?;
-            // Listing the projection root itself must not re-open it by path:
-            // the exclusive share_mode(0) hold rejects that open
-            // (ERROR_SHARING_VIOLATION / os error 32). Enumerating through the
-            // already-held root handle covers that case and behaves the same
-            // for every other directory.
+            // Enumerate the projection root through the identity-held handle
+            // so the listing stays correlated with the locked root.
             if path != self.root {
                 guards.push(open_windows_directory(&path)?);
             }
@@ -1636,10 +1637,8 @@ impl ProjectionRootIdentityLock {
             }
             guards.push(open_windows_directory(&path)?);
         }
-        // A root-level target leaves `path` equal to the projection root;
-        // opening the root by path (fs::read_dir) collides with the exclusive
-        // share_mode(0) hold (ERROR_SHARING_VIOLATION / os error 32), so the
-        // scan must enumerate through the already-held root handle.
+        // A root-level target leaves `path` equal to the projection root; scan
+        // it through the identity-held handle instead of reopening by path.
         let directory = if path == self.root {
             self.file.as_ref()
         } else {
@@ -1985,9 +1984,12 @@ fn open_windows_directory(path: &Path) -> Result<File> {
 #[cfg(windows)]
 fn open_windows_root_directory(path: &Path) -> Result<File> {
     let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .share_mode(0)
+        // DELETE access with no delete sharing keeps the root identity pinned
+        // and excludes a second mutation owner. Read/write sharing remains
+        // available for the lock holder's own directory scans and child
+        // publications.
+        .access_mode(DELETE_ACCESS | FILE_READ_ATTRIBUTES | GENERIC_READ | GENERIC_WRITE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
         .map_err(projection_error)?;
@@ -4278,11 +4280,9 @@ fn recover_windows_native_evidence_descriptors(root: &Path, root_handle: &File) 
                     "native projection evidence source content changed",
                 ));
             }
-            // The evidence path is a sibling of the source, which may sit at
-            // the projection root itself; re-parsing that parent by path would
-            // collide with the share-0 root hold (ERROR_SHARING_VIOLATION /
-            // os error 32). Rename relative to the held root handle there and
-            // open the parent directory only when it is a subdirectory.
+            // The evidence path is a sibling of the source. Rename relative to
+            // the identity-held root handle there and open the parent directory
+            // only when it is a subdirectory.
             let evidence_parent = evidence_path
                 .parent()
                 .ok_or_else(|| projection_error("native projection evidence path is invalid"))?;
@@ -4368,9 +4368,9 @@ fn windows_verbatim_root(path: String) -> PathBuf {
 // never re-parses a path: a simple file name with RootDirectory set to a
 // handle of the target's parent directory. Full-path targets of every
 // spelling (plain DOS, Win32 verbatim `\\?\`, NT-native `\??\`) make the
-// I/O manager open the target's parent by path, which fails against the
-// exclusively held (share_mode(0)) projection root — observed on CI as
-// ERROR_PATH_NOT_FOUND (3) / ERROR_INVALID_NAME (123) — while a bare name
+// I/O manager open the target's parent by path, which weakens correlation with
+// the identity-held projection root and has produced ERROR_PATH_NOT_FOUND (3) /
+// ERROR_INVALID_NAME (123) on CI, while a bare name
 // with RootDirectory = NULL is resolved against the process current
 // directory by the Win32 layer, landing renames in the wrong directory
 // (observed as cross-project ERROR_ALREADY_EXISTS (183) collisions).

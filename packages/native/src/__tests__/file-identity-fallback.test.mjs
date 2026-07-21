@@ -1,10 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { lstatSync, mkdtempSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const require = createRequire(import.meta.url);
 
 // When the addon cannot be loaded, native.js falls back to a throw-on-call
 // proxy whose every property reads back as an arrow function. A bare
@@ -81,4 +85,25 @@ test("loaded addon exposes the file-identity and directory-sync N-API exports", 
   assert.equal(output.sqliteLock, "function", "addon is stale: SqliteFileIdentityLock export missing");
   assert.equal(output.projectionLock, "function", "addon is stale: ProjectionRootIdentityLock export missing");
   assert.equal(output.syncDirectoryEntry, "function", "addon is stale: syncDirectoryEntry export missing");
+});
+
+test("projection root lock permits root writes while excluding a second owner", () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-native-projection-root-"));
+  const stat = lstatSync(root, { bigint: true });
+  process.env.GSD_NATIVE_PREFER_LOCAL = "1";
+  const { acquireProjectionRootIdentityLock } = require("../../dist/file-identity");
+  const lock = acquireProjectionRootIdentityLock(root, stat.dev.toString(), stat.ino.toString());
+
+  try {
+    assert.throws(
+      () => acquireProjectionRootIdentityLock(root, stat.dev.toString(), stat.ino.toString()),
+      /locking failed/,
+    );
+    lock.writeFile("PROJECT.md", Buffer.from("# Project\n"));
+    assert.equal(lock.readFile("PROJECT.md").toString(), "# Project\n");
+    assert.ok(lock.listDirectory("").includes("PROJECT.md"));
+  } finally {
+    lock.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
