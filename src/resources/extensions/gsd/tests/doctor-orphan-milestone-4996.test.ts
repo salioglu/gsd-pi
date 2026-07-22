@@ -129,4 +129,36 @@ describe("gsd_doctor orphan milestone directory check (#4996)", () => {
     assert.equal(orphan?.severity, "warning");
     assert.equal(orphan?.fixable, false);
   });
+
+  it("(f) phantom queued DB row with no content files is reported as orphan_milestone_db (#1524)", async () => {
+    base = makeBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
+    openDatabase(dbPath);
+    // Phantom: queued row, no directory, no CONTEXT/ROADMAP/SUMMARY on disk.
+    insertMilestone({ id: "M015", status: "queued" });
+
+    const issues: DoctorIssue[] = [];
+    const fixes: string[] = [];
+    await checkRuntimeHealth(base, issues, fixes, () => false);
+
+    const orphan = issues.find(i => i.code === "orphan_milestone_db" && i.unitId === "M015");
+    assert.ok(orphan, "phantom queued row with no content must be reported as orphan");
+    assert.equal(orphan?.severity, "warning");
+  });
+
+  it("(g) queued DB row WITH content files is NOT reported as orphan_milestone_db (#1524)", async () => {
+    base = makeBase();
+    populateDir(base, "M005");
+    const dbPath = join(base, ".gsd", "gsd.db");
+    openDatabase(dbPath);
+    // Legitimate in-flight planning: queued row with a CONTEXT file on disk.
+    insertMilestone({ id: "M005", status: "queued" });
+
+    const issues: DoctorIssue[] = [];
+    const fixes: string[] = [];
+    await checkRuntimeHealth(base, issues, fixes, () => false);
+
+    const orphan = issues.find(i => i.code === "orphan_milestone_db" && i.unitId === "M005");
+    assert.ok(!orphan, "queued row with content files is legitimate in-flight planning, not an orphan");
+  });
 });
