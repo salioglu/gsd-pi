@@ -141,13 +141,13 @@ function milestoneArtifactExistsInResolvedDir(
 // unparsable, which keeps phantom-only repos out of the promotion path.
 function loadProjectSequenceIds(basePath: string): Set<string> {
   const projectPath = resolveGsdRootFile(basePath, 'PROJECT');
-  if (!existsSync(projectPath)) return new Set();
+  if (!existsSync(projectPath)) return new Set<string>();
   try {
     const parsed = parseProject(readFileSync(projectPath, 'utf-8'));
     return new Set(parsed.milestones.map((m) => m.id));
   } catch (e) {
     logWarning('state', `failed to parse PROJECT.md milestone sequence: ${(e as Error).message}`);
-    return new Set();
+    return new Set<string>();
   }
 }
 
