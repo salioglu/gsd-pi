@@ -233,4 +233,28 @@ describe("stale queued milestone selection (#3470)", () => {
     assert.equal(state.activeMilestone?.id, "M068", "Queued milestone with draft should become active when nothing else is");
     assert.equal(state.phase, "needs-discussion", "Should resume discussion for queued milestone with draft");
   });
+
+  test("earlier phantom queued shell does not mask a later draft-bearing queued shell (#1524)", async () => {
+    base = createFixtureBase();
+    openDatabase(":memory:");
+
+    // M010: phantom shell encountered first — no CONTEXT, no draft, no slices.
+    insertMilestone({ id: "M010", title: "Phantom First", status: "queued" });
+
+    // M020: a real resumable draft milestone encountered later.
+    insertMilestone({ id: "M020", title: "Draft Later", status: "queued" });
+    writeFile(base, "milestones/M020/M020-CONTEXT-DRAFT.md", "# M020: Draft Later\n\nPartial context from an in-progress discussion.");
+
+    invalidateStateCache();
+    const state = await deriveStateFromDb(base);
+
+    // The earlier phantom must not permanently capture the promotion slot; the
+    // later draft-bearing shell is the resumable milestone and should win.
+    assert.equal(state.activeMilestone?.id, "M020", "Later draft-bearing shell must be promoted, not masked by the earlier phantom");
+    assert.equal(state.phase, "needs-discussion", "Promoted draft shell should resume discussion");
+
+    const m010Entry = state.registry.find((e: any) => e.id === "M010");
+    assert.ok(m010Entry, "M010 should still appear in registry");
+    assert.equal(m010Entry!.status, "pending", "Phantom M010 should stay pending, not active");
+  });
 });

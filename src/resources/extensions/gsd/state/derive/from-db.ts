@@ -187,7 +187,16 @@ async function buildRegistryAndFindActive(
       }
 
       if (readiness.kind === 'queued-shell') {
-        if (!firstDeferredQueuedShell) {
+        // Track the deferred queued-shell used for the promotion guard below.
+        // Prefer the earliest shell WITH draft context: a phantom shell (no
+        // draft) must not mask a later resumable draft milestone (#1524).
+        // Store the first shell seen, but upgrade to a later shell once it
+        // carries draft context so a real draft isn't hidden behind an earlier
+        // phantom. Falls back to the earliest phantom when no draft exists.
+        if (
+          !firstDeferredQueuedShell ||
+          (!firstDeferredQueuedShell.hasDraftContext && readiness.hasDraftContext)
+        ) {
           firstDeferredQueuedShell = { id: m.id, title, deps, hasDraftContext: readiness.hasDraftContext };
         }
         registry.push({ id: m.id, title, status: 'pending', ...(deps.length > 0 ? { dependsOn: deps } : {}) });
