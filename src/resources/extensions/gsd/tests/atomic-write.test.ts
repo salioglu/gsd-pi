@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -174,6 +174,218 @@ test("managed projection writes fall back when the pinned native engine lacks id
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(readFileSync(output, "utf8"), "fallback-content");
+});
+
+test("copyProjectionFileSync falls back when the pinned native engine lacks identity locks", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-copy-native-fallback-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const gsd = join(base, ".gsd");
+  mkdirSync(gsd);
+  writeFileSync(join(gsd, "gsd.db"), "database-present");
+  const source = join(gsd, "DECISIONS.md");
+  const output = join(base, "worktree", ".gsd", "DECISIONS.md");
+  const moduleUrl = new URL("../atomic-write.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { copyProjectionFileSync } = await import(${JSON.stringify(moduleUrl)});
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(process.argv[1], "decisions-content");
+    copyProjectionFileSync(process.argv[1], process.argv[2], false);
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    source,
+    output,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(readFileSync(output, "utf8"), "decisions-content");
+});
+
+test("mergeProjectionTreeSync falls back when the pinned native engine lacks identity locks", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-merge-native-fallback-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const gsd = join(base, ".gsd");
+  mkdirSync(gsd);
+  writeFileSync(join(gsd, "gsd.db"), "database-present");
+  const sourceTree = join(gsd, "phases", "22-m022");
+  const targetTree = join(base, "worktree", ".gsd", "phases", "22-m022");
+  const moduleUrl = new URL("../atomic-write.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { mergeProjectionTreeSync } = await import(${JSON.stringify(moduleUrl)});
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    mkdirSync(join(process.argv[1], "slices", "S01"), { recursive: true });
+    writeFileSync(join(process.argv[1], "22-CONTEXT.md"), "context-content");
+    writeFileSync(join(process.argv[1], "slices", "S01", "S01-PLAN.md"), "plan-content");
+    mkdirSync(process.argv[2], { recursive: true });
+    writeFileSync(join(process.argv[2], "22-CONTEXT.md"), "worktree-local-content");
+    mergeProjectionTreeSync(process.argv[1], process.argv[2], false);
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    sourceTree,
+    targetTree,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  // Additive semantics preserved: nested files are copied, existing
+  // worktree-local files are not clobbered by the merge (#1886).
+  assert.equal(
+    readFileSync(join(targetTree, "slices", "S01", "S01-PLAN.md"), "utf8"),
+    "plan-content",
+  );
+  assert.equal(
+    readFileSync(join(targetTree, "22-CONTEXT.md"), "utf8"),
+    "worktree-local-content",
+  );
+});
+
+test("projection tree fallback rejects symlink entries instead of silently skipping them", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-merge-symlink-reject-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const gsd = join(base, ".gsd");
+  mkdirSync(gsd);
+  writeFileSync(join(gsd, "gsd.db"), "database-present");
+  const sourceTree = join(gsd, "phases", "22-m022");
+  const targetTree = join(base, "worktree", ".gsd", "phases", "22-m022");
+  const outsideSecret = join(base, "outside-secret.md");
+  const moduleUrl = new URL("../atomic-write.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { mergeProjectionTreeSync } = await import(${JSON.stringify(moduleUrl)});
+    const { mkdirSync, writeFileSync, symlinkSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    mkdirSync(process.argv[1], { recursive: true });
+    writeFileSync(join(process.argv[1], "22-CONTEXT.md"), "context-content");
+    // A symlink pointing outside the source root: the native identity lock's
+    // pathKind rejects it, so the plain-fs fallback must throw too rather than
+    // skip it and leave a partial projection.
+    writeFileSync(process.argv[3], "secret-outside-root");
+    symlinkSync(process.argv[3], join(process.argv[1], "escape.md"));
+    mergeProjectionTreeSync(process.argv[1], process.argv[2], false);
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    sourceTree,
+    targetTree,
+    outsideSecret,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.notEqual(result.status, 0, "expected the symlink entry to be rejected");
+  assert.match(result.stderr, /neither a regular file nor a directory/);
+  // The symlink target's content must never reach the projection target.
+  assert.equal(existsSync(join(targetTree, "escape.md")), false);
+});
+
+test("projection directory fallback rejects a symlinked .gsd projection root", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-dir-symlink-reject-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  // .gsd is a pre-existing symlink pointing outside the project root. mkdirSync
+  // recursive would follow it and create projection dirs in `outside`; the
+  // native identity-lock path traverses without following symlink components,
+  // so the fallback must reject it too.
+  const gsdLink = join(base, ".gsd");
+  const outside = join(base, "outside");
+  const moduleUrl = new URL("../managed-projection-history.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { createManagedProjectionDirectorySync } = await import(${JSON.stringify(moduleUrl)});
+    const { mkdirSync, symlinkSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    mkdirSync(process.argv[2], { recursive: true });
+    symlinkSync(process.argv[2], process.argv[1]);
+    createManagedProjectionDirectorySync(join(process.argv[1], "phases", "22-m022"));
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    gsdLink,
+    outside,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.notEqual(result.status, 0, "expected the symlinked .gsd root to be rejected");
+  assert.match(result.stderr, /managed projection root is not identity-stable/);
+  // No projection directory may be created through the symlink, outside the root.
+  assert.equal(existsSync(join(outside, "phases")), false);
+});
+
+test("copyProjectionFileSync fallback rejects a source-parent swap during the proof", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-copy-parent-swap-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const source = join(base, "source-dir", "DECISIONS.md");
+  const output = join(base, "worktree", ".gsd", "DECISIONS.md");
+  const outside = join(base, "outside");
+  const moduleUrl = new URL("../atomic-write.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  // The copy boundary hook fires between the two identity-proof reads. Swapping
+  // the source's parent directory for a symlink pointing outside the source
+  // root at that moment must be caught by the per-read parent-identity proof,
+  // the plain-fs analogue of the native lock reading relative to a pinned fd.
+  const script = `
+    const { copyProjectionFileSync, _setProjectionCopyBoundaryForTest } = await import(${JSON.stringify(moduleUrl)});
+    const { mkdirSync, writeFileSync, renameSync, symlinkSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const sourcePath = process.argv[1];
+    const outsideDir = process.argv[3];
+    const parent = dirname(sourcePath);
+    mkdirSync(parent, { recursive: true });
+    writeFileSync(sourcePath, "decisions-content");
+    mkdirSync(outsideDir, { recursive: true });
+    writeFileSync(join(outsideDir, "DECISIONS.md"), "evil-outside-content");
+    _setProjectionCopyBoundaryForTest(() => {
+      _setProjectionCopyBoundaryForTest(null);
+      renameSync(parent, parent + ".real");
+      symlinkSync(outsideDir, parent);
+    });
+    copyProjectionFileSync(sourcePath, process.argv[2], false);
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    source,
+    output,
+    outside,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.notEqual(result.status, 0, "expected the parent swap to be rejected");
+  assert.match(result.stderr, /projection copy source parent identity changed during proof/);
+  // The redirected (outside) content must never reach the projection target.
+  assert.equal(existsSync(output), false);
 });
 
 // ─── Durability: fsync ordering in the fallback WithOps paths ────────────────
