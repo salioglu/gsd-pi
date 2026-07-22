@@ -2198,6 +2198,18 @@ function createInitialProjectionDirectory(directoryPath: string): boolean {
         throw new Error("managed projection project root is not identity-stable");
       }
     }
+    // Reject a pre-existing .gsd projection root that is a symlink (or a
+    // non-directory) before mkdir-ing under it. mkdirSync(..., { recursive:
+    // true }) follows a symlinked .gsd and would create projection directories
+    // outside the project root; the native identity-lock path traverses from
+    // the pinned root without following symlink components, so it rejects this.
+    // A missing .gsd is fine: it is created below.
+    if (existsSync(projectionRoot)) {
+      const projectionRootStat = lstatSync(projectionRoot, { bigint: true });
+      if (!projectionRootStat.isDirectory() || projectionRootStat.isSymbolicLink()) {
+        throw new Error("managed projection root is not identity-stable");
+      }
+    }
     mkdirSync(directoryPath, { recursive: true });
     return true;
   }

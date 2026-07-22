@@ -300,6 +300,94 @@ test("projection tree fallback rejects symlink entries instead of silently skipp
   assert.equal(existsSync(join(targetTree, "escape.md")), false);
 });
 
+test("projection directory fallback rejects a symlinked .gsd projection root", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-dir-symlink-reject-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  // .gsd is a pre-existing symlink pointing outside the project root. mkdirSync
+  // recursive would follow it and create projection dirs in `outside`; the
+  // native identity-lock path traverses without following symlink components,
+  // so the fallback must reject it too.
+  const gsdLink = join(base, ".gsd");
+  const outside = join(base, "outside");
+  const moduleUrl = new URL("../managed-projection-history.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { createManagedProjectionDirectorySync } = await import(${JSON.stringify(moduleUrl)});
+    const { mkdirSync, symlinkSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    mkdirSync(process.argv[2], { recursive: true });
+    symlinkSync(process.argv[2], process.argv[1]);
+    createManagedProjectionDirectorySync(join(process.argv[1], "phases", "22-m022"));
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    gsdLink,
+    outside,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.notEqual(result.status, 0, "expected the symlinked .gsd root to be rejected");
+  assert.match(result.stderr, /managed projection root is not identity-stable/);
+  // No projection directory may be created through the symlink, outside the root.
+  assert.equal(existsSync(join(outside, "phases")), false);
+});
+
+test("copyProjectionFileSync fallback rejects a source-parent swap during the proof", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-copy-parent-swap-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const source = join(base, "source-dir", "DECISIONS.md");
+  const output = join(base, "worktree", ".gsd", "DECISIONS.md");
+  const outside = join(base, "outside");
+  const moduleUrl = new URL("../atomic-write.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  // The copy boundary hook fires between the two identity-proof reads. Swapping
+  // the source's parent directory for a symlink pointing outside the source
+  // root at that moment must be caught by the per-read parent-identity proof,
+  // the plain-fs analogue of the native lock reading relative to a pinned fd.
+  const script = `
+    const { copyProjectionFileSync, _setProjectionCopyBoundaryForTest } = await import(${JSON.stringify(moduleUrl)});
+    const { mkdirSync, writeFileSync, renameSync, symlinkSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const sourcePath = process.argv[1];
+    const outsideDir = process.argv[3];
+    const parent = dirname(sourcePath);
+    mkdirSync(parent, { recursive: true });
+    writeFileSync(sourcePath, "decisions-content");
+    mkdirSync(outsideDir, { recursive: true });
+    writeFileSync(join(outsideDir, "DECISIONS.md"), "evil-outside-content");
+    _setProjectionCopyBoundaryForTest(() => {
+      _setProjectionCopyBoundaryForTest(null);
+      renameSync(parent, parent + ".real");
+      symlinkSync(outsideDir, parent);
+    });
+    copyProjectionFileSync(sourcePath, process.argv[2], false);
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    source,
+    output,
+    outside,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.notEqual(result.status, 0, "expected the parent swap to be rejected");
+  assert.match(result.stderr, /projection copy source parent identity changed during proof/);
+  // The redirected (outside) content must never reach the projection target.
+  assert.equal(existsSync(output), false);
+});
+
 // ─── Durability: fsync ordering in the fallback WithOps paths ────────────────
 
 function createFsyncSyncHarness(plan: Array<Error | null> = []) {
