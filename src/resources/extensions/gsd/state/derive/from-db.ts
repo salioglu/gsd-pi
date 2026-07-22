@@ -188,11 +188,11 @@ async function buildRegistryAndFindActive(
 
       if (readiness.kind === 'queued-shell') {
         // Track the deferred queued-shell used for the promotion guard below.
-        // Prefer the earliest shell WITH draft context: a phantom shell (no
-        // draft) must not mask a later resumable draft milestone (#1524).
-        // Store the first shell seen, but upgrade to a later shell once it
-        // carries draft context so a real draft isn't hidden behind an earlier
-        // phantom. Falls back to the earliest phantom when no draft exists.
+        // Store the first shell seen, then upgrade to the first shell that
+        // carries draft context. Only draft-bearing shells are eligible for
+        // promotion (see the guard below), so this upgrade ensures an earlier
+        // phantom (no draft) can't mask a later resumable draft milestone
+        // (#1524). A stored phantom is never promoted — it stays 'pending'.
         if (
           !firstDeferredQueuedShell ||
           (!firstDeferredQueuedShell.hasDraftContext && readiness.hasDraftContext)
