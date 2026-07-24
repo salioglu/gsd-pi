@@ -1281,12 +1281,22 @@ test("model-error branch in agent-end-recovery attempts fallback before any term
     join(dirname(fileURLToPath(import.meta.url)), "..", "bootstrap", "agent-end-recovery.ts"),
     "utf-8",
   );
-  const modelErrorIdx = src.indexOf('cls.kind === "model-error"');
-  assert.ok(modelErrorIdx > 0, "agent-end-recovery.ts must handle cls.kind model-error");
+  const modelErrorMatch = /cls\.kind\s*===\s*["']model-error["']/.exec(src);
+  assert.ok(modelErrorMatch, "agent-end-recovery.ts must handle cls.kind model-error");
+  const modelErrorIdx = modelErrorMatch.index;
   const rejectionCallIdx = src.indexOf("pauseForProviderModelRejection", modelErrorIdx);
   assert.ok(rejectionCallIdx > 0, "model-error branch must call pauseForProviderModelRejection");
-  const terminalPauseIdx = src.indexOf("pauseAutoForProviderError", modelErrorIdx);
-  assert.ok(terminalPauseIdx > 0, "terminal provider-error pause must exist after the model-error branch");
+  // Anchor on the terminal permanent/unknown pause section, not the first
+  // pauseAutoForProviderError after the model-error branch — that would match
+  // the intervening tool-schema pause and let the test pass even if the real
+  // terminal pause were reordered ahead of the model-error branch.
+  const terminalSectionIdx = src.search(/Permanent\s*\/\s*unknown/i);
+  assert.ok(terminalSectionIdx > 0, "terminal permanent/unknown pause section must exist");
+  const terminalPauseIdx = src.indexOf("pauseAutoForProviderError", terminalSectionIdx);
+  assert.ok(
+    terminalPauseIdx > 0,
+    "terminal provider-error pause must exist in the permanent/unknown section",
+  );
   assert.ok(
     rejectionCallIdx < terminalPauseIdx,
     "model-error fallback branch must precede the terminal provider-error pause (#1533)",
