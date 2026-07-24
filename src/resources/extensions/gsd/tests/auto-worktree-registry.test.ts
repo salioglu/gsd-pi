@@ -19,6 +19,7 @@ import {
 import { teardownAutoWorktree } from "../auto-worktree-teardown.ts";
 import { seedMergeReadyMilestone } from "./merge-ready-fixture.ts";
 import { createWorkspace } from "../workspace.ts";
+import { closeDatabase } from "../gsd-db.ts";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -29,7 +30,10 @@ function git(subArgs: string[], cwd: string): void {
 
 function createTempRepo(t: { after: (fn: () => void) => void }): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "awreg-test-")));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => {
+    closeDatabase();
+    rmSync(dir, { recursive: true, force: true });
+  });
   git(["init"], dir);
   git(["config", "user.email", "test@test.com"], dir);
   git(["config", "user.name", "Test"], dir);
