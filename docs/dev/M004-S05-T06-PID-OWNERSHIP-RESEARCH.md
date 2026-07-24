@@ -1,8 +1,8 @@
 # M004/S05/T06 PID ownership research
 
 **Date:** 2026-07-18
-**Scope:** Research only. This note defines the process-instance ownership proof
-needed by crash-safe live restore; it does not change runtime behavior.
+**Status:** Implemented as the process-instance ownership proof used by
+crash-safe live restore and coordinated database maintenance.
 
 ## Decision
 
@@ -13,8 +13,8 @@ identity. Keep the random owner nonce for intent update/cleanup ownership, and
 use the existing hard-link/inode recovery-claim pattern so a contender cannot
 unlink a replacement owner's intent.
 
-The smallest implementation is to extract and harden the process-identity logic
-already used by the cloud-runtime start lock:
+The implementation extracted and hardened the process-identity logic already
+used by the cloud-runtime start lock:
 
 - the state and lock persist `pid` plus `process_start_identity`
   ([`runtime-process.ts:20-34`](../../packages/gsd-cloud/src/runtime-process.ts));
@@ -26,7 +26,7 @@ already used by the cloud-runtime start lock:
 - signaling rechecks the identity immediately before sending the signal
   ([`runtime-process.ts:687-700`](../../packages/gsd-cloud/src/runtime-process.ts)).
 
-For live restore, the intent should contain at least:
+The live-restore intent contains:
 
 ```text
 ownerPid
@@ -61,20 +61,18 @@ kernel-recorded start identity.
 
 ## Available process-instance identities
 
-| Platform | Kernel/OS identity | Primary source | Current repository implementation |
-|---|---|---|---|
-| Linux | `/proc/<pid>/stat` field 22, process start time since boot in clock ticks | [`proc_pid_stat(5)`](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html) | Reads field 22 directly (`runtime-process.ts:458-462`) |
-| macOS | `proc_pidinfo(..., PROC_PIDTBSDINFO, ...)` returns `proc_bsdinfo.pbi_start_tvsec` and `pbi_start_tvusec` | [Apple XNU `proc_info.h`](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info.h) | Calls `/bin/ps -o lstart=` (`runtime-process.ts:463-467`) |
-| Windows | `OpenProcess` obtains a handle for a PID; `GetProcessTimes` returns the process creation `FILETIME` | [Process handles and identifiers](https://learn.microsoft.com/en-us/windows/win32/procthread/process-handles-and-identifiers), [`GetProcessTimes`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes) | Calls PowerShell `Get-Process ... StartTime` (`runtime-process.ts:468-475`) |
+| Platform | Kernel/OS identity | Current repository implementation |
+|---|---|---|
+| Linux | `/proc/<pid>/stat` field 22 plus kernel boot ID | `process-start-identity.ts` reads both values directly and hashes them. |
+| macOS | `proc_pidinfo(..., PROC_PIDTBSDINFO, ...)` start seconds and microseconds | `process-start-identity.ts` calls `proc_pidinfo` through Koffi and hashes the returned tuple. |
+| Windows | `GetProcessTimes` creation `FILETIME` from an `OpenProcess` handle | `process-start-identity.ts` calls both APIs through Koffi and hashes the creation time. |
+| FreeBSD | `kinfo_proc` start identity | Not implemented; the shared adapter returns `null`, so restore and maintenance fail closed. |
 
-The existing Linux reader is already the desired primitive. The macOS and
-Windows shell probes are useful precedent but should not become a correctness
-dependency for database replacement: command availability, locale formatting,
-startup overhead, and command failure introduce an avoidable unknown state.
-Prefer one small shared Node-API/native adapter that returns the raw platform
-identity (`start ticks`, `seconds:microseconds`, or creation `FILETIME`) as an
-opaque string. Live restore does not compare identities across platforms or
-boots; it only checks exact equality for one PID on one host.
+The shared adapter returns an opaque hash of the platform identity. Live
+restore does not compare identities across platforms or boots; it only checks
+exact equality for one PID on one host. Unsupported or unreadable identity
+sources remain an unknown state rather than falling back to shell output,
+timestamps, or PID-only ownership.
 
 ## Exact ownership protocol
 
@@ -126,9 +124,9 @@ indeterminate OS query is an environmental/permission fault requiring an
 explicit operator-visible error; silently reclaiming it would contradict the
 "never steal a live restore" requirement.
 
-## Reusable tests
+## Regression coverage
 
-Reuse the cloud-runtime cases as the behavioral template:
+The cloud-runtime cases remain the behavioral template:
 
 - replacement-owner inode protection
   ([`runtime-process.test.ts:331-369`](../../packages/gsd-cloud/src/runtime-process.test.ts));
@@ -137,7 +135,8 @@ Reuse the cloud-runtime cases as the behavioral template:
 - an aged live owner is never reclaimed solely because of age
   ([`runtime-process.test.ts:403-447`](../../packages/gsd-cloud/src/runtime-process.test.ts)).
 
-Add restore-specific injected-adapter cases for: exact identity match, PID reused
-with different identity, PID missing, probe unknown, and an inode replacement
-between recovery claim and unlink. The PID-reuse case must keep the replacement
-process alive while proving the abandoned restore still converges.
+Restore-specific coverage in `legacy-import-live-restore.test.ts` proves exact
+owner contention, missing-owner reclaim, and live PID reuse. The concurrent
+reclaimer case in `legacy-import-live-restore-fault.test.ts` proves an abandoned
+intent cleaner cannot unlink a replacement owner's inode. Platform-specific
+identity probes are covered in `process-start-identity.test.ts`.
